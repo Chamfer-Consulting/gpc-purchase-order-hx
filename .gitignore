@@ -1,0 +1,26 @@
+# Virtual environment
+bin/
+lib/
+lib64
+include/
+pyvenv.cfg
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Generated output
+*.xlsx
+*_failed.txt
+
+# Source PO documents (customer data — keep local only)
+files/
+
+# OS / editor cruft
+*:Zone.Identifier
+.DS_Store
+
+# Secrets
+.env
