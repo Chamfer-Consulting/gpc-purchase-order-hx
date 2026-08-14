@@ -76,17 +76,10 @@ def file_sha256(path: str) -> str:
     return h.hexdigest()
 
 
-def get_cached_result(conn: sqlite3.Connection, source_file: str, file_hash: str) -> dict | None:
-    """Returns a previously successful extraction for this exact file content, or None."""
-    row = conn.execute(
-        "SELECT * FROM purchase_orders WHERE source_file = ? AND file_hash = ? AND error IS NULL",
-        (source_file, file_hash),
-    ).fetchone()
-    if row is None:
-        return None
-
+def _row_to_result(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     result = {
         "_source_file": row["source_file"],
+        "_file_hash": row["file_hash"],
         "_extraction_method": row["extraction_method"],
         "po_number": row["po_number"],
         "po_date": row["po_date"],
@@ -104,6 +97,8 @@ def get_cached_result(conn: sqlite3.Connection, source_file: str, file_hash: str
         "math_check_detail": row["math_check_detail"],
         "line_items": [],
     }
+    if row["error"] is not None:
+        result["error"] = row["error"]
 
     items = conn.execute("SELECT * FROM line_items WHERE po_id = ?", (row["id"],)).fetchall()
     for it in items:
@@ -123,6 +118,23 @@ def get_cached_result(conn: sqlite3.Connection, source_file: str, file_hash: str
         result["line_items"].append(item)
 
     return result
+
+
+def get_cached_result(conn: sqlite3.Connection, source_file: str, file_hash: str) -> dict | None:
+    """Returns a previously successful extraction for this exact file content, or None."""
+    row = conn.execute(
+        "SELECT * FROM purchase_orders WHERE source_file = ? AND file_hash = ? AND error IS NULL",
+        (source_file, file_hash),
+    ).fetchone()
+    if row is None:
+        return None
+    return _row_to_result(conn, row)
+
+
+def get_all_results(conn: sqlite3.Connection) -> list[dict]:
+    """Returns every stored extraction (including past errors), for publishing/reporting."""
+    rows = conn.execute("SELECT * FROM purchase_orders ORDER BY id").fetchall()
+    return [_row_to_result(conn, row) for row in rows]
 
 
 def save_result(conn: sqlite3.Connection, file_hash: str, result: dict) -> None:
@@ -168,3 +180,13 @@ def save_result(conn: sqlite3.Connection, file_hash: str, result: dict) -> None:
         )
 
     conn.commit()
+
+
+def update_math_check(conn: sqlite3.Connection, po_id: int, failed: bool, detail: str) -> None:
+    """Updates only the math-check verdict for an existing row — used when the
+    validation logic changes and past extractions need re-checking without
+    re-calling the API."""
+    conn.execute(
+        "UPDATE purchase_orders SET math_check_failed = ?, math_check_detail = ? WHERE id = ?",
+        (int(bool(failed)), detail, po_id),
+    )

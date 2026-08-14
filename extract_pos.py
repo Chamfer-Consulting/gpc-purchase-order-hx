@@ -12,6 +12,10 @@ Results are cached in a local SQLite database (po_data.db by default) keyed by
 file content hash — rerunning over the same folder only re-extracts files that
 are new or have changed. Excel output is generated from that data each run.
 
+If the Anthropic account runs out of credits mid-run, the script pauses (exit
+code 3) instead of burning retries — add credits and rerun the same command;
+already-processed files are skipped automatically via the cache above.
+
 Requirements:
     pip install -r requirements.txt
 """
@@ -22,6 +26,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -207,8 +212,14 @@ def validate_math(data: dict) -> None:
 
     subtotal, tax, total_amt = data.get("subtotal"), data.get("tax"), data.get("total")
     issues = []
-    if subtotal is not None and has_totals and abs(line_total_sum - subtotal) > MATH_TOLERANCE:
-        issues.append(f"line items sum to ${line_total_sum:.2f}, subtotal says ${subtotal}")
+    if has_totals:
+        # Line-item pricing is sometimes tax-inclusive (sums to total) and sometimes
+        # not (sums to subtotal) — accept either; only flag if it matches neither.
+        matches_subtotal = subtotal is not None and abs(line_total_sum - subtotal) <= MATH_TOLERANCE
+        matches_total = total_amt is not None and abs(line_total_sum - total_amt) <= MATH_TOLERANCE
+        if not matches_subtotal and not matches_total and (subtotal is not None or total_amt is not None):
+            against = subtotal if subtotal is not None else total_amt
+            issues.append(f"line items sum to ${line_total_sum:.2f}, PO shows ${against}")
     if subtotal is not None and tax is not None and total_amt is not None:
         if abs(subtotal + tax - total_amt) > MATH_TOLERANCE:
             issues.append(f"subtotal (${subtotal}) + tax (${tax}) ≠ total (${total_amt})")
@@ -357,14 +368,33 @@ def pdf_to_base64(pdf_path: str) -> str:
 
 # ── Claude API Extraction ──────────────────────────────────────────────────────
 
-def extract_po_data(client: anthropic.Anthropic, pdf_path: str) -> dict:
-    """Extract PO data from a single PDF. Uses text extraction first, falls back to vision."""
+def _is_out_of_credits(e: anthropic.PermissionDeniedError) -> bool:
+    """True for Anthropic's 'credit balance too low' error, as opposed to other 403s."""
+    if getattr(e, "type", None) == "billing_error":
+        return True
+    return "credit balance" in str(e).lower()
+
+
+def extract_po_data(
+    client: anthropic.Anthropic,
+    pdf_path: str,
+    stop_event: threading.Event | None = None,
+) -> dict | None:
+    """
+    Extract PO data from a single PDF. Uses text extraction first, falls back to vision.
+
+    Returns None (instead of an error dict) if stop_event is already set when this
+    call starts — used to fast-drain queued work after an out-of-credits pause without
+    making further API calls or writing spurious error rows for files never attempted.
+    """
     filename = os.path.basename(pdf_path)
     text = extract_pdf_text(pdf_path)
     last_error = "Unknown error"
     start_time = time.monotonic()
 
     for attempt in range(MAX_RETRIES):
+        if stop_event is not None and stop_event.is_set():
+            return None
         try:
             if text:
                 messages = [
@@ -443,6 +473,24 @@ def extract_po_data(client: anthropic.Anthropic, pdf_path: str) -> dict:
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY)
             continue
+
+        except anthropic.PermissionDeniedError as e:
+            if _is_out_of_credits(e):
+                if stop_event is not None:
+                    stop_event.set()
+                logger.error(f"{filename}: out of API credits — {e}")
+                return {
+                    "_source_file": filename,
+                    "_extraction_method": "text" if text else "vision",
+                    "error": "insufficient API credits — add credits and rerun to resume"
+                }
+            # Other 403s (e.g. no access to this model) won't resolve by retrying.
+            logger.warning(f"{filename}: permission error — {e}")
+            return {
+                "_source_file": filename,
+                "_extraction_method": "text" if text else "vision",
+                "error": f"Permission error: {e}"
+            }
 
         except anthropic.RateLimitError as e:
             wait = RETRY_DELAY * (2 ** attempt)  # exponential: 5s, 10s, 20s
@@ -778,9 +826,13 @@ def main():
     print(f"📊 Output: {args.output}\n")
 
     errors = sum(1 for r in results if "error" in r)
+    stop_event = threading.Event()
 
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
-        futures = {executor.submit(extract_po_data, client, str(p)): p for p in to_extract}
+        futures = {
+            executor.submit(extract_po_data, client, str(p), stop_event): p
+            for p in to_extract
+        }
         with tqdm(total=len(futures), unit="pdf", ncols=80) as pbar:
             for future in as_completed(futures):
                 pdf_path = futures[future]
@@ -792,14 +844,30 @@ def main():
                         "_extraction_method": "unknown",
                         "error": f"{type(e).__name__}: {e}"
                     }
-                results.append(result)
-                db.save_result(conn, file_hashes[str(pdf_path)], result)
-                if "error" in result:
-                    errors += 1
-                pbar.set_postfix({"errors": errors, "last": pdf_path.name[:20]})
+                if result is not None:
+                    results.append(result)
+                    db.save_result(conn, file_hashes[str(pdf_path)], result)
+                    if "error" in result:
+                        errors += 1
+                    pbar.set_postfix({"errors": errors, "last": pdf_path.name[:20]})
                 pbar.update(1)
 
     conn.close()
+
+    if stop_event.is_set():
+        remaining = len(pdf_files) - len(results)
+        print(f"\n⏸️  Paused: ran out of API credits after processing {len(results)}/{len(pdf_files)} files.")
+        print(f"   {remaining} file(s) not yet attempted — nothing was lost.")
+        print(f"   👉 Add credits at https://console.anthropic.com/settings/billing, then rerun the same command:")
+        print(f"      python3 {Path(__file__).name} --input {args.input} --output {args.output} "
+              f"--db {args.db} --workers {args.workers}")
+        print(f"   Already-processed files are cached in '{args.db}' and will be skipped automatically.")
+        logger.error(f"Run paused: out of API credits after {len(results)}/{len(pdf_files)} files")
+
+        results.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
+        annotate_revisions(results)
+        build_excel(results, args.output)
+        sys.exit(3)
 
     # Sort results by PO date then filename for clean output
     results.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))

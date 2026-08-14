@@ -5,6 +5,7 @@ lib64
 include/
 pyvenv.cfg
 .venv/
+.venv*/
 venv/
 
 # Python
@@ -26,3 +27,4 @@ files/
 
 # Secrets
 .env
+.streamlit/secrets.toml
