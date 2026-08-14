@@ -6,14 +6,19 @@ Extracts purchase order data from PDF files using Claude AI and exports to Excel
 Usage:
     python extract_pos.py --input ./pdfs --output po_data.xlsx
     python extract_pos.py --input ./pdfs --output po_data.xlsx --workers 5
+    python extract_pos.py --input ./pdfs --output po_data.xlsx --force   # re-extract even if unchanged
+
+Results are cached in a local SQLite database (po_data.db by default) keyed by
+file content hash — rerunning over the same folder only re-extracts files that
+are new or have changed. Excel output is generated from that data each run.
 
 Requirements:
-    pip install anthropic pdfplumber openpyxl tqdm
+    pip install -r requirements.txt
 """
 
 import argparse
 import base64
-import json
+import logging
 import os
 import re
 import sys
@@ -29,6 +34,31 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from tqdm import tqdm
 
+import db
+
+
+# ── Logging ─────────────────────────────────────────────────────────────────────
+# INFO+ goes to a log file for after-the-fact debugging; only WARNING+ hits the
+# console so it doesn't collide with the tqdm progress bar.
+
+logger = logging.getLogger("extract_pos")
+
+
+def configure_logging(log_path: str) -> None:
+    logger.setLevel(logging.INFO)
+
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s  %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    ))
+    logger.addHandler(file_handler)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.WARNING)
+    console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    logger.addHandler(console_handler)
+
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
@@ -39,47 +69,70 @@ VALID_PRODUCTS = ["Rainbow Mix", "Arugula", "Cilantro", "Bulls Blood Beets", "Ge
 VALID_SIZES = [1, 2, 3, 4, 8, 20]
 
 EXTRACTION_PROMPT = """You are a data extraction assistant for Garfield Produce Company.
-Extract all purchase order data from this document.
-
-Return ONLY a valid JSON object (no markdown, no explanation) with this structure:
-{
-  "po_number": "string or null",
-  "po_date": "YYYY-MM-DD or original string if unparseable, or null",
-  "sent_date": "YYYY-MM-DD or original string if unparseable, or null",
-  "delivery_date": "YYYY-MM-DD or original string if unparseable, or null",
-  "revision_number": "string or null (e.g. '1', '2', 'A' — extract if explicitly stated)",
-  "revision_label": "string or null (verbatim label found, e.g. 'Rev 2', 'Revised', 'Amendment 1')",
-  "customer_name": "string or null",
-  "customer_id": "string or null",
-  "line_items": [
-    {
-      "product_raw": "the full original product description string",
-      "sku": "string or null",
-      "quantity": number or null,
-      "unit_price": number or null,
-      "line_total": number or null
-    }
-  ],
-  "subtotal": number or null,
-  "tax": number or null,
-  "total": number or null,
-  "notes": "any other relevant info or null"
-}
+Extract all purchase order data from the document using the extract_po tool.
 
 Rules:
-- Extract every line item as a separate object in line_items
-- Use null for any field not found in the document
-- For dates, try to parse to YYYY-MM-DD format; if ambiguous leave as original string
+- Extract every line item as a separate entry in line_items
+- For dates, try to parse to YYYY-MM-DD format; if ambiguous leave as the original string
 - Numbers should be numeric (not strings), strip currency symbols
 - Preserve the full original product description in product_raw exactly as written
 - sent_date: look for labels like 'Sent', 'Issued', 'Created', 'Date Sent', 'Transmitted'
 - revision_number/revision_label: look for 'Rev', 'Revision', 'Revised', 'Amendment', 'Version', 'Ver'
-- If you cannot find PO data at all, return {"error": "not a purchase order"}
+- Set is_po to false if the document is not a purchase order, and leave the other fields empty
 """
+
+# Sent once as a cached system block (cache_control) instead of being resent
+# in every user message — cuts repeated-prompt token cost across a batch run.
+SYSTEM_BLOCK = [
+    {
+        "type": "text",
+        "text": EXTRACTION_PROMPT,
+        "cache_control": {"type": "ephemeral"},
+    }
+]
+
+EXTRACTION_TOOL = {
+    "name": "extract_po",
+    "description": "Record structured purchase order data extracted from a document.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "is_po": {"type": "boolean", "description": "false if the document is not a purchase order"},
+            "po_number": {"type": ["string", "null"]},
+            "po_date": {"type": ["string", "null"]},
+            "sent_date": {"type": ["string", "null"]},
+            "delivery_date": {"type": ["string", "null"]},
+            "revision_number": {"type": ["string", "null"]},
+            "revision_label": {"type": ["string", "null"]},
+            "customer_name": {"type": ["string", "null"]},
+            "customer_id": {"type": ["string", "null"]},
+            "line_items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "product_raw": {"type": "string"},
+                        "sku": {"type": ["string", "null"]},
+                        "quantity": {"type": ["number", "null"]},
+                        "unit_price": {"type": ["number", "null"]},
+                        "line_total": {"type": ["number", "null"]},
+                    },
+                    "required": ["product_raw"],
+                },
+            },
+            "subtotal": {"type": ["number", "null"]},
+            "tax": {"type": ["number", "null"]},
+            "total": {"type": ["number", "null"]},
+            "notes": {"type": ["string", "null"]},
+        },
+        "required": ["is_po", "line_items"],
+    },
+}
 
 MODEL = "claude-opus-4-6"
 MAX_RETRIES = 5          # was 3 — more attempts for transient rate limits
 RETRY_DELAY = 10         # seconds base delay (exponential backoff from here)
+MATH_TOLERANCE = 0.02    # dollars — arithmetic checks below this are treated as rounding noise
 
 
 # ── Product Normalization ──────────────────────────────────────────────────────
@@ -132,6 +185,36 @@ def normalize_product(raw, unit_price=None):
     )
 
     return product, size, is_sample, needs_review
+
+
+def validate_math(data: dict) -> None:
+    """
+    Flags arithmetic mismatches for manual review; does not alter any values.
+    Sets item['math_mismatch'] and data['math_check_failed']/['math_check_detail'].
+    """
+    items = data.get("line_items") or []
+    line_total_sum = 0.0
+    has_totals = False
+
+    for item in items:
+        qty, price, total = item.get("quantity"), item.get("unit_price"), item.get("line_total")
+        if qty is not None and price is not None and total is not None:
+            has_totals = True
+            if abs(qty * price - total) > MATH_TOLERANCE:
+                item["math_mismatch"] = f"{qty} × ${price} = ${qty * price:.2f}, not ${total}"
+        if total is not None:
+            line_total_sum += total
+
+    subtotal, tax, total_amt = data.get("subtotal"), data.get("tax"), data.get("total")
+    issues = []
+    if subtotal is not None and has_totals and abs(line_total_sum - subtotal) > MATH_TOLERANCE:
+        issues.append(f"line items sum to ${line_total_sum:.2f}, subtotal says ${subtotal}")
+    if subtotal is not None and tax is not None and total_amt is not None:
+        if abs(subtotal + tax - total_amt) > MATH_TOLERANCE:
+            issues.append(f"subtotal (${subtotal}) + tax (${tax}) ≠ total (${total_amt})")
+
+    data["math_check_failed"] = bool(issues)
+    data["math_check_detail"] = "; ".join(issues)
 
 
 # ── Revision Detection & Diff Engine ──────────────────────────────────────────
@@ -279,6 +362,7 @@ def extract_po_data(client: anthropic.Anthropic, pdf_path: str) -> dict:
     filename = os.path.basename(pdf_path)
     text = extract_pdf_text(pdf_path)
     last_error = "Unknown error"
+    start_time = time.monotonic()
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -286,7 +370,7 @@ def extract_po_data(client: anthropic.Anthropic, pdf_path: str) -> dict:
                 messages = [
                     {
                         "role": "user",
-                        "content": f"{EXTRACTION_PROMPT}\n\nDocument text:\n{text[:15000]}"
+                        "content": f"Document text:\n{text[:15000]}"
                     }
                 ]
             else:
@@ -303,7 +387,7 @@ def extract_po_data(client: anthropic.Anthropic, pdf_path: str) -> dict:
                                     "data": b64
                                 }
                             },
-                            {"type": "text", "text": EXTRACTION_PROMPT}
+                            {"type": "text", "text": "Extract the purchase order data from this document."}
                         ]
                     }
                 ]
@@ -311,19 +395,27 @@ def extract_po_data(client: anthropic.Anthropic, pdf_path: str) -> dict:
             response = client.messages.create(
                 model=MODEL,
                 max_tokens=2000,
-                messages=messages
+                system=SYSTEM_BLOCK,
+                messages=messages,
+                tools=[EXTRACTION_TOOL],
+                tool_choice={"type": "tool", "name": "extract_po"}
             )
 
-            raw = response.content[0].text.strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            raw = raw.strip()
+            tool_block = next((b for b in response.content if b.type == "tool_use"), None)
+            if tool_block is None:
+                raise ValueError("Model response did not include a tool_use block")
 
-            data = json.loads(raw)
+            data = dict(tool_block.input)
+            is_po = data.pop("is_po", True)
             data["_source_file"] = filename
             data["_extraction_method"] = "text" if text else "vision"
+
+            if not is_po:
+                return {
+                    "_source_file": filename,
+                    "_extraction_method": "text" if text else "vision",
+                    "error": "not a purchase order"
+                }
 
             # Normalize each line item's product name and container size
             for item in data.get("line_items") or []:
@@ -336,10 +428,18 @@ def extract_po_data(client: anthropic.Anthropic, pdf_path: str) -> dict:
                 item["is_sample"] = is_sample
                 item["needs_review"] = needs_review
 
+            validate_math(data)
+
+            elapsed = time.monotonic() - start_time
+            logger.info(
+                f"{filename}: extracted via {data['_extraction_method']} in {elapsed:.1f}s "
+                f"(attempt {attempt + 1}/{MAX_RETRIES})"
+            )
             return data
 
-        except json.JSONDecodeError as e:
-            last_error = f"JSON parse error (attempt {attempt + 1}/{MAX_RETRIES}): {e}"
+        except (ValueError, KeyError, TypeError) as e:
+            last_error = f"Malformed tool response (attempt {attempt + 1}/{MAX_RETRIES}): {e}"
+            logger.warning(f"{filename}: {last_error}")
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY)
             continue
@@ -347,12 +447,13 @@ def extract_po_data(client: anthropic.Anthropic, pdf_path: str) -> dict:
         except anthropic.RateLimitError as e:
             wait = RETRY_DELAY * (2 ** attempt)  # exponential: 5s, 10s, 20s
             last_error = f"Rate limit (attempt {attempt + 1}/{MAX_RETRIES}): {e} — retrying in {wait}s"
-            print(f"\n⏳ Rate limit hit for {filename}, waiting {wait}s...")
+            logger.warning(f"{filename}: rate limit hit, waiting {wait}s...")
             time.sleep(wait)
             continue
 
         except anthropic.APIStatusError as e:
             last_error = f"API error {e.status_code} (attempt {attempt + 1}/{MAX_RETRIES}): {e.message}"
+            logger.warning(f"{filename}: {last_error}")
             if attempt < MAX_RETRIES - 1:
                 wait = RETRY_DELAY * (attempt + 1)
                 time.sleep(wait)
@@ -360,16 +461,19 @@ def extract_po_data(client: anthropic.Anthropic, pdf_path: str) -> dict:
 
         except anthropic.APIConnectionError as e:
             last_error = f"Connection error (attempt {attempt + 1}/{MAX_RETRIES}): {e}"
+            logger.warning(f"{filename}: {last_error}")
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY)
             continue
 
         except Exception as e:
             last_error = f"{type(e).__name__} (attempt {attempt + 1}/{MAX_RETRIES}): {e}"
+            logger.warning(f"{filename}: {last_error}")
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY)
             continue
 
+    logger.error(f"{filename}: max retries exceeded — {last_error}")
     return {
         "_source_file": filename,
         "_extraction_method": "text" if text else "vision",
@@ -418,7 +522,7 @@ def build_excel(all_results: list[dict], output_path: str):
         "Customer Name", "Customer ID",
         "Product", "Container Size", "Sample", "Quantity",
         "Unit Price ($)", "Line Total ($)", "PO Subtotal ($)", "PO Tax ($)", "PO Total ($)",
-        "Revision Status", "Changes",
+        "Revision Status", "Changes", "Math Check",
         "SKU", "Notes", "Extraction Method"
     ]
     ws_lines.append(line_headers)
@@ -456,10 +560,11 @@ def build_excel(all_results: list[dict], output_path: str):
             if product not in VALID_PRODUCTS and not item.get("_removed"):
                 product = f"⚠️ {item.get('product_raw', 'UNKNOWN')}"
 
-            is_sample    = item.get("is_sample", False)
-            needs_review = item.get("needs_review", False)
-            rev_status   = item.get("revision_status", "")
-            is_removed   = item.get("_removed", False)
+            is_sample     = item.get("is_sample", False)
+            math_mismatch = item.get("math_mismatch", "")
+            needs_review  = item.get("needs_review", False) or bool(math_mismatch)
+            rev_status    = item.get("revision_status", "")
+            is_removed    = item.get("_removed", False)
 
             row = [
                 result.get("_source_file", ""),
@@ -481,6 +586,7 @@ def build_excel(all_results: list[dict], output_path: str):
                 result.get("total"),
                 rev_status,
                 item.get("changes", ""),
+                math_mismatch,
                 item.get("sku", ""),
                 result.get("notes", ""),
                 result.get("_extraction_method", "")
@@ -508,7 +614,7 @@ def build_excel(all_results: list[dict], output_path: str):
             data_row += 1
 
     # Column widths for Line Items
-    col_widths = [22, 16, 10, 13, 13, 13, 26, 16, 18, 14, 9, 10, 14, 14, 15, 11, 13, 14, 28, 14, 30, 16]
+    col_widths = [22, 16, 10, 13, 13, 13, 26, 16, 18, 14, 9, 10, 14, 14, 15, 11, 13, 14, 28, 24, 14, 30, 16]
     for i, w in enumerate(col_widths, 1):
         ws_lines.column_dimensions[get_column_letter(i)].width = w
 
@@ -521,7 +627,7 @@ def build_excel(all_results: list[dict], output_path: str):
         "Source File", "PO Number", "Version", "Is Revision",
         "PO Date", "Sent Date", "Delivery Date",
         "Customer Name", "Customer ID", "Line Item Count",
-        "Subtotal ($)", "Tax ($)", "Total ($)", "Notes", "Extraction Method"
+        "Subtotal ($)", "Tax ($)", "Total ($)", "Math Check", "Notes", "Extraction Method"
     ]
     ws_po.append(po_headers)
     style_header_row(ws_po, 1, len(po_headers))
@@ -530,6 +636,7 @@ def build_excel(all_results: list[dict], output_path: str):
     for i, result in enumerate(all_results, 2):
         items = result.get("line_items") or []
         is_rev = result.get("_is_revision", False)
+        math_failed = result.get("math_check_failed", False)
         row = [
             result.get("_source_file", ""),
             result.get("po_number", ""),
@@ -544,13 +651,19 @@ def build_excel(all_results: list[dict], output_path: str):
             result.get("subtotal"),
             result.get("tax"),
             result.get("total"),
+            result.get("math_check_detail", ""),
             result.get("notes", "") if "error" not in result else f"ERROR: {result.get('error')}",
             result.get("_extraction_method", "")
         ]
         ws_po.append(row)
         for col in range(1, len(po_headers) + 1):
             cell = ws_po.cell(row=i, column=col)
-            if is_rev:
+            if math_failed:
+                cell.fill = REVIEW_FILL
+                cell.font = NORMAL_FONT
+                cell.border = BORDER
+                cell.alignment = Alignment(vertical="center")
+            elif is_rev:
                 cell.fill = REVISION_FILL
                 cell.font = NORMAL_FONT
                 cell.border = BORDER
@@ -558,7 +671,7 @@ def build_excel(all_results: list[dict], output_path: str):
             else:
                 style_data_cell(cell, i)
 
-    po_widths = [22, 16, 10, 11, 13, 13, 13, 26, 16, 14, 14, 12, 14, 30, 16]
+    po_widths = [22, 16, 10, 11, 13, 13, 13, 26, 16, 14, 14, 12, 14, 24, 30, 16]
     for i, w in enumerate(po_widths, 1):
         ws_po.column_dimensions[get_column_letter(i)].width = w
     ws_po.freeze_panes = "A2"
@@ -591,16 +704,24 @@ def main():
     parser.add_argument("--workers",      type=int, default=3, help="Parallel workers (default: 3; reduce to 1 if hitting rate limits)")
     parser.add_argument("--limit",        type=int, default=None, help="Process only first N files (for testing)")
     parser.add_argument("--retry-failed", metavar="ERRORS_TXT", help="Retry only files listed in a text file (one filename per line)")
+    parser.add_argument("--log-file",     default="extract_pos.log", help="Path to the log file (default: extract_pos.log)")
+    parser.add_argument("--db",           default="po_data.db", help="SQLite database path (default: po_data.db)")
+    parser.add_argument("--force",        action="store_true", help="Re-extract even if a file is unchanged since last run")
     args = parser.parse_args()
+
+    configure_logging(args.log_file)
+    logger.info(f"Run started: input={args.input} output={args.output} workers={args.workers}")
 
     input_dir = Path(args.input)
     if not input_dir.is_dir():
         print(f"❌ Error: '{args.input}' is not a directory", file=sys.stderr)
+        logger.error(f"'{args.input}' is not a directory")
         sys.exit(1)
 
     all_pdfs = sorted(input_dir.glob("*.pdf")) + sorted(input_dir.glob("*.PDF"))
     if not all_pdfs:
         print(f"❌ No PDF files found in '{args.input}'", file=sys.stderr)
+        logger.error(f"No PDF files found in '{args.input}'")
         sys.exit(1)
 
     # --retry-failed: filter to only the listed filenames
@@ -608,12 +729,14 @@ def main():
         retry_path = Path(args.retry_failed)
         if not retry_path.exists():
             print(f"❌ Retry file not found: {args.retry_failed}", file=sys.stderr)
+            logger.error(f"Retry file not found: {args.retry_failed}")
             sys.exit(1)
         retry_names = {line.strip() for line in retry_path.read_text().splitlines() if line.strip()}
         pdf_files = [p for p in all_pdfs if p.name in retry_names]
         print(f"🔁 Retry mode: {len(pdf_files)} file(s) from {args.retry_failed}")
         if not pdf_files:
             print("❌ None of the listed files found in input directory", file=sys.stderr)
+            logger.error("None of the retry-listed files found in input directory")
             sys.exit(1)
     else:
         pdf_files = all_pdfs
@@ -621,22 +744,43 @@ def main():
     if args.limit:
         pdf_files = pdf_files[:args.limit]
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        print("❌ ANTHROPIC_API_KEY environment variable not set", file=sys.stderr)
-        sys.exit(1)
+    # Skip files whose content hasn't changed since a prior successful run
+    conn = db.connect(args.db)
+    db.init_db(conn)
 
-    client = anthropic.Anthropic(api_key=api_key)
+    file_hashes = {}
+    results = []
+    to_extract = []
+    for p in pdf_files:
+        h = db.file_sha256(str(p))
+        file_hashes[str(p)] = h
+        cached = None if args.force else db.get_cached_result(conn, p.name, h)
+        if cached is not None:
+            results.append(cached)
+        else:
+            to_extract.append(p)
 
-    print(f"📄 Found {len(pdf_files)} PDF(s) in '{args.input}'")
+    if results:
+        print(f"💾 {len(results)} file(s) unchanged since last run — reusing cached extraction")
+    logger.info(f"{len(results)} cached, {len(to_extract)} to extract (force={args.force})")
+
+    client = None
+    if to_extract:
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            print("❌ ANTHROPIC_API_KEY environment variable not set", file=sys.stderr)
+            logger.error("ANTHROPIC_API_KEY environment variable not set")
+            sys.exit(1)
+        client = anthropic.Anthropic(api_key=api_key)
+
+    print(f"📄 Found {len(pdf_files)} PDF(s) in '{args.input}'  ({len(to_extract)} to extract)")
     print(f"🤖 Model: {MODEL}  |  Workers: {args.workers}  |  Max retries: {MAX_RETRIES}")
     print(f"📊 Output: {args.output}\n")
 
-    results = []
-    errors  = 0
+    errors = sum(1 for r in results if "error" in r)
 
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
-        futures = {executor.submit(extract_po_data, client, str(p)): p for p in pdf_files}
+        futures = {executor.submit(extract_po_data, client, str(p)): p for p in to_extract}
         with tqdm(total=len(futures), unit="pdf", ncols=80) as pbar:
             for future in as_completed(futures):
                 pdf_path = futures[future]
@@ -649,10 +793,13 @@ def main():
                         "error": f"{type(e).__name__}: {e}"
                     }
                 results.append(result)
+                db.save_result(conn, file_hashes[str(pdf_path)], result)
                 if "error" in result:
                     errors += 1
                 pbar.set_postfix({"errors": errors, "last": pdf_path.name[:20]})
                 pbar.update(1)
+
+    conn.close()
 
     # Sort results by PO date then filename for clean output
     results.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
@@ -664,6 +811,7 @@ def main():
 
     success = len(results) - errors
     print(f"\n📈 Summary: {success} extracted successfully, {errors} errors")
+    logger.info(f"Run finished: {success} succeeded, {errors} errors, output={args.output}")
     if errors:
         failed_names = [r["_source_file"] for r in results if "error" in r]
         failed_txt = Path(args.output).stem + "_failed.txt"

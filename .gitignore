@@ -14,6 +14,8 @@ __pycache__/
 # Generated output
 *.xlsx
 *_failed.txt
+*.log
+*.db
 
 # Source PO documents (customer data — keep local only)
 files/
