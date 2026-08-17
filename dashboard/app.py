@@ -8,6 +8,7 @@ Run locally with:  streamlit run dashboard/app.py   (from the repo root)
 
 import io
 import os
+import secrets
 import sys
 
 import pandas as pd
@@ -18,6 +19,9 @@ import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from math_check import validate_math  # noqa: E402 — needs the sys.path insert above
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import qbo_client  # noqa: E402 — needs the sys.path insert above (AppTest doesn't add the script's own dir like `streamlit run` does)
 
 st.set_page_config(page_title="Garfield Produce — PO Dashboard", layout="wide", page_icon="🌱")
 
@@ -111,6 +115,30 @@ def month_over_month_movers(df: pd.DataFrame, date_col: str, group_col: str, val
     return merged, curr_m, prev_m
 
 
+def get_database_url() -> str:
+    url = st.secrets.get("database_url") or os.environ.get("DATABASE_URL")
+    if not url:
+        st.error("No database configured. Set `database_url` in .streamlit/secrets.toml.")
+        st.stop()
+    return url
+
+
+# ── QuickBooks OAuth callback ─────────────────────────────────────────────────────
+# Handled before the password gate: a full-page browser redirect back from Intuit may
+# or may not preserve session_state["authed"], and completing a token exchange that
+# only the account owner could have triggered (by clicking Connect from inside the
+# password-gated app) isn't a meaningful security exposure either way.
+
+_qp = st.query_params
+if "code" in _qp and "realmId" in _qp:
+    _conn = psycopg2.connect(get_database_url())
+    try:
+        qbo_client.exchange_code_for_tokens(_conn, _qp["code"], _qp["realmId"])
+    finally:
+        _conn.close()
+    st.query_params.clear()
+    st.rerun()
+
 # ── Auth ────────────────────────────────────────────────────────────────────────
 
 def check_password() -> bool:
@@ -134,14 +162,6 @@ if not check_password():
     st.stop()
 
 # ── Data loading ────────────────────────────────────────────────────────────────
-
-def get_database_url() -> str:
-    url = st.secrets.get("database_url") or os.environ.get("DATABASE_URL")
-    if not url:
-        st.error("No database configured. Set `database_url` in .streamlit/secrets.toml.")
-        st.stop()
-    return url
-
 
 def save_po_edit(po_id: int, header: dict, items: list[dict]) -> None:
     """Writes a manual edit straight to Postgres and marks the PO as edited so
@@ -354,8 +374,8 @@ else:
 
 st.title("🌱 Garfield Produce — Purchase Order Dashboard")
 
-tab_overview, tab_trends, tab_products, tab_customers, tab_revisions, tab_data, tab_edit = st.tabs(
-    ["Overview", "Trends", "Products", "Customers", "Revisions & Data Quality", "Raw Data", "✏️ Edit"]
+tab_overview, tab_trends, tab_products, tab_customers, tab_revisions, tab_data, tab_edit, tab_qbo = st.tabs(
+    ["Overview", "Trends", "Products", "Customers", "Revisions & Data Quality", "Raw Data", "✏️ Edit", "🔗 QuickBooks"]
 )
 
 # ── Overview ─────────────────────────────────────────────────────────────────────
@@ -758,3 +778,70 @@ with tab_edit:
             load_data.clear()
             st.success("Saved.")
             st.rerun()
+
+# ── QuickBooks ───────────────────────────────────────────────────────────────────
+
+with tab_qbo:
+    st.caption(
+        "Phase 1: connect to QuickBooks (sandbox) and pull raw invoice data — the "
+        "matching logic against PO requests comes in a follow-up phase, once we've seen "
+        "what fields this company's invoices actually populate."
+    )
+
+    _conn = psycopg2.connect(get_database_url())
+    try:
+        connection = qbo_client.get_connection(_conn)
+    finally:
+        _conn.close()
+
+    if connection is None:
+        st.info("Not connected to QuickBooks yet.")
+        oauth_state = st.session_state.setdefault("qbo_oauth_state", secrets.token_urlsafe(16))
+        st.link_button("🔗 Connect to QuickBooks", qbo_client.build_authorize_url(oauth_state))
+    else:
+        st.success(f"Connected — realm ID `{connection['realm_id']}` (since {connection['connected_at']}).")
+
+        c1, c2 = st.columns(2)
+        if c1.button("🔄 Sync invoices"):
+            sync_conn = psycopg2.connect(get_database_url())
+            try:
+                with st.spinner("Pulling invoices from QuickBooks..."):
+                    count = qbo_client.sync_invoices(sync_conn)
+                st.success(f"Synced {count} invoice(s).")
+            except Exception as e:
+                st.error(f"Sync failed: {e}")
+            finally:
+                sync_conn.close()
+        if c2.button("Disconnect"):
+            dc_conn = psycopg2.connect(get_database_url())
+            try:
+                qbo_client.disconnect(dc_conn)
+            finally:
+                dc_conn.close()
+            st.rerun()
+
+        inv_conn = psycopg2.connect(get_database_url())
+        try:
+            invoices_df = pd.read_sql_query(
+                "SELECT doc_number, customer_name, txn_date, ship_date, due_date, "
+                "total_amt, private_note, raw_json FROM qbo_invoices "
+                "ORDER BY txn_date DESC NULLS LAST",
+                inv_conn,
+            )
+        finally:
+            inv_conn.close()
+
+        if invoices_df.empty:
+            st.caption("No invoices synced yet — click Sync invoices above.")
+        else:
+            st.dataframe(
+                invoices_df.drop(columns=["raw_json"]).rename(columns={
+                    "doc_number": "Doc #", "customer_name": "Customer", "txn_date": "Invoice Date",
+                    "ship_date": "Ship Date", "due_date": "Due Date", "total_amt": "Total ($)",
+                    "private_note": "Private Note",
+                }),
+                use_container_width=True, hide_index=True,
+            )
+            with st.expander("Inspect one raw invoice (for designing Phase 2's matcher)"):
+                idx = st.number_input("Row index", min_value=0, max_value=len(invoices_df) - 1, value=0)
+                st.json(invoices_df.iloc[int(idx)]["raw_json"])

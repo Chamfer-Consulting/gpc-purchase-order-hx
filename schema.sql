@@ -58,3 +58,29 @@ CREATE INDEX IF NOT EXISTS idx_po_po_number ON purchase_orders(po_number);
 CREATE INDEX IF NOT EXISTS idx_po_po_date ON purchase_orders(po_date);
 CREATE INDEX IF NOT EXISTS idx_po_customer_name ON purchase_orders(customer_name);
 CREATE INDEX IF NOT EXISTS idx_line_items_product_name ON line_items(product_name);
+
+-- QuickBooks Online integration (Phase 1: connect + pull raw invoice data).
+CREATE TABLE IF NOT EXISTS qbo_connection (
+    id                       SERIAL PRIMARY KEY,
+    realm_id                 TEXT NOT NULL,
+    access_token             TEXT NOT NULL,
+    refresh_token            TEXT NOT NULL,
+    access_token_expires_at  TIMESTAMPTZ NOT NULL,
+    refresh_token_expires_at TIMESTAMPTZ NOT NULL,
+    connected_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS qbo_invoices (
+    id             SERIAL PRIMARY KEY,
+    qbo_invoice_id TEXT NOT NULL UNIQUE,
+    doc_number     TEXT,
+    customer_name  TEXT,
+    txn_date       DATE,
+    ship_date      DATE,
+    due_date       DATE,
+    total_amt      NUMERIC,
+    private_note   TEXT,
+    raw_json       JSONB NOT NULL,
+    synced_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
