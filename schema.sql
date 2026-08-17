@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS line_items (
 
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS changes TEXT;
 
+-- Dashboard-side manual edits are permanent: once a PO is edited, sync_dashboard.py
+-- must never overwrite its header or line items again (see sync_dashboard.py's
+-- ON CONFLICT ... WHERE clause).
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS edited BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_line_items_po_id ON line_items(po_id);
 CREATE INDEX IF NOT EXISTS idx_po_po_number ON purchase_orders(po_number);
 CREATE INDEX IF NOT EXISTS idx_po_po_date ON purchase_orders(po_date);

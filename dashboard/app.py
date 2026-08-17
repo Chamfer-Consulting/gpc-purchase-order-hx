@@ -8,12 +8,16 @@ Run locally with:  streamlit run dashboard/app.py   (from the repo root)
 
 import io
 import os
+import sys
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import psycopg2
 import streamlit as st
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from math_check import validate_math  # noqa: E402 — needs the sys.path insert above
 
 st.set_page_config(page_title="Garfield Produce — PO Dashboard", layout="wide", page_icon="🌱")
 
@@ -137,6 +141,59 @@ def get_database_url() -> str:
         st.error("No database configured. Set `database_url` in .streamlit/secrets.toml.")
         st.stop()
     return url
+
+
+def save_po_edit(po_id: int, header: dict, items: list[dict]) -> None:
+    """Writes a manual edit straight to Postgres and marks the PO as edited so
+    sync_dashboard.py never overwrites it again (see its ON CONFLICT ... WHERE clause)."""
+    data = {"subtotal": header["subtotal"], "tax": header["tax"], "total": header["total"], "line_items": items}
+    validate_math(data)
+
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE purchase_orders SET
+                    po_number = %(po_number)s, customer_name = %(customer_name)s,
+                    po_date = %(po_date)s, delivery_date = %(delivery_date)s,
+                    subtotal = %(subtotal)s, tax = %(tax)s, total = %(total)s, notes = %(notes)s,
+                    math_check_failed = %(math_check_failed)s, math_check_detail = %(math_check_detail)s,
+                    edited = TRUE, edited_at = now()
+                WHERE id = %(po_id)s
+                """,
+                {**header, "po_id": po_id,
+                 "math_check_failed": data["math_check_failed"], "math_check_detail": data["math_check_detail"]},
+            )
+            cur.execute("DELETE FROM line_items WHERE po_id = %s", (po_id,))
+            for item in items:
+                cur.execute(
+                    """
+                    INSERT INTO line_items (
+                        po_id, product_raw, product_name, container_size,
+                        quantity, unit_price, line_total, is_sample,
+                        math_mismatch, revision_status, is_removed
+                    ) VALUES (
+                        %(po_id)s, %(product_raw)s, %(product_name)s, %(container_size)s,
+                        %(quantity)s, %(unit_price)s, %(line_total)s, %(is_sample)s,
+                        %(math_mismatch)s, 'Edited', FALSE
+                    )
+                    """,
+                    {
+                        "po_id": po_id,
+                        "product_raw": item.get("product_name"),
+                        "product_name": item.get("product_name"),
+                        "container_size": item.get("container_size"),
+                        "quantity": item.get("quantity"),
+                        "unit_price": item.get("unit_price"),
+                        "line_total": item.get("line_total"),
+                        "is_sample": bool(item.get("is_sample", False)),
+                        "math_mismatch": item.get("math_mismatch"),
+                    },
+                )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 @st.cache_data(ttl=300, show_spinner="Loading PO data...")
@@ -297,8 +354,8 @@ else:
 
 st.title("🌱 Garfield Produce — Purchase Order Dashboard")
 
-tab_overview, tab_trends, tab_products, tab_customers, tab_revisions, tab_data = st.tabs(
-    ["Overview", "Trends", "Products", "Customers", "Revisions & Data Quality", "Raw Data"]
+tab_overview, tab_trends, tab_products, tab_customers, tab_revisions, tab_data, tab_edit = st.tabs(
+    ["Overview", "Trends", "Products", "Customers", "Revisions & Data Quality", "Raw Data", "✏️ Edit"]
 )
 
 # ── Overview ─────────────────────────────────────────────────────────────────────
@@ -619,3 +676,85 @@ with tab_data:
         mime="text/csv",
         key="dl_raw",
     )
+
+# ── Edit ─────────────────────────────────────────────────────────────────────────
+
+with tab_edit:
+    st.caption(
+        "Edits are permanent — once saved, that PO stops receiving updates from future "
+        "extraction syncs (its header and line items are frozen as you leave them here)."
+    )
+
+    picker = latest_po.sort_values("po_number", na_position="last")
+    label_to_id = {
+        f"{row.po_number or row.source_file} — {row.customer_name or 'Unknown customer'}": int(row.id)
+        for row in picker.itertuples()
+    }
+    selected_label = st.selectbox("Select a PO to edit", options=list(label_to_id.keys()))
+    selected_id = label_to_id.get(selected_label)
+
+    if selected_id is not None:
+        row = latest_po[latest_po["id"] == selected_id].iloc[0]
+        if bool(row.get("edited")):
+            st.info(f"This record was already manually edited (at {row.get('edited_at')}).")
+
+        with st.form(f"edit_form_{selected_id}"):
+            c1, c2 = st.columns(2)
+            po_number = c1.text_input("PO Number", value=row["po_number"] or "", key=f"po_number_{selected_id}")
+            customer_name = c2.text_input("Customer", value=row["customer_name"] or "", key=f"customer_{selected_id}")
+            po_date = c1.date_input(
+                "PO Date", value=row["po_date"].date() if pd.notna(row["po_date"]) else None, key=f"po_date_{selected_id}",
+            )
+            delivery_date = c2.date_input(
+                "Delivery Date", value=row["delivery_date"].date() if pd.notna(row["delivery_date"]) else None,
+                key=f"delivery_date_{selected_id}",
+            )
+            subtotal = c1.number_input(
+                "Subtotal ($)", value=float(row["subtotal"]) if pd.notna(row["subtotal"]) else 0.0,
+                step=0.01, format="%.2f", key=f"subtotal_{selected_id}",
+            )
+            tax = c2.number_input(
+                "Tax ($)", value=float(row["tax"]) if pd.notna(row["tax"]) else 0.0,
+                step=0.01, format="%.2f", key=f"tax_{selected_id}",
+            )
+            total = c1.number_input(
+                "Total ($)", value=float(row["total"]) if pd.notna(row["total"]) else 0.0,
+                step=0.01, format="%.2f", key=f"total_{selected_id}",
+            )
+            notes = st.text_area("Notes", value=row["notes"] or "", key=f"notes_{selected_id}")
+
+            st.markdown("**Line items**")
+            items_seed = all_items[all_items["po_id"] == selected_id][
+                ["product_name", "container_size", "quantity", "unit_price", "line_total", "is_sample"]
+            ].reset_index(drop=True)
+            edited_items = st.data_editor(
+                items_seed, num_rows="dynamic", use_container_width=True, key=f"items_editor_{selected_id}",
+                column_config={
+                    "quantity": st.column_config.NumberColumn("Qty"),
+                    "unit_price": st.column_config.NumberColumn("Unit Price ($)", format="%.2f"),
+                    "line_total": st.column_config.NumberColumn("Line Total ($)", format="%.2f"),
+                    "is_sample": st.column_config.CheckboxColumn("Sample"),
+                },
+            )
+
+            submitted = st.form_submit_button("💾 Save changes")
+
+        if submitted:
+            items = [
+                item for item in edited_items.to_dict("records")
+                if item.get("product_name")  # drop blank rows added via the "+" control
+            ]
+            header = {
+                "po_number": po_number or None,
+                "customer_name": customer_name or None,
+                "po_date": po_date,
+                "delivery_date": delivery_date,
+                "subtotal": subtotal,
+                "tax": tax,
+                "total": total,
+                "notes": notes or None,
+            }
+            save_po_edit(selected_id, header, items)
+            load_data.clear()
+            st.success("Saved.")
+            st.rerun()

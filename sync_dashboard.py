@@ -124,6 +124,7 @@ def publish(sqlite_path: str, database_url: str) -> int:
                     math_check_failed = EXCLUDED.math_check_failed,
                     math_check_detail = EXCLUDED.math_check_detail,
                     extracted_at      = now()
+                WHERE purchase_orders.edited = FALSE
                 RETURNING id
                 """,
                 {
@@ -149,7 +150,22 @@ def publish(sqlite_path: str, database_url: str) -> int:
                     "math_check_detail": r.get("math_check_detail"),
                 },
             )
-            po_id = cur.fetchone()[0]
+            row = cur.fetchone()
+            if row is not None:
+                po_id, was_updated = row[0], True
+            else:
+                # ON CONFLICT DO UPDATE ... WHERE was false (edited=TRUE) — the row was
+                # left untouched and RETURNING yields nothing, so look its id up instead.
+                cur.execute(
+                    "SELECT id FROM purchase_orders WHERE source_file = %s AND file_hash = %s",
+                    (r.get("_source_file"), r.get("_file_hash")),
+                )
+                po_id, was_updated = cur.fetchone()[0], False
+
+            if not was_updated:
+                # Header was protected because it's been manually edited — leave its
+                # line items alone too, don't let re-extraction overwrite them.
+                continue
 
             cur.execute("DELETE FROM line_items WHERE po_id = %s", (po_id,))
             for item in r.get("line_items") or []:

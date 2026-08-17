@@ -34,6 +34,8 @@ from pathlib import Path
 
 import pdfplumber
 import anthropic
+
+from math_check import validate_math
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -137,7 +139,6 @@ EXTRACTION_TOOL = {
 MODEL = "claude-opus-4-6"
 MAX_RETRIES = 5          # was 3 — more attempts for transient rate limits
 RETRY_DELAY = 10         # seconds base delay (exponential backoff from here)
-MATH_TOLERANCE = 0.02    # dollars — arithmetic checks below this are treated as rounding noise
 
 
 # ── Product Normalization ──────────────────────────────────────────────────────
@@ -190,42 +191,6 @@ def normalize_product(raw, unit_price=None):
     )
 
     return product, size, is_sample, needs_review
-
-
-def validate_math(data: dict) -> None:
-    """
-    Flags arithmetic mismatches for manual review; does not alter any values.
-    Sets item['math_mismatch'] and data['math_check_failed']/['math_check_detail'].
-    """
-    items = data.get("line_items") or []
-    line_total_sum = 0.0
-    has_totals = False
-
-    for item in items:
-        qty, price, total = item.get("quantity"), item.get("unit_price"), item.get("line_total")
-        if qty is not None and price is not None and total is not None:
-            has_totals = True
-            if abs(qty * price - total) > MATH_TOLERANCE:
-                item["math_mismatch"] = f"{qty} × ${price} = ${qty * price:.2f}, not ${total}"
-        if total is not None:
-            line_total_sum += total
-
-    subtotal, tax, total_amt = data.get("subtotal"), data.get("tax"), data.get("total")
-    issues = []
-    if has_totals:
-        # Line-item pricing is sometimes tax-inclusive (sums to total) and sometimes
-        # not (sums to subtotal) — accept either; only flag if it matches neither.
-        matches_subtotal = subtotal is not None and abs(line_total_sum - subtotal) <= MATH_TOLERANCE
-        matches_total = total_amt is not None and abs(line_total_sum - total_amt) <= MATH_TOLERANCE
-        if not matches_subtotal and not matches_total and (subtotal is not None or total_amt is not None):
-            against = subtotal if subtotal is not None else total_amt
-            issues.append(f"line items sum to ${line_total_sum:.2f}, PO shows ${against}")
-    if subtotal is not None and tax is not None and total_amt is not None:
-        if abs(subtotal + tax - total_amt) > MATH_TOLERANCE:
-            issues.append(f"subtotal (${subtotal}) + tax (${tax}) ≠ total (${total_amt})")
-
-    data["math_check_failed"] = bool(issues)
-    data["math_check_detail"] = "; ".join(issues)
 
 
 # ── Revision Detection & Diff Engine ──────────────────────────────────────────
