@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS line_items (
     is_removed      BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+ALTER TABLE line_items ADD COLUMN IF NOT EXISTS changes TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_line_items_po_id ON line_items(po_id);
 CREATE INDEX IF NOT EXISTS idx_po_po_number ON purchase_orders(po_number);
 CREATE INDEX IF NOT EXISTS idx_po_po_date ON purchase_orders(po_date);

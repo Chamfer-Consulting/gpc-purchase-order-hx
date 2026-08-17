@@ -158,11 +158,11 @@ def publish(sqlite_path: str, database_url: str) -> int:
                     INSERT INTO line_items (
                         po_id, product_raw, sku, quantity, unit_price, line_total,
                         product_name, container_size, is_sample, needs_review,
-                        math_mismatch, revision_status, is_removed
+                        math_mismatch, revision_status, is_removed, changes
                     ) VALUES (
                         %(po_id)s, %(product_raw)s, %(sku)s, %(quantity)s, %(unit_price)s, %(line_total)s,
                         %(product_name)s, %(container_size)s, %(is_sample)s, %(needs_review)s,
-                        %(math_mismatch)s, %(revision_status)s, %(is_removed)s
+                        %(math_mismatch)s, %(revision_status)s, %(is_removed)s, %(changes)s
                     )
                     """,
                     {
@@ -179,6 +179,7 @@ def publish(sqlite_path: str, database_url: str) -> int:
                         "math_mismatch": item.get("math_mismatch"),
                         "revision_status": item.get("revision_status"),
                         "is_removed": bool(item.get("_removed", False)),
+                        "changes": item.get("changes"),
                     },
                 )
 

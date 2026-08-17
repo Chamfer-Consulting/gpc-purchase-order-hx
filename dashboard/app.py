@@ -6,6 +6,7 @@ Reads from the hosted Postgres database populated by sync_dashboard.py.
 Run locally with:  streamlit run dashboard/app.py   (from the repo root)
 """
 
+import io
 import os
 
 import pandas as pd
@@ -17,39 +18,93 @@ import streamlit as st
 st.set_page_config(page_title="Garfield Produce — PO Dashboard", layout="wide", page_icon="🌱")
 
 # ── Palette (validated colorblind-safe set — see dataviz skill / schema.sql sibling) ──
-CATEGORICAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
-SEQUENTIAL_BLUE = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"]
-STATUS = {"good": "#0ca30c", "warning": "#fab219", "serious": "#ec835a", "critical": "#d03b3b"}
-INK_PRIMARY = "#0b0b0b"
-INK_MUTED = "#898781"
-GRID = "#e1e0d9"
-SURFACE = "#fcfcfb"
+# Both Light and Dark are selected palettes from the same reference instance, not an
+# automatic flip — same categorical order, dark-surface steps, per the skill's palette.md.
+LIGHT = {
+    "categorical": ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"],
+    "sequential_blue": ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"],
+    "status": {"good": "#0ca30c", "warning": "#fab219", "serious": "#ec835a", "critical": "#d03b3b"},
+    "ink_primary": "#0b0b0b",
+    "ink_muted": "#898781",
+    "grid": "#e1e0d9",
+    "surface": "#fcfcfb",
+    "page_plane": "#f9f9f7",
+}
+DARK = {
+    "categorical": ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
+    "sequential_blue": ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"],
+    "status": {"good": "#0ca30c", "warning": "#fab219", "serious": "#ec835a", "critical": "#d03b3b"},
+    "ink_primary": "#ffffff",
+    "ink_muted": "#898781",
+    "grid": "#2c2c2a",
+    "surface": "#1a1a19",
+    "page_plane": "#0d0d0d",
+}
 
 FONT_FAMILY = "system-ui, -apple-system, 'Segoe UI', sans-serif"
 
 
-def style(fig: go.Figure) -> go.Figure:
+def style(fig: go.Figure, palette: dict) -> go.Figure:
     fig.update_layout(
-        paper_bgcolor=SURFACE,
-        plot_bgcolor=SURFACE,
-        font=dict(color=INK_PRIMARY, family=FONT_FAMILY),
-        xaxis=dict(gridcolor=GRID, linecolor=INK_MUTED, zeroline=False),
-        yaxis=dict(gridcolor=GRID, linecolor=INK_MUTED, zeroline=False),
+        paper_bgcolor=palette["surface"],
+        plot_bgcolor=palette["surface"],
+        font=dict(color=palette["ink_primary"], family=FONT_FAMILY),
+        xaxis=dict(gridcolor=palette["grid"], linecolor=palette["ink_muted"], zeroline=False),
+        yaxis=dict(gridcolor=palette["grid"], linecolor=palette["ink_muted"], zeroline=False),
         legend=dict(bgcolor="rgba(0,0,0,0)"),
         margin=dict(l=10, r=10, t=40, b=10),
-        hoverlabel=dict(bgcolor=SURFACE, font_family=FONT_FAMILY),
+        hoverlabel=dict(bgcolor=palette["surface"], font_family=FONT_FAMILY),
     )
     return fig
 
 
-def color_map_for(categories: list[str]) -> dict:
+def color_map_for(categories: list[str], palette: dict) -> dict:
     """Fixed hue per category (alphabetical order) so a category keeps its color
     across every chart and across filter changes — never repainted."""
     ordered = sorted(categories)
+    cat_colors = palette["categorical"]
     colors = {}
     for i, cat in enumerate(ordered):
-        colors[cat] = CATEGORICAL[i] if i < len(CATEGORICAL) else INK_MUTED
+        colors[cat] = cat_colors[i] if i < len(cat_colors) else palette["ink_muted"]
     return colors
+
+
+def fmt_delta(value, prefix: str = "", decimals: int = 0):
+    """Formats a KPI delta for st.metric, or returns None (no delta shown) if unavailable."""
+    if value is None or pd.isna(value):
+        return None
+    return f"{prefix}{value:+,.{decimals}f}"
+
+
+def strip_tz(df: pd.DataFrame) -> pd.DataFrame:
+    """Excel can't hold timezone-aware datetimes — Postgres TIMESTAMPTZ columns
+    (e.g. extracted_at) come back tz-aware from psycopg2; drop the tz for export."""
+    df = df.copy()
+    for col in df.columns:
+        if isinstance(df[col].dtype, pd.DatetimeTZDtype):
+            df[col] = df[col].dt.tz_localize(None)
+    return df
+
+
+def month_over_month_movers(df: pd.DataFrame, date_col: str, group_col: str, value_col: str, top_n: int = 8):
+    """Compares the two most recent distinct months present in df, grouped by group_col.
+    Returns (movers_df, current_month, previous_month), or None if fewer than 2 months exist."""
+    d = df.dropna(subset=[date_col, group_col]).copy()
+    if d.empty:
+        return None
+    d["month"] = d[date_col].dt.to_period("M")
+    months = sorted(d["month"].unique())
+    if len(months) < 2:
+        return None
+    curr_m, prev_m = months[-1], months[-2]
+    curr = d[d["month"] == curr_m].groupby(group_col)[value_col].sum()
+    prev = d[d["month"] == prev_m].groupby(group_col)[value_col].sum()
+    merged = pd.DataFrame({"prev": prev, "curr": curr}).fillna(0.0)
+    merged["delta"] = merged["curr"] - merged["prev"]
+    merged = merged.reindex(merged["delta"].abs().sort_values(ascending=False).index).head(top_n)
+    merged = merged.reset_index().rename(columns={"index": group_col})
+    merged["Change"] = merged["delta"].apply(lambda v: f"▲ +${v:,.0f}" if v >= 0 else f"▼ -${abs(v):,.0f}")
+    return merged, curr_m, prev_m
 
 
 # ── Auth ────────────────────────────────────────────────────────────────────────
@@ -128,36 +183,88 @@ if po_df.empty:
 
 valid_po, latest_po, all_items, latest_items = prepare(po_df, items_df)
 
-# ── Sidebar filters ──────────────────────────────────────────────────────────────
+# ── Sidebar: appearance ──────────────────────────────────────────────────────────
+
+theme = st.sidebar.radio("🌗 Theme", ["Light", "Dark"], horizontal=True, key="theme_choice")
+palette = DARK if theme == "Dark" else LIGHT
+
+if theme == "Dark":
+    st.markdown(
+        f"""
+        <style>
+        [data-testid="stAppViewContainer"], [data-testid="stHeader"] {{
+            background-color: {palette["page_plane"]};
+            color: {palette["ink_primary"]};
+        }}
+        [data-testid="stSidebar"] {{
+            background-color: {palette["surface"]};
+            color: {palette["ink_primary"]};
+        }}
+        [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {{
+            color: {palette["ink_primary"]} !important;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+st.sidebar.divider()
+
+# ── Sidebar: filters ─────────────────────────────────────────────────────────────
 
 st.sidebar.header("Filters")
 
 min_date = latest_po["effective_date"].min()
 max_date = latest_po["effective_date"].max()
-date_range = st.sidebar.date_input(
-    "Date range",
-    value=(min_date.date(), max_date.date()) if pd.notna(min_date) and pd.notna(max_date) else None,
-)
+has_dates = pd.notna(min_date) and pd.notna(max_date)
+
+DATE_PRESETS = ["Last 30 days", "Last 90 days", "Year to date", "All time", "Custom"]
+preset = st.sidebar.selectbox("Date range", DATE_PRESETS, index=3, key="date_preset")
+
+if has_dates:
+    today = pd.Timestamp(max_date.date())
+    if preset == "Last 30 days":
+        start_ts, end_ts = today - pd.Timedelta(days=29), today
+    elif preset == "Last 90 days":
+        start_ts, end_ts = today - pd.Timedelta(days=89), today
+    elif preset == "Year to date":
+        start_ts, end_ts = pd.Timestamp(year=today.year, month=1, day=1), today
+    elif preset == "All time":
+        start_ts, end_ts = min_date, max_date
+    else:  # Custom
+        custom_range = st.sidebar.date_input(
+            "Custom range", value=(min_date.date(), max_date.date()), key="custom_range",
+        )
+        if isinstance(custom_range, tuple) and len(custom_range) == 2:
+            start_ts, end_ts = pd.Timestamp(custom_range[0]), pd.Timestamp(custom_range[1])
+        else:
+            start_ts, end_ts = min_date, max_date
+else:
+    start_ts, end_ts = None, None
 
 customers = sorted(latest_po["customer_name"].dropna().unique().tolist())
-selected_customers = st.sidebar.multiselect("Customer", customers, default=[])
+selected_customers = st.sidebar.multiselect("Customer", customers, default=[], key="filter_customers")
 
 products = sorted(latest_items["product_name"].dropna().unique().tolist())
-selected_products = st.sidebar.multiselect("Product", products, default=[])
+selected_products = st.sidebar.multiselect("Product", products, default=[], key="filter_products")
 
-include_samples = st.sidebar.checkbox("Include samples", value=False)
+include_samples = st.sidebar.checkbox("Include samples", value=False, key="include_samples")
 
-if st.sidebar.button("🔄 Refresh data"):
+fc1, fc2 = st.sidebar.columns(2)
+if fc1.button("🔄 Refresh data"):
     load_data.clear()
+    st.rerun()
+if fc2.button("✖️ Clear filters"):
+    for key in ("filter_customers", "filter_products", "date_preset", "custom_range", "include_samples"):
+        st.session_state.pop(key, None)
     st.rerun()
 
 # Apply filters
 f_po = latest_po.copy()
 f_items = latest_items.copy()
 
-if isinstance(date_range, tuple) and len(date_range) == 2:
-    start, end = pd.Timestamp(date_range[0]), pd.Timestamp(date_range[1])
-    f_po = f_po[(f_po["effective_date"] >= start) & (f_po["effective_date"] <= end)]
+if start_ts is not None and end_ts is not None:
+    f_po = f_po[(f_po["effective_date"] >= start_ts) & (f_po["effective_date"] <= end_ts)]
     f_items = f_items[f_items["po_id"].isin(f_po["id"])]
 
 if selected_customers:
@@ -170,7 +277,23 @@ if selected_products:
 if not include_samples:
     f_items = f_items[~f_items["is_sample"]]
 
-product_colors = color_map_for(latest_items["product_name"].dropna().unique().tolist())
+product_colors = color_map_for(latest_items["product_name"].dropna().unique().tolist(), palette)
+
+# Precomputed once so both their own tab and the Overview export can use them.
+if f_items.empty:
+    by_product = pd.DataFrame(columns=["product_name", "revenue", "quantity"])
+else:
+    by_product = (
+        f_items.groupby("product_name").agg(revenue=("line_total", "sum"), quantity=("quantity", "sum")).reset_index()
+    )
+
+if f_po.empty:
+    by_customer = pd.DataFrame(columns=["customer_name", "orders", "revenue", "avg_order_value"])
+else:
+    by_customer = (
+        f_po.groupby("customer_name").agg(orders=("id", "nunique"), revenue=("total", "sum")).reset_index()
+    )
+    by_customer["avg_order_value"] = (by_customer["revenue"] / by_customer["orders"]).round(2)
 
 st.title("🌱 Garfield Produce — Purchase Order Dashboard")
 
@@ -189,19 +312,58 @@ with tab_overview:
     needs_review = int(f_po["math_check_failed"].sum())
     extraction_errors = int(po_df["error"].notna().sum())
 
+    delta_orders = delta_revenue = delta_aov = None
+    if start_ts is not None and end_ts is not None:
+        span = end_ts - start_ts
+        prev_end = start_ts - pd.Timedelta(days=1)
+        prev_start = prev_end - span
+        prev_po = latest_po[(latest_po["effective_date"] >= prev_start) & (latest_po["effective_date"] <= prev_end)]
+        if selected_customers:
+            prev_po = prev_po[prev_po["customer_name"].isin(selected_customers)]
+        prev_orders = prev_po["id"].nunique()
+        if prev_orders:
+            delta_orders = total_orders - prev_orders
+            delta_revenue = total_revenue - prev_po["total"].sum()
+            delta_aov = avg_order_value - prev_po["total"].mean()
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Orders", f"{total_orders:,}")
-    c2.metric("Total Revenue", f"${total_revenue:,.0f}")
+    c1.metric("Orders", f"{total_orders:,}", delta=fmt_delta(delta_orders))
+    c2.metric("Total Revenue", f"${total_revenue:,.0f}", delta=fmt_delta(delta_revenue, prefix="$"))
     c3.metric("Customers", f"{unique_customers:,}")
     c4.metric("Products", f"{distinct_products:,}")
 
     c5, c6, c7 = st.columns(3)
-    c5.metric("Avg Order Value", f"${avg_order_value:,.2f}")
+    c5.metric("Avg Order Value", f"${avg_order_value:,.2f}", delta=fmt_delta(delta_aov, prefix="$", decimals=2))
     c6.metric("⚠️ Needs Review (math check)", f"{needs_review:,}")
     c7.metric("❌ Extraction Errors", f"{extraction_errors:,}")
 
     if needs_review or extraction_errors:
         st.caption("See the **Revisions & Data Quality** tab for details on flagged orders.")
+    if start_ts is not None and end_ts is not None:
+        st.caption("Deltas compare the selected date range to the immediately preceding period of equal length.")
+
+    st.divider()
+    st.subheader("Export")
+    excel_buf = io.BytesIO()
+    with pd.ExcelWriter(excel_buf, engine="openpyxl") as writer:
+        pd.DataFrame({
+            "Metric": ["Orders", "Total Revenue", "Customers", "Products", "Avg Order Value",
+                       "Needs Review (math check)", "Extraction Errors"],
+            "Value": [total_orders, total_revenue, unique_customers, distinct_products,
+                      avg_order_value, needs_review, extraction_errors],
+        }).to_excel(writer, sheet_name="Overview", index=False)
+        strip_tz(f_po.drop(columns=["po_key"], errors="ignore")).to_excel(writer, sheet_name="Orders", index=False)
+        strip_tz(f_items).to_excel(writer, sheet_name="Line Items", index=False)
+        by_product.to_excel(writer, sheet_name="Products", index=False)
+        by_customer.to_excel(writer, sheet_name="Customers", index=False)
+    st.download_button(
+        "📊 Export full report (Excel)",
+        excel_buf.getvalue(),
+        file_name="gpc_po_report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="export_excel",
+    )
+    st.caption("Reflects the filters currently applied in the sidebar.")
 
 # ── Trends ───────────────────────────────────────────────────────────────────────
 
@@ -221,16 +383,36 @@ with tab_trends:
         st.subheader("Orders per month")
         fig = px.bar(
             by_month, x="month", y="orders", color="spike_label",
-            color_discrete_map={"Normal": CATEGORICAL[0], "Spike": STATUS["warning"]},
+            color_discrete_map={"Normal": palette["categorical"][0], "Spike": palette["status"]["warning"]},
             labels={"month": "", "orders": "Orders", "spike_label": ""},
         )
-        st.plotly_chart(style(fig), use_container_width=True)
+        st.plotly_chart(style(fig, palette), use_container_width=True)
         st.caption("🟠 **Spike** = order count more than 1.5× the trailing 3-month average.")
 
         st.subheader("Revenue per month")
         fig2 = px.line(by_month, x="month", y="revenue", labels={"month": "", "revenue": "Revenue ($)"})
-        fig2.update_traces(line_color=CATEGORICAL[0], line_width=2)
-        st.plotly_chart(style(fig2), use_container_width=True)
+        fig2.update_traces(line_color=palette["categorical"][0], line_width=2)
+        st.plotly_chart(style(fig2, palette), use_container_width=True)
+
+        st.subheader("Year-over-year comparison")
+        yoy_src = f_po.dropna(subset=["effective_date"]).copy()
+        yoy_src["year"] = yoy_src["effective_date"].dt.year.astype(str)
+        yoy_src["moy"] = yoy_src["effective_date"].dt.month
+        yoy = yoy_src.groupby(["year", "moy"]).agg(revenue=("total", "sum")).reset_index()
+        if yoy["year"].nunique() < 2:
+            st.caption("Need orders spanning at least two calendar years in the current filter to compare.")
+        else:
+            year_colors = color_map_for(yoy["year"].unique().tolist(), palette)
+            fig3 = px.line(
+                yoy, x="moy", y="revenue", color="year", markers=True,
+                color_discrete_map=year_colors,
+                labels={"moy": "Month", "revenue": "Revenue ($)", "year": "Year"},
+            )
+            fig3.update_xaxes(
+                tickmode="array", tickvals=list(range(1, 13)),
+                ticktext=["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+            )
+            st.plotly_chart(style(fig3, palette), use_container_width=True)
 
 # ── Products ─────────────────────────────────────────────────────────────────────
 
@@ -238,21 +420,20 @@ with tab_products:
     if f_items.empty:
         st.info("No line items in the current filter.")
     else:
-        by_product = (
-            f_items.groupby("product_name")
-            .agg(revenue=("line_total", "sum"), quantity=("quantity", "sum"))
-            .reset_index()
-            .sort_values("revenue", ascending=True)
-        )
-
         st.subheader("Revenue by product")
         fig = px.bar(
-            by_product, x="revenue", y="product_name", orientation="h",
+            by_product.sort_values("revenue", ascending=True), x="revenue", y="product_name", orientation="h",
             color="product_name", color_discrete_map=product_colors,
             labels={"revenue": "Revenue ($)", "product_name": ""},
         )
         fig.update_layout(showlegend=False)
-        st.plotly_chart(style(fig), use_container_width=True)
+        st.plotly_chart(style(fig, palette), use_container_width=True)
+        st.download_button(
+            "⬇️ Download product revenue (CSV)",
+            by_product.rename(columns={"product_name": "Product", "revenue": "Revenue ($)", "quantity": "Quantity"})
+            .to_csv(index=False).encode("utf-8"),
+            file_name="revenue_by_product.csv", mime="text/csv", key="dl_products",
+        )
 
         st.subheader("Product mix over time (quantity)")
         by_month_product = f_items.dropna(subset=["effective_date"]).copy()
@@ -266,7 +447,21 @@ with tab_products:
                 color_discrete_map=product_colors,
                 labels={"month": "", "quantity": "Quantity", "product_name": "Product"},
             )
-            st.plotly_chart(style(fig3), use_container_width=True)
+            st.plotly_chart(style(fig3, palette), use_container_width=True)
+
+        st.subheader("Top movers (month over month)")
+        movers = month_over_month_movers(f_items, "effective_date", "product_name", "line_total")
+        if movers is None:
+            st.caption("Need at least two distinct months of data in the current filter to compare.")
+        else:
+            mdf, curr_m, prev_m = movers
+            st.caption(f"Comparing **{curr_m}** to **{prev_m}**.")
+            st.dataframe(
+                mdf[["product_name", "prev", "curr", "Change"]].rename(columns={
+                    "product_name": "Product", "prev": f"{prev_m} Revenue ($)", "curr": f"{curr_m} Revenue ($)",
+                }),
+                use_container_width=True, hide_index=True,
+            )
 
 # ── Customers ────────────────────────────────────────────────────────────────────
 
@@ -274,31 +469,40 @@ with tab_customers:
     if f_po.empty:
         st.info("No orders in the current filter.")
     else:
-        by_customer = (
-            f_po.groupby("customer_name")
-            .agg(orders=("id", "nunique"), revenue=("total", "sum"))
-            .reset_index()
-            .sort_values("revenue", ascending=False)
-        )
-
         st.subheader("Top customers by revenue")
-        top = by_customer.head(15).sort_values("revenue")
+        top = by_customer.sort_values("revenue", ascending=False).head(15).sort_values("revenue")
         fig = px.bar(
             top, x="revenue", y="customer_name", orientation="h",
             labels={"revenue": "Revenue ($)", "customer_name": ""},
         )
-        fig.update_traces(marker_color=SEQUENTIAL_BLUE[4])
-        st.plotly_chart(style(fig), use_container_width=True)
+        fig.update_traces(marker_color=palette["sequential_blue"][4])
+        st.plotly_chart(style(fig, palette), use_container_width=True)
 
         st.subheader("Customer summary")
-        by_customer["avg_order_value"] = (by_customer["revenue"] / by_customer["orders"]).round(2)
-        st.dataframe(
-            by_customer.rename(columns={
-                "customer_name": "Customer", "orders": "Orders",
-                "revenue": "Revenue ($)", "avg_order_value": "Avg Order ($)",
-            }),
-            use_container_width=True, hide_index=True,
+        customer_table = by_customer.sort_values("revenue", ascending=False).rename(columns={
+            "customer_name": "Customer", "orders": "Orders",
+            "revenue": "Revenue ($)", "avg_order_value": "Avg Order ($)",
+        })
+        st.dataframe(customer_table, use_container_width=True, hide_index=True)
+        st.download_button(
+            "⬇️ Download customer summary (CSV)",
+            customer_table.to_csv(index=False).encode("utf-8"),
+            file_name="customer_summary.csv", mime="text/csv", key="dl_customers",
         )
+
+        st.subheader("Top movers (month over month)")
+        movers = month_over_month_movers(f_po, "effective_date", "customer_name", "total")
+        if movers is None:
+            st.caption("Need at least two distinct months of data in the current filter to compare.")
+        else:
+            mdf, curr_m, prev_m = movers
+            st.caption(f"Comparing **{curr_m}** to **{prev_m}**.")
+            st.dataframe(
+                mdf[["customer_name", "prev", "curr", "Change"]].rename(columns={
+                    "customer_name": "Customer", "prev": f"{prev_m} Revenue ($)", "curr": f"{curr_m} Revenue ($)",
+                }),
+                use_container_width=True, hide_index=True,
+            )
 
 # ── Revisions & Data Quality ───────────────────────────────────────────────────────
 
@@ -308,11 +512,60 @@ with tab_revisions:
     if rev_po.empty:
         st.caption("No revisions found in the current data.")
     else:
-        show = rev_po[["po_number", "version_label", "effective_date", "customer_name", "total", "source_file"]]
+        rev_table = rev_po[["po_number", "version_label", "effective_date", "customer_name", "total", "source_file"]].rename(columns={
+            "po_number": "PO Number", "version_label": "Version", "effective_date": "Date",
+            "customer_name": "Customer", "total": "Total ($)", "source_file": "Source File",
+        })
+        st.dataframe(rev_table, use_container_width=True, hide_index=True)
+        st.download_button(
+            "⬇️ Download revisions (CSV)", rev_table.to_csv(index=False).encode("utf-8"),
+            file_name="revisions.csv", mime="text/csv", key="dl_revisions",
+        )
+
+    st.subheader("📦 Order lead time")
+    lead = f_po.dropna(subset=["effective_date", "delivery_date"]).copy()
+    lead["lead_days"] = (lead["delivery_date"] - lead["effective_date"]).dt.days
+    lead = lead[lead["lead_days"] >= 0]
+    if lead.empty:
+        st.caption("Not enough orders with both an order date and a delivery date in the current filter.")
+    else:
+        lc1, lc2 = st.columns(2)
+        lc1.metric("Median Lead Time", f"{lead['lead_days'].median():.0f} days")
+        lc2.metric("Average Lead Time", f"{lead['lead_days'].mean():.1f} days")
+        fig_lead = px.histogram(lead, x="lead_days", nbins=20, labels={"lead_days": "Lead time (days)"})
+        fig_lead.update_traces(marker_color=palette["sequential_blue"][3])
+        st.plotly_chart(style(fig_lead, palette), use_container_width=True)
+
+    st.subheader("🔁 Revision impact")
+    st.caption("Compares each order's original total to its latest revision's total.")
+    hist_po = valid_po[valid_po["po_key"].isin(f_po["po_key"])].sort_values(["po_key", "effective_date", "id"])
+    impacts = []
+    for po_key, grp in hist_po.groupby("po_key"):
+        if len(grp) < 2:
+            continue
+        original_total, final_total = grp.iloc[0]["total"], grp.iloc[-1]["total"]
+        if pd.notna(original_total) and pd.notna(final_total):
+            impacts.append(final_total - original_total)
+    if impacts:
+        impacts = pd.Series(impacts)
+        ic1, ic2, ic3 = st.columns(3)
+        ic1.metric("Revisions increasing value", int((impacts > 0).sum()))
+        ic2.metric("Revisions decreasing value", int((impacts < 0).sum()))
+        ic3.metric("Net $ impact from revisions", f"${impacts.sum():,.2f}")
+    else:
+        st.caption("No multi-version orders in the current filter.")
+
+    st.subheader("📝 What changed in the latest revision")
+    diff_items = all_items[
+        all_items["po_id"].isin(f_po["id"]) & all_items["revision_status"].isin(["Added", "Changed", "Removed"])
+    ]
+    if diff_items.empty:
+        st.caption("No line-item changes in the latest revision of any order in the current filter.")
+    else:
         st.dataframe(
-            show.rename(columns={
-                "po_number": "PO Number", "version_label": "Version", "effective_date": "Date",
-                "customer_name": "Customer", "total": "Total ($)", "source_file": "Source File",
+            diff_items[["po_number", "customer_name", "product_name", "revision_status", "changes"]].rename(columns={
+                "po_number": "PO Number", "customer_name": "Customer", "product_name": "Product",
+                "revision_status": "Status", "changes": "Changes",
             }),
             use_container_width=True, hide_index=True,
         )
@@ -322,12 +575,14 @@ with tab_revisions:
     if math_fail.empty:
         st.caption("None — arithmetic on every order checks out.")
     else:
-        st.dataframe(
-            math_fail[["po_number", "source_file", "customer_name", "math_check_detail"]].rename(columns={
-                "po_number": "PO Number", "source_file": "Source File",
-                "customer_name": "Customer", "math_check_detail": "Issue",
-            }),
-            use_container_width=True, hide_index=True,
+        math_table = math_fail[["po_number", "source_file", "customer_name", "math_check_detail"]].rename(columns={
+            "po_number": "PO Number", "source_file": "Source File",
+            "customer_name": "Customer", "math_check_detail": "Issue",
+        })
+        st.dataframe(math_table, use_container_width=True, hide_index=True)
+        st.download_button(
+            "⬇️ Download math check failures (CSV)", math_table.to_csv(index=False).encode("utf-8"),
+            file_name="math_check_failures.csv", mime="text/csv", key="dl_math_fail",
         )
 
     st.subheader("❌ Extraction errors")
@@ -335,9 +590,11 @@ with tab_revisions:
     if errored.empty:
         st.caption("None — every file extracted successfully.")
     else:
-        st.dataframe(
-            errored[["source_file", "error"]].rename(columns={"source_file": "Source File", "error": "Error"}),
-            use_container_width=True, hide_index=True,
+        err_table = errored[["source_file", "error"]].rename(columns={"source_file": "Source File", "error": "Error"})
+        st.dataframe(err_table, use_container_width=True, hide_index=True)
+        st.download_button(
+            "⬇️ Download extraction errors (CSV)", err_table.to_csv(index=False).encode("utf-8"),
+            file_name="extraction_errors.csv", mime="text/csv", key="dl_errors",
         )
 
 # ── Raw Data ─────────────────────────────────────────────────────────────────────
@@ -360,4 +617,5 @@ with tab_data:
         table.to_csv(index=False).encode("utf-8"),
         file_name="po_line_items.csv",
         mime="text/csv",
+        key="dl_raw",
     )
