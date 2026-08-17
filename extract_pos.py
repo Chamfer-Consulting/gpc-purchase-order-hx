@@ -150,6 +150,7 @@ PRODUCT_PATTERNS = [
     (re.compile(r"cilantro",          re.I),      "Cilantro"),
     (re.compile(r"bull.*blood|bulls.*blood|bull.?s|beets?", re.I), "Bulls Blood Beets"),
     (re.compile(r"basil|genovese",    re.I),      "Genovese Basil"),
+    (re.compile(r"broccoli",          re.I),      "Broccoli"),
 ]
 
 SIZE_PATTERN   = re.compile(r"\b(1|2|3|4|8|20)\s*oz\b", re.I)
