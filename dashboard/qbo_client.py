@@ -73,7 +73,8 @@ def exchange_code_for_tokens(conn, code: str, realm_id: str) -> None:
         data={"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri},
         timeout=30,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        raise RuntimeError(f"QuickBooks token exchange failed {resp.status_code}: {resp.text}")
     _store_tokens(conn, realm_id, resp.json())
 
 
@@ -86,7 +87,8 @@ def _refresh(conn, realm_id: str, refresh_token: str) -> str:
         data={"grant_type": "refresh_token", "refresh_token": refresh_token},
         timeout=30,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        raise RuntimeError(f"QuickBooks token refresh failed {resp.status_code}: {resp.text}")
     tokens = resp.json()
     _store_tokens(conn, realm_id, tokens)
     return tokens["access_token"]
@@ -141,7 +143,8 @@ def fetch_all_invoices(access_token: str, realm_id: str) -> list[dict]:
             params={"query": query, "minorversion": "65"},
             timeout=30,
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            raise RuntimeError(f"QuickBooks API error {resp.status_code}: {resp.text}")
         batch = resp.json().get("QueryResponse", {}).get("Invoice", [])
         invoices.extend(batch)
         if len(batch) < page_size:
