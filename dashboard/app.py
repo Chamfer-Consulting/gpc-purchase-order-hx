@@ -804,13 +804,19 @@ with tab_qbo:
         st.link_button("🔗 Connect to QuickBooks", qbo_client.build_authorize_url(oauth_state))
     else:
         st.success(f"Connected — realm ID `{connection['realm_id']}` (since {connection['connected_at']}).")
+        if connection.get("last_synced_at"):
+            st.caption(f"Last synced: {connection['last_synced_at']} — next sync only pulls invoices changed since then.")
+        else:
+            st.caption("Never synced yet — the next sync pulls everything.")
+
+        full_resync = st.checkbox("Full resync (ignore last-synced cursor, re-pull everything)")
 
         c1, c2 = st.columns(2)
         if c1.button("🔄 Sync invoices"):
             sync_conn = psycopg2.connect(get_database_url())
             try:
                 with st.spinner("Pulling invoices from QuickBooks..."):
-                    count = qbo_client.sync_invoices(sync_conn)
+                    count = qbo_client.sync_invoices(sync_conn, full_resync=full_resync)
                 st.success(f"Synced {count} invoice(s).")
             except Exception as e:
                 st.error(f"Sync failed: {e}")

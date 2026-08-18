@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 
 import requests
 import streamlit as st
-from psycopg2.extras import Json
+from psycopg2.extras import Json, execute_values
 
 AUTHORIZE_URL = "https://appcenter.intuit.com/connect/oauth2"
 TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
@@ -47,20 +47,35 @@ def build_authorize_url(state: str) -> str:
 
 
 def _store_tokens(conn, realm_id: str, tokens: dict) -> None:
+    """Updates the stored tokens for `realm_id`, or replaces the row entirely if this
+    is a new/different realm (e.g. first connect, or switching sandbox<->production) —
+    a routine refresh of the *same* realm preserves last_synced_at (the incremental
+    sync cursor) rather than resetting it, since UPDATE touches only the token columns."""
     now = datetime.now(timezone.utc)
     access_expires = now + timedelta(seconds=tokens["expires_in"])
     refresh_expires = now + timedelta(seconds=tokens["x_refresh_token_expires_in"])
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM qbo_connection")
         cur.execute(
             """
-            INSERT INTO qbo_connection (
-                realm_id, access_token, refresh_token,
-                access_token_expires_at, refresh_token_expires_at
-            ) VALUES (%s, %s, %s, %s, %s)
+            UPDATE qbo_connection SET
+                access_token = %s, refresh_token = %s,
+                access_token_expires_at = %s, refresh_token_expires_at = %s,
+                updated_at = now()
+            WHERE realm_id = %s
             """,
-            (realm_id, tokens["access_token"], tokens["refresh_token"], access_expires, refresh_expires),
+            (tokens["access_token"], tokens["refresh_token"], access_expires, refresh_expires, realm_id),
         )
+        if cur.rowcount == 0:
+            cur.execute("DELETE FROM qbo_connection")
+            cur.execute(
+                """
+                INSERT INTO qbo_connection (
+                    realm_id, access_token, refresh_token,
+                    access_token_expires_at, refresh_token_expires_at
+                ) VALUES (%s, %s, %s, %s, %s)
+                """,
+                (realm_id, tokens["access_token"], tokens["refresh_token"], access_expires, refresh_expires),
+            )
     conn.commit()
 
 
@@ -99,14 +114,16 @@ def get_connection(conn) -> dict | None:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT realm_id, access_token, refresh_token, access_token_expires_at, "
-            "refresh_token_expires_at, connected_at FROM qbo_connection ORDER BY id DESC LIMIT 1"
+            "refresh_token_expires_at, connected_at, last_synced_at "
+            "FROM qbo_connection ORDER BY id DESC LIMIT 1"
         )
         row = cur.fetchone()
     if row is None:
         return None
     return {
         "realm_id": row[0], "access_token": row[1], "refresh_token": row[2],
-        "access_token_expires_at": row[3], "refresh_token_expires_at": row[4], "connected_at": row[5],
+        "access_token_expires_at": row[3], "refresh_token_expires_at": row[4],
+        "connected_at": row[5], "last_synced_at": row[6],
     }
 
 
@@ -129,14 +146,16 @@ def disconnect(conn) -> None:
     conn.commit()
 
 
-def fetch_all_invoices(access_token: str, realm_id: str) -> list[dict]:
-    """Paginates QBO's Query API to pull every Invoice."""
+def fetch_all_invoices(access_token: str, realm_id: str, since: datetime | None = None) -> list[dict]:
+    """Paginates QBO's Query API to pull Invoices — every one, or (for incremental
+    syncs) only those updated after `since` (a timezone-aware datetime)."""
     invoices = []
     start_position = 1
     page_size = 1000
     headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+    where = f" WHERE Metadata.LastUpdatedTime > '{since.isoformat()}'" if since else ""
     while True:
-        query = f"SELECT * FROM Invoice STARTPOSITION {start_position} MAXRESULTS {page_size}"
+        query = f"SELECT * FROM Invoice{where} STARTPOSITION {start_position} MAXRESULTS {page_size}"
         resp = requests.get(
             f"{api_base()}/v3/company/{realm_id}/query",
             headers=headers,
@@ -153,17 +172,38 @@ def fetch_all_invoices(access_token: str, realm_id: str) -> list[dict]:
     return invoices
 
 
-def sync_invoices(conn) -> int:
+def sync_invoices(conn, full_resync: bool = False) -> int:
+    """Pulls invoices from QuickBooks and upserts them into qbo_invoices.
+
+    Incremental by default: only invoices updated since the last successful sync are
+    fetched, via QBO's Metadata.LastUpdatedTime filter. Pass full_resync=True to ignore
+    the cursor and re-pull everything (e.g. after a data-quality concern, or the first
+    sync after switching sandbox<->production, which starts with no cursor anyway).
+    """
+    connection = get_connection(conn)
+    since = None if full_resync else (connection or {}).get("last_synced_at")
+    sync_started_at = datetime.now(timezone.utc)
+
     access_token, realm_id = get_valid_access_token(conn)
-    invoices = fetch_all_invoices(access_token, realm_id)
-    with conn.cursor() as cur:
-        for inv in invoices:
-            cur.execute(
+    invoices = fetch_all_invoices(access_token, realm_id, since=since)
+
+    if invoices:
+        rows = [
+            (
+                inv.get("Id"), inv.get("DocNumber"), (inv.get("CustomerRef") or {}).get("name"),
+                inv.get("TxnDate") or None, inv.get("ShipDate") or None, inv.get("DueDate") or None,
+                inv.get("TotalAmt"), inv.get("PrivateNote"), Json(inv),
+            )
+            for inv in invoices
+        ]
+        with conn.cursor() as cur:
+            execute_values(
+                cur,
                 """
                 INSERT INTO qbo_invoices (
                     qbo_invoice_id, doc_number, customer_name, txn_date, ship_date,
                     due_date, total_amt, private_note, raw_json, synced_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                ) VALUES %s
                 ON CONFLICT (qbo_invoice_id) DO UPDATE SET
                     doc_number    = EXCLUDED.doc_number,
                     customer_name = EXCLUDED.customer_name,
@@ -175,17 +215,12 @@ def sync_invoices(conn) -> int:
                     raw_json      = EXCLUDED.raw_json,
                     synced_at     = now()
                 """,
-                (
-                    inv.get("Id"),
-                    inv.get("DocNumber"),
-                    (inv.get("CustomerRef") or {}).get("name"),
-                    inv.get("TxnDate") or None,
-                    inv.get("ShipDate") or None,
-                    inv.get("DueDate") or None,
-                    inv.get("TotalAmt"),
-                    inv.get("PrivateNote"),
-                    Json(inv),
-                ),
+                rows,
+                template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,now())",
+                page_size=200,
             )
+
+    with conn.cursor() as cur:
+        cur.execute("UPDATE qbo_connection SET last_synced_at = %s WHERE realm_id = %s", (sync_started_at, realm_id))
     conn.commit()
     return len(invoices)

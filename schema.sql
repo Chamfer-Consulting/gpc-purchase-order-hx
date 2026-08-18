@@ -71,6 +71,9 @@ CREATE TABLE IF NOT EXISTS qbo_connection (
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Sync cursor for incremental invoice pulls — NULL means "never synced, pull everything".
+ALTER TABLE qbo_connection ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS qbo_invoices (
     id             SERIAL PRIMARY KEY,
     qbo_invoice_id TEXT NOT NULL UNIQUE,

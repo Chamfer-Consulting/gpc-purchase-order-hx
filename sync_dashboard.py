@@ -14,14 +14,18 @@ PO, including ones extracted in earlier runs.
 import argparse
 import os
 import sys
+import time
 from datetime import datetime
 
 import psycopg2
+from psycopg2.extras import execute_values
 
 import db
 from extract_pos import annotate_revisions
 
 SCHEMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
+MAX_ATTEMPTS = 3       # retries on a dropped/reset connection mid-sync
+RETRY_DELAY = 5         # seconds between attempts
 
 
 def _safe_date(value):
@@ -59,35 +63,36 @@ def apply_schema(pg_conn) -> None:
     pg_conn.commit()
 
 
-def publish(sqlite_path: str, database_url: str) -> int:
-    conn = db.connect(sqlite_path)
-    results = db.get_all_results(conn)
-    conn.close()
-
-    if not results:
-        print(f"Nothing to publish — '{sqlite_path}' has no extracted POs yet.")
-        return 0, []
-
-    # Recompute revision labels/diffs across the full local history so the
-    # dashboard's "Original"/"Rev N" labels stay correct as new data arrives.
-    results.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
-    annotate_revisions(results)
+def _publish_to_postgres(results: list, database_url: str) -> list:
+    """One attempt at writing results to Postgres — batched via execute_values instead
+    of one round trip per row. Raises psycopg2.OperationalError on a dropped connection;
+    the caller retries the whole attempt (upserts are idempotent, so safe to redo)."""
+    bad_dates = []
+    header_rows = []
+    for r in results:
+        po_date = _safe_date(r.get("po_date"))
+        delivery_date = _safe_date(r.get("delivery_date"))
+        if r.get("po_date") and po_date is None:
+            bad_dates.append((r.get("_source_file"), "po_date", r.get("po_date")))
+        if r.get("delivery_date") and delivery_date is None:
+            bad_dates.append((r.get("_source_file"), "delivery_date", r.get("delivery_date")))
+        header_rows.append((
+            r.get("_source_file"), r.get("_file_hash"), r.get("_extraction_method"), r.get("error"),
+            r.get("po_number"), po_date, r.get("sent_date"), delivery_date,
+            r.get("revision_number"), r.get("revision_label"),
+            bool(r.get("_is_revision", False)), r.get("_version_label"),
+            r.get("customer_name"), r.get("customer_id"),
+            r.get("subtotal"), r.get("tax"), r.get("total"), r.get("notes"),
+            bool(r.get("math_check_failed", False)), r.get("math_check_detail"),
+        ))
 
     pg_conn = psycopg2.connect(database_url)
-    apply_schema(pg_conn)
+    try:
+        apply_schema(pg_conn)
 
-    bad_dates = []
-
-    with pg_conn.cursor() as cur:
-        for r in results:
-            po_date = _safe_date(r.get("po_date"))
-            delivery_date = _safe_date(r.get("delivery_date"))
-            if r.get("po_date") and po_date is None:
-                bad_dates.append((r.get("_source_file"), "po_date", r.get("po_date")))
-            if r.get("delivery_date") and delivery_date is None:
-                bad_dates.append((r.get("_source_file"), "delivery_date", r.get("delivery_date")))
-
-            cur.execute(
+        with pg_conn.cursor() as cur:
+            returned = execute_values(
+                cur,
                 """
                 INSERT INTO purchase_orders (
                     source_file, file_hash, extraction_method, error,
@@ -96,14 +101,7 @@ def publish(sqlite_path: str, database_url: str) -> int:
                     customer_name, customer_id,
                     subtotal, tax, total, notes,
                     math_check_failed, math_check_detail, extracted_at
-                ) VALUES (
-                    %(source_file)s, %(file_hash)s, %(extraction_method)s, %(error)s,
-                    %(po_number)s, %(po_date)s, %(sent_date)s, %(delivery_date)s,
-                    %(revision_number)s, %(revision_label)s, %(is_revision)s, %(version_label)s,
-                    %(customer_name)s, %(customer_id)s,
-                    %(subtotal)s, %(tax)s, %(total)s, %(notes)s,
-                    %(math_check_failed)s, %(math_check_detail)s, now()
-                )
+                ) VALUES %s
                 ON CONFLICT (source_file, file_hash) DO UPDATE SET
                     extraction_method = EXCLUDED.extraction_method,
                     error             = EXCLUDED.error,
@@ -125,83 +123,85 @@ def publish(sqlite_path: str, database_url: str) -> int:
                     math_check_detail = EXCLUDED.math_check_detail,
                     extracted_at      = now()
                 WHERE purchase_orders.edited = FALSE
-                RETURNING id
+                RETURNING source_file, file_hash, id
                 """,
-                {
-                    "source_file": r.get("_source_file"),
-                    "file_hash": r.get("_file_hash"),
-                    "extraction_method": r.get("_extraction_method"),
-                    "error": r.get("error"),
-                    "po_number": r.get("po_number"),
-                    "po_date": po_date,
-                    "sent_date": r.get("sent_date"),
-                    "delivery_date": delivery_date,
-                    "revision_number": r.get("revision_number"),
-                    "revision_label": r.get("revision_label"),
-                    "is_revision": bool(r.get("_is_revision", False)),
-                    "version_label": r.get("_version_label"),
-                    "customer_name": r.get("customer_name"),
-                    "customer_id": r.get("customer_id"),
-                    "subtotal": r.get("subtotal"),
-                    "tax": r.get("tax"),
-                    "total": r.get("total"),
-                    "notes": r.get("notes"),
-                    "math_check_failed": bool(r.get("math_check_failed", False)),
-                    "math_check_detail": r.get("math_check_detail"),
-                },
+                header_rows,
+                template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())",
+                page_size=200,
+                fetch=True,
             )
-            row = cur.fetchone()
-            if row is not None:
-                po_id, was_updated = row[0], True
-            else:
-                # ON CONFLICT DO UPDATE ... WHERE was false (edited=TRUE) — the row was
-                # left untouched and RETURNING yields nothing, so look its id up instead.
-                cur.execute(
-                    "SELECT id FROM purchase_orders WHERE source_file = %s AND file_hash = %s",
-                    (r.get("_source_file"), r.get("_file_hash")),
-                )
-                po_id, was_updated = cur.fetchone()[0], False
 
-            if not was_updated:
-                # Header was protected because it's been manually edited — leave its
-                # line items alone too, don't let re-extraction overwrite them.
-                continue
+            # Rows absent from `returned` had edited=TRUE and the WHERE guard skipped
+            # their update (RETURNING yields nothing for a skipped conflict) — their
+            # header AND line items are protected, leave both alone.
+            id_lookup = {(row[0], row[1]): row[2] for row in returned}
 
-            cur.execute("DELETE FROM line_items WHERE po_id = %s", (po_id,))
-            for item in r.get("line_items") or []:
-                cur.execute(
+            po_ids_to_refresh = []
+            line_item_rows = []
+            for r in results:
+                po_id = id_lookup.get((r.get("_source_file"), r.get("_file_hash")))
+                if po_id is None:
+                    continue
+                po_ids_to_refresh.append(po_id)
+                for item in r.get("line_items") or []:
+                    line_item_rows.append((
+                        po_id, item.get("product_raw"), item.get("sku"),
+                        item.get("quantity"), item.get("unit_price"), item.get("line_total"),
+                        item.get("product_name"), item.get("container_size"),
+                        bool(item.get("is_sample", False)), bool(item.get("needs_review", False)),
+                        item.get("math_mismatch"), item.get("revision_status"),
+                        bool(item.get("_removed", False)), item.get("changes"),
+                    ))
+
+            if po_ids_to_refresh:
+                cur.execute("DELETE FROM line_items WHERE po_id = ANY(%s)", (po_ids_to_refresh,))
+            if line_item_rows:
+                execute_values(
+                    cur,
                     """
                     INSERT INTO line_items (
                         po_id, product_raw, sku, quantity, unit_price, line_total,
                         product_name, container_size, is_sample, needs_review,
                         math_mismatch, revision_status, is_removed, changes
-                    ) VALUES (
-                        %(po_id)s, %(product_raw)s, %(sku)s, %(quantity)s, %(unit_price)s, %(line_total)s,
-                        %(product_name)s, %(container_size)s, %(is_sample)s, %(needs_review)s,
-                        %(math_mismatch)s, %(revision_status)s, %(is_removed)s, %(changes)s
-                    )
+                    ) VALUES %s
                     """,
-                    {
-                        "po_id": po_id,
-                        "product_raw": item.get("product_raw"),
-                        "sku": item.get("sku"),
-                        "quantity": item.get("quantity"),
-                        "unit_price": item.get("unit_price"),
-                        "line_total": item.get("line_total"),
-                        "product_name": item.get("product_name"),
-                        "container_size": item.get("container_size"),
-                        "is_sample": bool(item.get("is_sample", False)),
-                        "needs_review": bool(item.get("needs_review", False)),
-                        "math_mismatch": item.get("math_mismatch"),
-                        "revision_status": item.get("revision_status"),
-                        "is_removed": bool(item.get("_removed", False)),
-                        "changes": item.get("changes"),
-                    },
+                    line_item_rows,
+                    page_size=500,
                 )
 
-    pg_conn.commit()
-    pg_conn.close()
-    return len(results), bad_dates
+        pg_conn.commit()
+    finally:
+        pg_conn.close()
+
+    return bad_dates
+
+
+def publish(sqlite_path: str, database_url: str) -> tuple[int, list]:
+    conn = db.connect(sqlite_path)
+    results = db.get_all_results(conn)
+    conn.close()
+
+    if not results:
+        print(f"Nothing to publish — '{sqlite_path}' has no extracted POs yet.")
+        return 0, []
+
+    # Recompute revision labels/diffs across the full local history so the
+    # dashboard's "Original"/"Rev N" labels stay correct as new data arrives.
+    results.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
+    annotate_revisions(results)
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            bad_dates = _publish_to_postgres(results, database_url)
+            return len(results), bad_dates
+        except psycopg2.OperationalError as e:
+            if attempt == MAX_ATTEMPTS:
+                raise
+            print(
+                f"⚠️  Database connection issue (attempt {attempt}/{MAX_ATTEMPTS}): {e}\n   Retrying...",
+                file=sys.stderr,
+            )
+            time.sleep(RETRY_DELAY)
 
 
 def main():
