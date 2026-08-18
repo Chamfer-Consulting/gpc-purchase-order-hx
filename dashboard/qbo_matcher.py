@@ -226,11 +226,27 @@ def _calibrated_date_window(conn) -> int:
     return max(14, min(90, p95))
 
 
+MIN_PO_DIGITS_FOR_HINT = 6
+
+
+def _po_number_hint_score(po, inv) -> float:
+    """1.0 if the PO's number appears as a contiguous digit-substring inside the
+    invoice's own PO-number field, even though it didn't match exactly — e.g. an
+    EDI-style reference code that embeds the real PO number
+    ("047000101004971660001" contains "4971660"), or a transcription typo with an
+    extra digit. Length-gated to avoid coincidental hits on short digit runs."""
+    po_norm = normalize_po_number(po.get("po_number"))
+    inv_norm = inv.get("_po_number_norm")
+    if len(po_norm) < MIN_PO_DIGITS_FOR_HINT or not inv_norm or po_norm == inv_norm:
+        return 0.0
+    return 1.0 if po_norm in inv_norm else 0.0
+
+
 def _score_candidate(po, inv, po_items_map, inv_items_map, date_window):
     """None means the candidate is outside the acceptable date range — excluded entirely.
-    Weighted toward line-item content (0.4) over date/amount (0.3 each) — matching
-    products and quantities is the strongest independent signal once PO number isn't
-    available at all."""
+    Line-item content and a possible embedded-PO-number hint are weighted highest
+    (0.3, 0.2) since they're the most specific independent signals available once an
+    exact PO-number match isn't; date/amount proximity (0.25 each) corroborate."""
     po_date, inv_date = po.get("_effective_date"), inv.get("txn_date")
     if po_date and inv_date:
         delta_days = abs((inv_date - po_date).days)
@@ -242,8 +258,9 @@ def _score_candidate(po, inv, po_items_map, inv_items_map, date_window):
 
     amount_score = _amount_score(po.get("total"), inv.get("total_amt"))
     item_score = _line_item_similarity(po_items_map.get(po["id"], {}), inv_items_map.get(inv["id"], {}))
+    hint_score = _po_number_hint_score(po, inv)
 
-    return round(0.3 * date_score + 0.3 * amount_score + 0.4 * item_score, 3)
+    return round(0.25 * date_score + 0.25 * amount_score + 0.3 * item_score + 0.2 * hint_score, 3)
 
 
 def run_matching(conn) -> dict:
