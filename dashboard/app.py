@@ -250,6 +250,75 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     return po_df, items_df, matched_df
 
 
+_MATCHED_ITEMS_COLUMNS = [
+    "po_id", "invoice_id", "customer_name", "effective_date",
+    "product_name", "container_size", "requested_qty", "requested_amount",
+    "delivered_qty", "delivered_amount",
+]
+
+
+@st.cache_data(ttl=300, show_spinner="Loading requested vs. delivered detail...")
+def load_matched_line_items() -> pd.DataFrame:
+    """Line-item-level requested-vs-delivered detail for every CONFIRMED PO<->invoice
+    match — one row per (po_id, invoice_id, product, size). PO and invoice line items
+    aren't linked 1:1 (only the PO<->invoice pair is), so this reconstructs the
+    comparison: group each side's items by (id, product, size), then outer-merge the two
+    groupings so a product requested-but-not-delivered (or vice versa) gets its own row
+    with a zero on the missing side, instead of only surfacing the overlap."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        links = pd.read_sql_query(
+            """
+            SELECT l.po_id, l.invoice_id, po.customer_name, po.po_date, po.sent_date
+            FROM po_invoice_links l
+            JOIN purchase_orders po ON po.id = l.po_id
+            WHERE l.confirmed = TRUE
+            """,
+            conn,
+        )
+        if links.empty:
+            return pd.DataFrame(columns=_MATCHED_ITEMS_COLUMNS)
+
+        po_ids = links["po_id"].unique().tolist()
+        invoice_ids = links["invoice_id"].unique().tolist()
+        po_items = pd.read_sql_query(
+            "SELECT po_id, product_name, container_size, quantity, line_total FROM line_items "
+            "WHERE po_id = ANY(%(ids)s) AND is_sample = FALSE AND is_removed = FALSE",
+            conn, params={"ids": po_ids},
+        )
+        inv_items = pd.read_sql_query(
+            "SELECT invoice_id, product_name, container_size, quantity, line_total FROM qbo_invoice_items "
+            "WHERE invoice_id = ANY(%(ids)s) AND is_sample = FALSE",
+            conn, params={"ids": invoice_ids},
+        )
+    finally:
+        conn.close()
+
+    links["effective_date"] = pd.to_datetime(links["sent_date"], errors="coerce").fillna(
+        pd.to_datetime(links["po_date"], errors="coerce")
+    )
+    links = links[["po_id", "invoice_id", "customer_name", "effective_date"]]
+
+    po_grouped = po_items.groupby(["po_id", "product_name", "container_size"], as_index=False).agg(
+        requested_qty=("quantity", "sum"), requested_amount=("line_total", "sum"),
+    )
+    inv_grouped = inv_items.groupby(["invoice_id", "product_name", "container_size"], as_index=False).agg(
+        delivered_qty=("quantity", "sum"), delivered_amount=("line_total", "sum"),
+    )
+
+    po_side = links.merge(po_grouped, on="po_id", how="left")
+    inv_side = links.merge(inv_grouped, on="invoice_id", how="left")
+
+    combined = pd.merge(
+        po_side, inv_side,
+        on=["po_id", "invoice_id", "customer_name", "effective_date", "product_name", "container_size"],
+        how="outer",
+    )
+    for col in ("requested_qty", "requested_amount", "delivered_qty", "delivered_amount"):
+        combined[col] = combined[col].fillna(0.0)
+    return combined[_MATCHED_ITEMS_COLUMNS]
+
+
 def prepare(po_df: pd.DataFrame, items_df: pd.DataFrame):
     """Dedupe to the latest version of each PO and join line items to it."""
     po = po_df.copy()
@@ -488,13 +557,13 @@ with tab_trends:
             color_discrete_map={"Normal": palette["categorical"][0], "Spike": palette["status"]["warning"]},
             labels={"month": "", "orders": "Orders", "spike_label": ""},
         )
-        st.plotly_chart(style(fig, palette), use_container_width=True)
+        st.plotly_chart(style(fig, palette), use_container_width=True, key="chart_orders_per_month")
         st.caption("🟠 **Spike** = order count more than 1.5× the trailing 3-month average.")
 
         st.subheader("Revenue per month")
         fig2 = px.line(by_month, x="month", y="revenue", labels={"month": "", "revenue": "Revenue ($)"})
         fig2.update_traces(line_color=palette["categorical"][0], line_width=2)
-        st.plotly_chart(style(fig2, palette), use_container_width=True)
+        st.plotly_chart(style(fig2, palette), use_container_width=True, key="chart_revenue_per_month")
 
         st.subheader("Year-over-year comparison")
         yoy_src = f_po.dropna(subset=["effective_date"]).copy()
@@ -514,7 +583,7 @@ with tab_trends:
                 tickmode="array", tickvals=list(range(1, 13)),
                 ticktext=["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
             )
-            st.plotly_chart(style(fig3, palette), use_container_width=True)
+            st.plotly_chart(style(fig3, palette), use_container_width=True, key="chart_yoy")
 
     st.divider()
     st.subheader("Requested vs. delivered over time")
@@ -550,7 +619,7 @@ with tab_trends:
                 color_discrete_map={"Requested": palette["categorical"][0], "Delivered": palette["categorical"][1]},
                 labels={"month": "", "Amount": "Revenue ($)"},
             )
-            st.plotly_chart(style(fig_rd, palette), use_container_width=True)
+            st.plotly_chart(style(fig_rd, palette), use_container_width=True, key="chart_trends_requested_delivered")
 
             by_month_rd["Variance ($)"] = by_month_rd["delivered"] - by_month_rd["requested"]
             by_month_rd["Variance (%)"] = by_month_rd.apply(
@@ -576,7 +645,7 @@ with tab_products:
             labels={"revenue": "Revenue ($)", "product_name": ""},
         )
         fig.update_layout(showlegend=False)
-        st.plotly_chart(style(fig, palette), use_container_width=True)
+        st.plotly_chart(style(fig, palette), use_container_width=True, key="chart_revenue_by_product")
         st.download_button(
             "⬇️ Download product revenue (CSV)",
             by_product.rename(columns={"product_name": "Product", "revenue": "Revenue ($)", "quantity": "Quantity"})
@@ -596,7 +665,7 @@ with tab_products:
                 color_discrete_map=product_colors,
                 labels={"month": "", "quantity": "Quantity", "product_name": "Product"},
             )
-            st.plotly_chart(style(fig3, palette), use_container_width=True)
+            st.plotly_chart(style(fig3, palette), use_container_width=True, key="chart_product_mix_time")
 
         st.subheader("Top movers (month over month)")
         movers = month_over_month_movers(f_items, "effective_date", "product_name", "line_total")
@@ -625,7 +694,7 @@ with tab_customers:
             labels={"revenue": "Revenue ($)", "customer_name": ""},
         )
         fig.update_traces(marker_color=palette["sequential_blue"][4])
-        st.plotly_chart(style(fig, palette), use_container_width=True)
+        st.plotly_chart(style(fig, palette), use_container_width=True, key="chart_top_customers")
 
         st.subheader("Customer summary")
         customer_table = by_customer.sort_values("revenue", ascending=False).rename(columns={
@@ -683,7 +752,7 @@ with tab_revisions:
         lc2.metric("Average Lead Time", f"{lead['lead_days'].mean():.1f} days")
         fig_lead = px.histogram(lead, x="lead_days", nbins=20, labels={"lead_days": "Lead time (days)"})
         fig_lead.update_traces(marker_color=palette["sequential_blue"][3])
-        st.plotly_chart(style(fig_lead, palette), use_container_width=True)
+        st.plotly_chart(style(fig_lead, palette), use_container_width=True, key="chart_lead_time")
 
     st.subheader("🔁 Revision impact")
     st.caption("Compares each order's original total to its latest revision's total.")
@@ -1156,62 +1225,85 @@ with tab_fulfillment:
         if not po_ids:
             st.info("No orders in the current filter.")
         else:
-            st.subheader("Requested vs. shipped — by product")
-            with mc.cursor() as cur:
-                cur.execute(
-                    "SELECT qi.product_name, SUM(qi.quantity) FROM po_invoice_links l "
-                    "JOIN qbo_invoice_items qi ON qi.invoice_id = l.invoice_id "
-                    "WHERE l.confirmed = TRUE AND l.po_id = ANY(%s) GROUP BY qi.product_name",
-                    (po_ids,),
-                )
-                shipped_by_product = {k: float(v or 0) for k, v in cur.fetchall()}
-            requested_by_product = f_items.groupby("product_name")["quantity"].sum().to_dict()
-
-            products = sorted(set(requested_by_product) | set(shipped_by_product))
-            comp_df = pd.DataFrame({
-                "Product": products,
-                "Requested": [float(requested_by_product.get(p, 0)) for p in products],
-                "Shipped": [shipped_by_product.get(p, 0.0) for p in products],
-            })
-            comp_long = comp_df.melt(id_vars="Product", value_vars=["Requested", "Shipped"],
-                                      var_name="Type", value_name="Quantity")
-            fig = px.bar(
-                comp_long, x="Product", y="Quantity", color="Type", barmode="group",
-                color_discrete_map={"Requested": palette["categorical"][0], "Shipped": palette["categorical"][1]},
-                labels={"Product": ""},
+            st.subheader("Detailed breakdown: requested vs. delivered")
+            st.caption("Complete detail — slice by time period, customer, product, and size, in any combination.")
+            bc1, bc2 = st.columns(2)
+            period_choice = bc1.selectbox(
+                "Time period", ["All time", "Week", "Month", "Quarter", "Year"], index=2, key="breakdown_period",
             )
-            st.plotly_chart(style(fig, palette), use_container_width=True)
-            comp_df["Variance"] = comp_df["Shipped"] - comp_df["Requested"]
-            st.dataframe(comp_df, use_container_width=True, hide_index=True)
-
-            st.subheader("Requested vs. shipped — by customer")
-            with mc.cursor() as cur:
-                cur.execute(
-                    "SELECT po.customer_name, SUM(qi.quantity) FROM po_invoice_links l "
-                    "JOIN purchase_orders po ON po.id = l.po_id "
-                    "JOIN qbo_invoice_items qi ON qi.invoice_id = l.invoice_id "
-                    "WHERE l.confirmed = TRUE AND l.po_id = ANY(%s) GROUP BY po.customer_name",
-                    (po_ids,),
-                )
-                shipped_by_customer = {k: float(v or 0) for k, v in cur.fetchall()}
-            requested_by_customer = f_items.groupby("customer_name")["quantity"].sum().to_dict()
-
-            customers_all = sorted(set(requested_by_customer) | set(shipped_by_customer))
-            comp_cust = pd.DataFrame({
-                "Customer": customers_all,
-                "Requested": [float(requested_by_customer.get(c, 0)) for c in customers_all],
-                "Shipped": [shipped_by_customer.get(c, 0.0) for c in customers_all],
-            })
-            comp_cust_long = comp_cust.melt(id_vars="Customer", value_vars=["Requested", "Shipped"],
-                                             var_name="Type", value_name="Quantity")
-            fig2 = px.bar(
-                comp_cust_long, x="Customer", y="Quantity", color="Type", barmode="group",
-                color_discrete_map={"Requested": palette["categorical"][0], "Shipped": palette["categorical"][1]},
-                labels={"Customer": ""},
+            dims = bc2.multiselect(
+                "Break down by", ["Customer", "Product", "Size"], default=["Product"], key="breakdown_dims",
             )
-            st.plotly_chart(style(fig2, palette), use_container_width=True)
-            comp_cust["Variance"] = comp_cust["Shipped"] - comp_cust["Requested"]
-            st.dataframe(comp_cust, use_container_width=True, hide_index=True)
+
+            matched_items = load_matched_line_items()
+            detail = matched_items[matched_items["po_id"].isin(po_ids)].copy()
+
+            if detail.empty:
+                st.info("No confirmed matches with line-item detail in the current filter.")
+            else:
+                period_freq = {"Week": "W", "Month": "M", "Quarter": "Q", "Year": "Y"}
+                group_cols = []
+                if period_choice != "All time":
+                    detail["Period"] = detail["effective_date"].dt.to_period(period_freq[period_choice]).dt.start_time
+                    group_cols.append("Period")
+                dim_col_map = {"Customer": "customer_name", "Product": "product_name", "Size": "container_size"}
+                group_cols += [dim_col_map[d] for d in dims]
+
+                if not group_cols:
+                    detail["All"] = "All"
+                    group_cols = ["All"]
+
+                grouped = detail.groupby(group_cols, as_index=False).agg(
+                    requested_qty=("requested_qty", "sum"), requested_amount=("requested_amount", "sum"),
+                    delivered_qty=("delivered_qty", "sum"), delivered_amount=("delivered_amount", "sum"),
+                )
+                grouped["Qty Variance"] = grouped["delivered_qty"] - grouped["requested_qty"]
+                grouped["$ Variance"] = grouped["delivered_amount"] - grouped["requested_amount"]
+                grouped["Fulfillment %"] = grouped.apply(
+                    lambda r: round(r["delivered_amount"] / r["requested_amount"] * 100, 1)
+                    if r["requested_amount"] else None,
+                    axis=1,
+                )
+                grouped = grouped.sort_values(
+                    ["Period"] + [c for c in group_cols if c != "Period"] if "Period" in group_cols else "$ Variance"
+                )
+
+                display_df = grouped.rename(columns={
+                    "customer_name": "Customer", "product_name": "Product", "container_size": "Size",
+                    "requested_qty": "Requested Qty", "requested_amount": "Requested ($)",
+                    "delivered_qty": "Delivered Qty", "delivered_amount": "Delivered ($)",
+                })
+                if "All" in display_df.columns:
+                    display_df = display_df.drop(columns=["All"])
+
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                st.download_button(
+                    "⬇️ Download breakdown (CSV)",
+                    display_df.to_csv(index=False).encode("utf-8"),
+                    file_name="requested_vs_delivered_breakdown.csv", mime="text/csv", key="dl_breakdown",
+                )
+
+                if period_choice != "All time":
+                    chart_src = detail.groupby("Period", as_index=False).agg(
+                        requested_amount=("requested_amount", "sum"), delivered_amount=("delivered_amount", "sum"),
+                    )
+                    chart_long = chart_src.melt(
+                        id_vars="Period", value_vars=["requested_amount", "delivered_amount"],
+                        var_name="Type", value_name="Amount",
+                    )
+                    chart_long["Type"] = chart_long["Type"].map({
+                        "requested_amount": "Requested", "delivered_amount": "Delivered",
+                    })
+                    fig_bd = px.bar(
+                        chart_long, x="Period", y="Amount", color="Type", barmode="group",
+                        color_discrete_map={"Requested": palette["categorical"][0], "Delivered": palette["categorical"][1]},
+                        labels={"Period": "", "Amount": "Revenue ($)"},
+                    )
+                    st.plotly_chart(style(fig_bd, palette), use_container_width=True, key="chart_breakdown_period")
+                    st.caption(
+                        "Chart aggregates across whatever breakdown dimensions are selected above — "
+                        "see the table for the full multi-dimensional detail."
+                    )
 
             st.subheader("Matched PO ↔ Invoice detail")
             with mc.cursor() as cur:
