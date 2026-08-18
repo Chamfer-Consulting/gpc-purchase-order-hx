@@ -783,10 +783,14 @@ with tab_edit:
 
 with tab_qbo:
     st.caption(
-        "Phase 1: connect to QuickBooks (sandbox) and pull raw invoice data — the "
-        "matching logic against PO requests comes in a follow-up phase, once we've seen "
-        "what fields this company's invoices actually populate."
+        "Phase 1: connect to QuickBooks and pull raw invoice data — the matching logic "
+        "against PO requests comes in a follow-up phase, once we've seen what fields "
+        "this company's invoices actually populate."
     )
+    if qbo_client.is_production():
+        st.warning("⚠️ Environment: **Production** — this pulls real invoice data.")
+    else:
+        st.info("Environment: **Sandbox** (test data only). Set `qbo_environment = \"production\"` to switch.")
 
     _conn = psycopg2.connect(get_database_url())
     try:

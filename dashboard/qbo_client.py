@@ -1,9 +1,12 @@
 """
 QuickBooks Online integration — Phase 1: OAuth connect + raw invoice pull.
 
-Sandbox-only for now: API_BASE and the qbo_client_id/secret in secrets.toml are both
-Development/sandbox credentials. Switching to production later means swapping both the
-credentials (Intuit issues separate Production keys) and API_BASE.
+Environment (sandbox vs production) is controlled by the `qbo_environment` secret
+("sandbox"/"production", defaults to "sandbox" if unset — safe default). Switching
+environments also means switching qbo_client_id/qbo_client_secret to the matching
+Development or Production keys from Intuit's app dashboard; a token issued under one
+environment's credentials won't authenticate against the other's API base, so reconnect
+(disconnect + Connect again) after changing qbo_environment.
 """
 
 import json
@@ -16,8 +19,15 @@ from psycopg2.extras import Json
 
 AUTHORIZE_URL = "https://appcenter.intuit.com/connect/oauth2"
 TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
-API_BASE = "https://sandbox-quickbooks.api.intuit.com"
 SCOPE = "com.intuit.quickbooks.accounting"
+
+
+def is_production() -> bool:
+    return st.secrets.get("qbo_environment", "sandbox") == "production"
+
+
+def api_base() -> str:
+    return "https://quickbooks.api.intuit.com" if is_production() else "https://sandbox-quickbooks.api.intuit.com"
 
 
 def _creds():
@@ -126,7 +136,7 @@ def fetch_all_invoices(access_token: str, realm_id: str) -> list[dict]:
     while True:
         query = f"SELECT * FROM Invoice STARTPOSITION {start_position} MAXRESULTS {page_size}"
         resp = requests.get(
-            f"{API_BASE}/v3/company/{realm_id}/query",
+            f"{api_base()}/v3/company/{realm_id}/query",
             headers=headers,
             params={"query": query, "minorversion": "65"},
             timeout=30,
