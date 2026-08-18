@@ -55,22 +55,32 @@ def find_file_id(access_token: str, folder_id: str, filename: str) -> str | None
     return files[0]["id"]
 
 
-def sync_drive_links(conn) -> dict:
-    """For every PO not yet linked, search the Drive folder by its source_file name and
-    record the match. Sequential requests — Drive's default read quota comfortably covers
-    a ~1300-file backfill, and this only runs occasionally: once a PO is linked it's never
-    re-searched (drive_file_id IS NULL is the incremental filter), and a not-found PO
-    stays eligible for retry on the next sync in case the file gets archived later."""
+DEFAULT_BATCH_LIMIT = 150  # per call — one Drive API round trip per PO (~0.2-0.3s each);
+                           # a full ~1300-PO backfill in one call could run 5+ minutes with
+                           # no visible feedback and risks a proxy/request timeout on
+                           # Streamlit Cloud. Bounding it keeps each click fast and safe;
+                           # the caller reruns for however many batches are left.
+
+
+def sync_drive_links(conn, limit: int = DEFAULT_BATCH_LIMIT, progress=None) -> dict:
+    """For up to `limit` not-yet-linked POs, search the Drive folder by source_file name
+    and record the match. `progress(i, total)`, if given, is called after each lookup so
+    the caller can render a live progress bar instead of one long silent wait.
+
+    Sequential requests — Drive's default read quota comfortably covers this. Once a PO
+    is linked it's never re-searched (drive_file_id IS NULL is the incremental filter);
+    a not-found PO stays eligible for retry on a later sync in case the file shows up
+    afterward."""
     folder_id = st.secrets["gdrive_folder_id"]
     access_token = _access_token()
 
     with conn.cursor() as cur:
-        cur.execute("SELECT id, source_file FROM purchase_orders WHERE drive_file_id IS NULL")
+        cur.execute("SELECT id, source_file FROM purchase_orders WHERE drive_file_id IS NULL LIMIT %s", (limit,))
         rows = cur.fetchall()
 
     linked = not_found = 0
     with conn.cursor() as cur:
-        for po_id, source_file in rows:
+        for i, (po_id, source_file) in enumerate(rows, start=1):
             file_id = find_file_id(access_token, folder_id, source_file)
             if file_id:
                 cur.execute(
@@ -80,9 +90,15 @@ def sync_drive_links(conn) -> dict:
                 linked += 1
             else:
                 not_found += 1
+            if progress:
+                progress(i, len(rows))
     conn.commit()
 
-    return {"linked": linked, "not_found": not_found, "total_checked": len(rows)}
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM purchase_orders WHERE drive_file_id IS NULL AND error IS NULL")
+        remaining = cur.fetchone()[0]
+
+    return {"linked": linked, "not_found": not_found, "total_checked": len(rows), "remaining": remaining}
 
 
 def file_view_url(file_id: str) -> str:

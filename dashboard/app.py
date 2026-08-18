@@ -893,16 +893,25 @@ with tab_fulfillment:
                 f"Fuzzy date window: ±{summary['date_window_days']} days."
             )
         if mcol2.button("📁 Sync Drive links"):
-            with st.spinner("Searching the Shared Drive for original PDFs..."):
-                try:
-                    drive_summary = gdrive_client.sync_drive_links(mc)
-                    st.success(
-                        f"{drive_summary['linked']} PO(s) linked to their PDF, "
-                        f"{drive_summary['not_found']} not found in the Shared Drive "
-                        f"(checked {drive_summary['total_checked']})."
-                    )
-                except Exception as e:
-                    st.error(f"Drive sync failed: {e}")
+            progress_bar = st.progress(0.0, text="Searching Google Drive...")
+
+            def _drive_progress(i, total):
+                progress_bar.progress(i / total, text=f"Searching Google Drive... {i}/{total}")
+
+            try:
+                drive_summary = gdrive_client.sync_drive_links(mc, progress=_drive_progress)
+                progress_bar.empty()
+                msg = (
+                    f"{drive_summary['linked']} PO(s) linked to their PDF, "
+                    f"{drive_summary['not_found']} not found in this batch "
+                    f"(checked {drive_summary['total_checked']})."
+                )
+                if drive_summary["remaining"]:
+                    msg += f" {drive_summary['remaining']} more PO(s) still to check — click again to continue."
+                st.success(msg)
+            except Exception as e:
+                progress_bar.empty()
+                st.error(f"Drive sync failed: {e}")
         with mc.cursor() as _cur:
             _cur.execute("SELECT COUNT(*), COUNT(drive_file_id) FROM purchase_orders WHERE error IS NULL")
             _total_po, _linked_po = _cur.fetchone()
