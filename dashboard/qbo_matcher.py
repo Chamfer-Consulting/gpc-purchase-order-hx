@@ -302,6 +302,40 @@ def _score_candidate(po, inv, po_items_map, inv_items_map, date_window):
     return round(0.25 * date_score + 0.25 * amount_score + 0.3 * item_score + 0.2 * hint_score, 3)
 
 
+# Matches _is_voided()'s logic, as a SQL fragment — an invoice can be voided in
+# QuickBooks well after it was first synced/matched, so this is checked live against
+# current qbo_invoices data, not decided once at match time.
+_VOID_SQL = "(total_amt IS NULL OR total_amt = 0 OR private_note ILIKE '%%void%%')"
+
+
+def _release_voided_links(conn) -> dict:
+    """A po_invoice_links row (confirmed or still-pending) pointing at an invoice that
+    has since been voided in QuickBooks is stale data. Confirmed links are rejected
+    (freeing the PO to be rematched within this same run) rather than silently left
+    pointing at a dead invoice forever — the exact "PO becomes stagnant" bug reported
+    live. Pending candidates are simply pruned — a voided invoice was never a real
+    option, no reason to leave it cluttering the review queue."""
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            UPDATE po_invoice_links SET confirmed = FALSE, rejected = TRUE
+            WHERE confirmed = TRUE
+              AND invoice_id IN (SELECT id FROM qbo_invoices WHERE {_VOID_SQL})
+            """
+        )
+        released = cur.rowcount
+        cur.execute(
+            f"""
+            DELETE FROM po_invoice_links
+            WHERE confirmed = FALSE AND rejected = FALSE
+              AND invoice_id IN (SELECT id FROM qbo_invoices WHERE {_VOID_SQL})
+            """
+        )
+        pruned = cur.rowcount
+    conn.commit()
+    return {"released": released, "pruned": pruned}
+
+
 def run_matching(conn) -> dict:
     """Populates po_invoice_links. Idempotent — never re-proposes a (po_id, invoice_id)
     pair that's already confirmed/rejected, and never searches for *new* candidates for
@@ -312,7 +346,13 @@ def run_matching(conn) -> dict:
     should back at most one PO, and without this an already-matched invoice could still
     surface as a weak "Low" fuzzy suggestion for a completely unrelated PO that merely
     shares its customer (seen live: an invoice correctly confirmed to PO 471441 was also
-    being offered to PO 471105, a different order for the same customer)."""
+    being offered to PO 471105, a different order for the same customer).
+
+    Starts by releasing any link — confirmed or pending — that points at an invoice
+    since voided in QuickBooks (see _release_voided_links), so a freshly-released PO is
+    reconsidered for a real match in the same run rather than needing a second click."""
+    voided_summary = _release_voided_links(conn)
+
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT po_id FROM po_invoice_links WHERE confirmed = TRUE")
         already_resolved_po_ids = {r[0] for r in cur.fetchall()}
@@ -422,6 +462,8 @@ def run_matching(conn) -> dict:
         "no_candidates": no_candidates,
         "total_pos": len(all_pos),
         "date_window_days": date_window,
+        "voided_released": voided_summary["released"],
+        "voided_pruned": voided_summary["pruned"],
     }
 
 

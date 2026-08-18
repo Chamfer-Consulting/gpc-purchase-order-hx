@@ -903,6 +903,9 @@ with tab_fulfillment:
                 f"{summary['ambiguous_po_number']} still-ambiguous PO-number match(es), "
                 f"{summary['no_candidates']} PO(s) with no candidate at all "
                 f"(out of {summary['total_pos']} total POs). "
+                f"{summary['voided_released']} PO(s) released back for rematching (their "
+                f"invoice was voided in QuickBooks), {summary['voided_pruned']} stale voided "
+                f"candidate(s) pruned. "
                 f"Fuzzy date window: ±{summary['date_window_days']} days."
             )
         if mcol2.button("📁 Sync Drive links"):
