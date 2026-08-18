@@ -896,22 +896,65 @@ with tab_fulfillment:
         if not needs_review:
             st.caption("Nothing pending review.")
         else:
-            for row in needs_review:
-                c1, c2, c3 = st.columns([6, 1, 1])
-                confidence = qbo_matcher.confidence_label(row["match_method"], row["match_score"])
-                c1.write(
-                    f"PO **{row['po_number'] or row['source_file']}** "
-                    f"({row['po_customer']}, ${row['po_total'] or 0:,.2f}) ↔ "
-                    f"Invoice **{row['doc_number']}** "
-                    f"({row['inv_customer']}, {row['txn_date']}, ${row['total_amt'] or 0:,.2f}) "
-                    f"— **{confidence}** (score {row['match_score']})"
+            po_items_map, inv_items_map = qbo_matcher.get_line_items_for_review(
+                mc, [r["po_id"] for r in needs_review], [r["invoice_id"] for r in needs_review],
+            )
+
+            def _items_table(items):
+                if not items:
+                    st.caption("No line items.")
+                    return
+                st.dataframe(
+                    pd.DataFrame(items).rename(columns={
+                        "product_name": "Product", "container_size": "Size", "quantity": "Qty",
+                        "unit_price": "Unit $", "line_total": "Total $", "is_sample": "Sample",
+                    }),
+                    use_container_width=True, hide_index=True,
                 )
-                if c2.button("✅ Confirm", key=f"confirm_{row['po_id']}_{row['invoice_id']}"):
-                    qbo_matcher.confirm_link(mc, row["po_id"], row["invoice_id"])
-                    st.rerun()
-                if c3.button("❌ Reject", key=f"reject_{row['po_id']}_{row['invoice_id']}"):
-                    qbo_matcher.reject_link(mc, row["po_id"], row["invoice_id"])
-                    st.rerun()
+
+            for row in needs_review:
+                confidence = qbo_matcher.confidence_label(row["match_method"], row["match_score"])
+                summary = (
+                    f"PO {row['po_number'] or row['source_file']} ({row['po_customer']}, "
+                    f"${row['po_total'] or 0:,.2f}) ↔ Invoice {row['doc_number']} "
+                    f"({row['inv_customer']}, {row['txn_date']}, ${row['total_amt'] or 0:,.2f}) "
+                    f"— {confidence}"
+                )
+                with st.expander(summary):
+                    dc1, dc2 = st.columns(2)
+                    with dc1:
+                        st.markdown("**Purchase Order**")
+                        st.write(f"PO Number: {row['po_number'] or row['source_file']}")
+                        st.write(f"Customer: {row['po_customer']}")
+                        st.write(
+                            f"PO Date: {row['po_date'] or '—'} · Sent: {row['sent_date'] or '—'} · "
+                            f"Delivery: {row['delivery_date'] or '—'}"
+                        )
+                        st.write(
+                            f"Subtotal: ${row['po_subtotal'] or 0:,.2f} · Tax: ${row['po_tax'] or 0:,.2f} · "
+                            f"Total: ${row['po_total'] or 0:,.2f}"
+                        )
+                        if row.get("po_notes"):
+                            st.caption(f"Notes: {row['po_notes']}")
+                        _items_table(po_items_map.get(row["po_id"], []))
+                    with dc2:
+                        st.markdown("**QuickBooks Invoice**")
+                        st.write(f"Invoice #: {row['doc_number']}")
+                        st.markdown(f"[Open in QuickBooks ↗]({qbo_client.invoice_url(row['qbo_invoice_id'])})")
+                        st.write(f"Customer: {row['inv_customer']}")
+                        st.write(f"Invoice Date: {row['txn_date'] or '—'} · Due: {row['due_date'] or '—'}")
+                        st.write(f"Total: ${row['total_amt'] or 0:,.2f}")
+                        if row.get("inv_note"):
+                            st.caption(f"Note: {row['inv_note']}")
+                        _items_table(inv_items_map.get(row["invoice_id"], []))
+
+                    bc1, bc2 = st.columns(2)
+                    if bc1.button("✅ Confirm match", key=f"confirm_{row['po_id']}_{row['invoice_id']}"):
+                        qbo_matcher.confirm_link(mc, row["po_id"], row["invoice_id"])
+                        st.rerun()
+                    if bc2.button("❌ Reject", key=f"reject_{row['po_id']}_{row['invoice_id']}"):
+                        qbo_matcher.reject_link(mc, row["po_id"], row["invoice_id"])
+                        st.rerun()
 
         unlinked = qbo_matcher.get_unlinked_pos(mc)
         if unlinked:

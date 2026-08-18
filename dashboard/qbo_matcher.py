@@ -380,14 +380,18 @@ def run_matching(conn) -> dict:
 
 
 def get_needs_review(conn) -> list[dict]:
+    """Full header detail for both sides (not just a summary) — the review UI needs
+    enough here to render a real side-by-side comparison, not a one-line guess."""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT l.po_id, l.invoice_id, l.match_method, l.match_score,
                    po.po_number, po.customer_name AS po_customer, po.total AS po_total,
+                   po.subtotal AS po_subtotal, po.tax AS po_tax,
+                   po.po_date, po.sent_date, po.delivery_date, po.notes AS po_notes,
                    po.source_file,
-                   inv.doc_number, inv.customer_name AS inv_customer,
-                   inv.txn_date, inv.total_amt
+                   inv.qbo_invoice_id, inv.doc_number, inv.customer_name AS inv_customer,
+                   inv.txn_date, inv.due_date, inv.total_amt, inv.private_note AS inv_note
             FROM po_invoice_links l
             JOIN purchase_orders po ON po.id = l.po_id
             JOIN qbo_invoices inv ON inv.id = l.invoice_id
@@ -397,6 +401,39 @@ def get_needs_review(conn) -> list[dict]:
         )
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def get_line_items_for_review(conn, po_ids: list[int], invoice_ids: list[int]):
+    """Batch-fetches full line-item detail for every PO/invoice appearing in the
+    needs-review queue — two queries total, not one per candidate, so the review UI
+    can render dozens of side-by-side comparisons without a query storm."""
+    po_items: dict[int, list[dict]] = {}
+    if po_ids:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT po_id, product_name, container_size, quantity, unit_price, "
+                "line_total, is_sample FROM line_items "
+                "WHERE po_id = ANY(%s) AND is_removed = FALSE ORDER BY id",
+                (po_ids,),
+            )
+            cols = [d[0] for d in cur.description][1:]
+            for row in cur.fetchall():
+                po_items.setdefault(row[0], []).append(dict(zip(cols, row[1:])))
+
+    inv_items: dict[int, list[dict]] = {}
+    if invoice_ids:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT invoice_id, product_name, container_size, quantity, unit_price, "
+                "line_total, is_sample FROM qbo_invoice_items "
+                "WHERE invoice_id = ANY(%s) ORDER BY id",
+                (invoice_ids,),
+            )
+            cols = [d[0] for d in cur.description][1:]
+            for row in cur.fetchall():
+                inv_items.setdefault(row[0], []).append(dict(zip(cols, row[1:])))
+
+    return po_items, inv_items
 
 
 def get_unlinked_pos(conn) -> list[dict]:

@@ -35,6 +35,12 @@ def api_base() -> str:
     return "https://quickbooks.api.intuit.com" if is_production() else "https://sandbox-quickbooks.api.intuit.com"
 
 
+def invoice_url(qbo_invoice_id: str) -> str:
+    """Deep link to open this invoice directly in QuickBooks Online's own UI."""
+    host = "qbo.intuit.com" if is_production() else "sandbox.qbo.intuit.com"
+    return f"https://{host}/app/invoice?txnId={qbo_invoice_id}"
+
+
 def _creds():
     return st.secrets["qbo_client_id"], st.secrets["qbo_client_secret"], st.secrets["qbo_redirect_uri"]
 
