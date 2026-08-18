@@ -10,12 +10,17 @@ environment's credentials won't authenticate against the other's API base, so re
 """
 
 import json
+import os
+import sys
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import requests
 import streamlit as st
 from psycopg2.extras import Json, execute_values
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from product_catalog import normalize_product  # noqa: E402 — needs the sys.path insert above
 
 AUTHORIZE_URL = "https://appcenter.intuit.com/connect/oauth2"
 TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
@@ -197,7 +202,7 @@ def sync_invoices(conn, full_resync: bool = False) -> int:
             for inv in invoices
         ]
         with conn.cursor() as cur:
-            execute_values(
+            returned = execute_values(
                 cur,
                 """
                 INSERT INTO qbo_invoices (
@@ -214,11 +219,51 @@ def sync_invoices(conn, full_resync: bool = False) -> int:
                     private_note  = EXCLUDED.private_note,
                     raw_json      = EXCLUDED.raw_json,
                     synced_at     = now()
+                RETURNING qbo_invoice_id, id
                 """,
                 rows,
                 template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,now())",
                 page_size=200,
+                fetch=True,
             )
+            id_lookup = dict(returned)
+
+            item_rows = []
+            invoice_ids = []
+            for inv in invoices:
+                invoice_id = id_lookup.get(inv.get("Id"))
+                if invoice_id is None:
+                    continue
+                invoice_ids.append(invoice_id)
+                for line in inv.get("Line") or []:
+                    detail = line.get("SalesItemLineDetail")
+                    if not detail:
+                        continue
+                    item_ref = (detail.get("ItemRef") or {}).get("name", "")
+                    description = line.get("Description", "")
+                    unit_price = detail.get("UnitPrice")
+                    product_name, size, is_sample, _ = normalize_product(
+                        f"{item_ref} {description}", unit_price=unit_price,
+                    )
+                    item_rows.append((
+                        invoice_id, item_ref, description, product_name, size, is_sample,
+                        detail.get("Qty"), unit_price, line.get("Amount"),
+                    ))
+
+            if invoice_ids:
+                cur.execute("DELETE FROM qbo_invoice_items WHERE invoice_id = ANY(%s)", (invoice_ids,))
+            if item_rows:
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO qbo_invoice_items (
+                        invoice_id, item_raw, description, product_name, container_size,
+                        is_sample, quantity, unit_price, line_total
+                    ) VALUES %s
+                    """,
+                    item_rows,
+                    page_size=500,
+                )
 
     with conn.cursor() as cur:
         cur.execute("UPDATE qbo_connection SET last_synced_at = %s WHERE realm_id = %s", (sync_started_at, realm_id))

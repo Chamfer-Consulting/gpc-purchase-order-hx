@@ -22,6 +22,7 @@ from math_check import validate_math  # noqa: E402 — needs the sys.path insert
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import qbo_client  # noqa: E402 — needs the sys.path insert above (AppTest doesn't add the script's own dir like `streamlit run` does)
+import qbo_matcher  # noqa: E402
 
 st.set_page_config(page_title="Garfield Produce — PO Dashboard", layout="wide", page_icon="🌱")
 
@@ -131,13 +132,20 @@ def get_database_url() -> str:
 
 _qp = st.query_params
 if "code" in _qp and "realmId" in _qp:
-    _conn = psycopg2.connect(get_database_url())
     try:
-        qbo_client.exchange_code_for_tokens(_conn, _qp["code"], _qp["realmId"])
-    finally:
-        _conn.close()
-    st.query_params.clear()
-    st.rerun()
+        _conn = psycopg2.connect(get_database_url())
+        try:
+            qbo_client.exchange_code_for_tokens(_conn, _qp["code"], _qp["realmId"])
+        finally:
+            _conn.close()
+        st.query_params.clear()
+        st.rerun()
+    except Exception as e:
+        # A failed exchange (stale/reused code, double-submit, etc.) must not crash the
+        # whole app — clear the bad query params and fall through to the normal app
+        # below instead of leaving the user stuck on a dead error screen.
+        st.query_params.clear()
+        st.error(f"QuickBooks connection failed: {e}\n\nYou can try **Connect to QuickBooks** again from the QuickBooks tab.")
 
 # ── Auth ────────────────────────────────────────────────────────────────────────
 
@@ -374,8 +382,10 @@ else:
 
 st.title("🌱 Garfield Produce — Purchase Order Dashboard")
 
-tab_overview, tab_trends, tab_products, tab_customers, tab_revisions, tab_data, tab_edit, tab_qbo = st.tabs(
-    ["Overview", "Trends", "Products", "Customers", "Revisions & Data Quality", "Raw Data", "✏️ Edit", "🔗 QuickBooks"]
+(tab_overview, tab_trends, tab_products, tab_customers, tab_revisions, tab_data, tab_edit,
+ tab_qbo, tab_fulfillment) = st.tabs(
+    ["Overview", "Trends", "Products", "Customers", "Revisions & Data Quality", "Raw Data",
+     "✏️ Edit", "🔗 QuickBooks", "📦 Requested vs Shipped"]
 )
 
 # ── Overview ─────────────────────────────────────────────────────────────────────
@@ -855,3 +865,162 @@ with tab_qbo:
             with st.expander("Inspect one raw invoice (for designing Phase 2's matcher)"):
                 idx = st.number_input("Row index", min_value=0, max_value=len(invoices_df) - 1, value=0)
                 st.json(invoices_df.iloc[int(idx)]["raw_json"])
+
+# ── Requested vs Shipped ─────────────────────────────────────────────────────────
+
+with tab_fulfillment:
+    st.caption(
+        "Compares PO line items (requested) to matched QuickBooks invoice line items "
+        "(shipped), respecting the sidebar filters above. Run matching first — matches "
+        "are permanent decisions (confirm/reject), not recomputed from scratch each time."
+    )
+
+    mc = psycopg2.connect(get_database_url())
+    try:
+        if st.button("🔄 Run matching"):
+            with st.spinner("Matching POs to invoices..."):
+                summary = qbo_matcher.run_matching(mc)
+            st.success(
+                f"{summary['auto_matched']} auto-matched by PO number, "
+                f"{summary['fuzzy_candidates']} fuzzy candidate(s) added for review, "
+                f"{summary['ambiguous_po_number']} ambiguous PO-number match(es), "
+                f"{summary['no_candidates']} PO(s) with no candidate at all "
+                f"(out of {summary['total_pos']} total POs)."
+            )
+
+        st.subheader("Needs review")
+        needs_review = qbo_matcher.get_needs_review(mc)
+        if not needs_review:
+            st.caption("Nothing pending review.")
+        else:
+            for row in needs_review:
+                c1, c2, c3 = st.columns([6, 1, 1])
+                c1.write(
+                    f"PO **{row['po_number'] or row['source_file']}** "
+                    f"({row['po_customer']}, ${row['po_total'] or 0:,.2f}) ↔ "
+                    f"Invoice **{row['doc_number']}** "
+                    f"({row['inv_customer']}, {row['txn_date']}, ${row['total_amt'] or 0:,.2f}) "
+                    f"— *{row['match_method']}*, score {row['match_score']}"
+                )
+                if c2.button("✅ Confirm", key=f"confirm_{row['po_id']}_{row['invoice_id']}"):
+                    qbo_matcher.confirm_link(mc, row["po_id"], row["invoice_id"])
+                    st.rerun()
+                if c3.button("❌ Reject", key=f"reject_{row['po_id']}_{row['invoice_id']}"):
+                    qbo_matcher.reject_link(mc, row["po_id"], row["invoice_id"])
+                    st.rerun()
+
+        unlinked = qbo_matcher.get_unlinked_pos(mc)
+        if unlinked:
+            with st.expander(f"POs with no candidate at all ({len(unlinked)}) — manual link"):
+                po_label_map = {
+                    f"{po['po_number'] or po['source_file']} — {po['customer_name']}": po["id"]
+                    for po in unlinked
+                }
+                picked_po = st.selectbox("PO", list(po_label_map.keys()), key="manual_link_po")
+
+                with mc.cursor() as cur:
+                    cur.execute(
+                        "SELECT id, doc_number, customer_name, txn_date, total_amt FROM qbo_invoices "
+                        "WHERE total_amt > 0 ORDER BY txn_date DESC LIMIT 500"
+                    )
+                    inv_options = cur.fetchall()
+                inv_label_map = {
+                    f"{r[1]} — {r[2]} — {r[3]} — ${r[4]:,.2f}": r[0] for r in inv_options
+                }
+                picked_inv = st.selectbox("Invoice", list(inv_label_map.keys()), key="manual_link_inv")
+
+                if st.button("🔗 Link"):
+                    qbo_matcher.manual_link(mc, po_label_map[picked_po], inv_label_map[picked_inv])
+                    st.rerun()
+
+        st.divider()
+        po_ids = f_po["id"].tolist()
+        if not po_ids:
+            st.info("No orders in the current filter.")
+        else:
+            st.subheader("Requested vs. shipped — by product")
+            with mc.cursor() as cur:
+                cur.execute(
+                    "SELECT qi.product_name, SUM(qi.quantity) FROM po_invoice_links l "
+                    "JOIN qbo_invoice_items qi ON qi.invoice_id = l.invoice_id "
+                    "WHERE l.confirmed = TRUE AND l.po_id = ANY(%s) GROUP BY qi.product_name",
+                    (po_ids,),
+                )
+                shipped_by_product = {k: float(v or 0) for k, v in cur.fetchall()}
+            requested_by_product = f_items.groupby("product_name")["quantity"].sum().to_dict()
+
+            products = sorted(set(requested_by_product) | set(shipped_by_product))
+            comp_df = pd.DataFrame({
+                "Product": products,
+                "Requested": [float(requested_by_product.get(p, 0)) for p in products],
+                "Shipped": [shipped_by_product.get(p, 0.0) for p in products],
+            })
+            comp_long = comp_df.melt(id_vars="Product", value_vars=["Requested", "Shipped"],
+                                      var_name="Type", value_name="Quantity")
+            fig = px.bar(
+                comp_long, x="Product", y="Quantity", color="Type", barmode="group",
+                color_discrete_map={"Requested": palette["categorical"][0], "Shipped": palette["categorical"][1]},
+                labels={"Product": ""},
+            )
+            st.plotly_chart(style(fig, palette), use_container_width=True)
+            comp_df["Variance"] = comp_df["Shipped"] - comp_df["Requested"]
+            st.dataframe(comp_df, use_container_width=True, hide_index=True)
+
+            st.subheader("Requested vs. shipped — by customer")
+            with mc.cursor() as cur:
+                cur.execute(
+                    "SELECT po.customer_name, SUM(qi.quantity) FROM po_invoice_links l "
+                    "JOIN purchase_orders po ON po.id = l.po_id "
+                    "JOIN qbo_invoice_items qi ON qi.invoice_id = l.invoice_id "
+                    "WHERE l.confirmed = TRUE AND l.po_id = ANY(%s) GROUP BY po.customer_name",
+                    (po_ids,),
+                )
+                shipped_by_customer = {k: float(v or 0) for k, v in cur.fetchall()}
+            requested_by_customer = f_items.groupby("customer_name")["quantity"].sum().to_dict()
+
+            customers_all = sorted(set(requested_by_customer) | set(shipped_by_customer))
+            comp_cust = pd.DataFrame({
+                "Customer": customers_all,
+                "Requested": [float(requested_by_customer.get(c, 0)) for c in customers_all],
+                "Shipped": [shipped_by_customer.get(c, 0.0) for c in customers_all],
+            })
+            comp_cust_long = comp_cust.melt(id_vars="Customer", value_vars=["Requested", "Shipped"],
+                                             var_name="Type", value_name="Quantity")
+            fig2 = px.bar(
+                comp_cust_long, x="Customer", y="Quantity", color="Type", barmode="group",
+                color_discrete_map={"Requested": palette["categorical"][0], "Shipped": palette["categorical"][1]},
+                labels={"Customer": ""},
+            )
+            st.plotly_chart(style(fig2, palette), use_container_width=True)
+            comp_cust["Variance"] = comp_cust["Shipped"] - comp_cust["Requested"]
+            st.dataframe(comp_cust, use_container_width=True, hide_index=True)
+
+            st.subheader("Matched PO ↔ Invoice detail")
+            with mc.cursor() as cur:
+                cur.execute(
+                    "SELECT po.po_number, po.source_file, po.customer_name, po.total, "
+                    "inv.doc_number, inv.txn_date, inv.total_amt, l.match_method "
+                    "FROM po_invoice_links l "
+                    "JOIN purchase_orders po ON po.id = l.po_id "
+                    "JOIN qbo_invoices inv ON inv.id = l.invoice_id "
+                    "WHERE l.confirmed = TRUE AND l.po_id = ANY(%s) "
+                    "ORDER BY po.po_number",
+                    (po_ids,),
+                )
+                cols = [d[0] for d in cur.description]
+                detail_rows = cur.fetchall()
+            if not detail_rows:
+                st.caption("No confirmed matches in the current filter yet.")
+            else:
+                detail_df = pd.DataFrame(detail_rows, columns=cols)
+                detail_df["variance"] = detail_df["total_amt"].astype(float) - detail_df["total"].astype(float)
+                st.dataframe(
+                    detail_df.rename(columns={
+                        "po_number": "PO Number", "source_file": "Source File", "customer_name": "Customer",
+                        "total": "PO Total ($)", "doc_number": "Invoice #", "txn_date": "Invoice Date",
+                        "total_amt": "Invoice Total ($)", "match_method": "Match Method", "variance": "Variance ($)",
+                    }),
+                    use_container_width=True, hide_index=True,
+                )
+    finally:
+        mc.close()

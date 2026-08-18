@@ -87,3 +87,34 @@ CREATE TABLE IF NOT EXISTS qbo_invoices (
     raw_json       JSONB NOT NULL,
     synced_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- QuickBooks Phase 2: matching PO requests to invoices ("what shipped").
+CREATE TABLE IF NOT EXISTS qbo_invoice_items (
+    id             SERIAL PRIMARY KEY,
+    invoice_id     INTEGER NOT NULL REFERENCES qbo_invoices(id) ON DELETE CASCADE,
+    item_raw       TEXT,
+    description    TEXT,
+    product_name   TEXT,
+    container_size TEXT,
+    is_sample      BOOLEAN NOT NULL DEFAULT FALSE,
+    quantity       NUMERIC,
+    unit_price     NUMERIC,
+    line_total     NUMERIC
+);
+
+CREATE TABLE IF NOT EXISTS po_invoice_links (
+    id            SERIAL PRIMARY KEY,
+    po_id         INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    invoice_id    INTEGER NOT NULL REFERENCES qbo_invoices(id) ON DELETE CASCADE,
+    match_method  TEXT NOT NULL,       -- 'po_number' | 'fuzzy' | 'manual'
+    match_score   NUMERIC,             -- for ranking/display of fuzzy candidates
+    confirmed     BOOLEAN NOT NULL DEFAULT FALSE,
+    rejected      BOOLEAN NOT NULL DEFAULT FALSE,
+    linked_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(po_id, invoice_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_qbo_invoice_items_invoice_id ON qbo_invoice_items(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_qbo_invoice_items_product_name ON qbo_invoice_items(product_name);
+CREATE INDEX IF NOT EXISTS idx_po_invoice_links_po_id ON po_invoice_links(po_id);
+CREATE INDEX IF NOT EXISTS idx_po_invoice_links_invoice_id ON po_invoice_links(invoice_id);

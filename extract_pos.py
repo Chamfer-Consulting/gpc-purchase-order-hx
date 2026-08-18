@@ -24,7 +24,6 @@ import argparse
 import base64
 import logging
 import os
-import re
 import sys
 import threading
 import time
@@ -36,6 +35,7 @@ import pdfplumber
 import anthropic
 
 from math_check import validate_math
+from product_catalog import normalize_product
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -139,59 +139,6 @@ EXTRACTION_TOOL = {
 MODEL = "claude-opus-4-6"
 MAX_RETRIES = 5          # was 3 — more attempts for transient rate limits
 RETRY_DELAY = 10         # seconds base delay (exponential backoff from here)
-
-
-# ── Product Normalization ──────────────────────────────────────────────────────
-
-# Keyword patterns → canonical product name
-PRODUCT_PATTERNS = [
-    (re.compile(r"rainbow|rbw", re.I),           "Rainbow Mix"),
-    (re.compile(r"arugula|rugula",    re.I),      "Arugula"),
-    (re.compile(r"cilantro",          re.I),      "Cilantro"),
-    (re.compile(r"bull.*blood|bulls.*blood|bull.?s|beets?", re.I), "Bulls Blood Beets"),
-    (re.compile(r"basil|genovese",    re.I),      "Genovese Basil"),
-    (re.compile(r"broccoli",          re.I),      "Broccoli"),
-]
-
-SIZE_PATTERN   = re.compile(r"\b(1|2|3|4|8|20)\s*oz\b", re.I)
-SAMPLE_PATTERN = re.compile(r"\bsamp(le)?\b", re.I)
-
-# Line items with a unit price above $0 but below this threshold get a
-# "needs review" highlight — may be an untagged sample or data error.
-SUSPICIOUS_PRICE_THRESHOLD = 5.00
-
-
-def normalize_product(raw, unit_price=None):
-    """
-    Returns (canonical_product_name, container_size_string, is_sample, needs_review)
-    - is_sample:    confirmed sample (keyword or $0 price)
-    - needs_review: price is suspiciously low but not $0 — flag for manual check
-    """
-    if not raw:
-        return "UNKNOWN", "", False, False
-
-    # Detect product
-    product = "UNKNOWN"
-    for pattern, name in PRODUCT_PATTERNS:
-        if pattern.search(raw):
-            product = name
-            break
-
-    # Detect size
-    size_match = SIZE_PATTERN.search(raw)
-    size = f"{size_match.group(1)}oz" if size_match else ""
-
-    # Confirmed sample: keyword in description OR price is exactly $0
-    is_sample = bool(SAMPLE_PATTERN.search(raw)) or (unit_price is not None and unit_price == 0)
-
-    # Needs review: price exists, non-zero, but suspiciously low
-    needs_review = (
-        not is_sample
-        and unit_price is not None
-        and 0 < unit_price < SUSPICIOUS_PRICE_THRESHOLD
-    )
-
-    return product, size, is_sample, needs_review
 
 
 # ── Revision Detection & Diff Engine ──────────────────────────────────────────
