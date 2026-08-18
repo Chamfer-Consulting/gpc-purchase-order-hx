@@ -466,15 +466,19 @@ else:
 
 st.title("🌱 Garfield Produce — Purchase Order Dashboard")
 
-(tab_overview, tab_trends, tab_products, tab_customers, tab_revisions, tab_data, tab_edit,
- tab_qbo, tab_fulfillment) = st.tabs(
-    ["Overview", "Trends", "Products", "Customers", "Revisions & Data Quality", "Raw Data",
-     "✏️ Edit", "🔗 QuickBooks", "📦 Requested vs Shipped"]
+tab_reports, tab_match, tab_revisions, tab_data, tab_edit, tab_qbo = st.tabs(
+    ["📊 Reports", "🔗 Match POs & Invoices", "Revisions & Data Quality", "Raw Data",
+     "✏️ Edit", "🔗 QuickBooks"]
 )
 
-# ── Overview ─────────────────────────────────────────────────────────────────────
+with tab_reports:
+    r_overview, r_trends, r_products, r_customers, r_rvd = st.tabs(
+        ["Overview", "Trends", "Products", "Customers", "Requested vs Delivered"]
+    )
 
-with tab_overview:
+# ── Reports: Overview ────────────────────────────────────────────────────────────
+
+with r_overview:
     total_orders = f_po["id"].nunique()
     total_revenue = f_po["total"].sum()
     unique_customers = f_po["customer_name"].nunique()
@@ -536,9 +540,9 @@ with tab_overview:
     )
     st.caption("Reflects the filters currently applied in the sidebar.")
 
-# ── Trends ───────────────────────────────────────────────────────────────────────
+# ── Reports: Trends ──────────────────────────────────────────────────────────────
 
-with tab_trends:
+with r_trends:
     monthly = f_po.dropna(subset=["effective_date"]).copy()
     monthly["month"] = monthly["effective_date"].dt.to_period("M").dt.to_timestamp()
     by_month = monthly.groupby("month").agg(orders=("id", "nunique"), revenue=("total", "sum")).reset_index()
@@ -587,9 +591,9 @@ with tab_trends:
 
     st.divider()
     st.subheader("Requested vs. delivered over time")
-    st.caption("Only includes PO↔invoice matches confirmed in the Requested vs Shipped tab.")
+    st.caption("Only includes PO↔invoice matches confirmed in the Match POs & Invoices tab.")
     if matched_df.empty:
-        st.info("No confirmed PO↔invoice matches yet — link some in the Requested vs Shipped tab.")
+        st.info("No confirmed PO↔invoice matches yet — link some in the Match POs & Invoices tab.")
     else:
         rd = matched_df.copy()
         rd["effective_date"] = pd.to_datetime(rd["sent_date"], errors="coerce").fillna(
@@ -632,9 +636,9 @@ with tab_trends:
                 use_container_width=True, hide_index=True,
             )
 
-# ── Products ─────────────────────────────────────────────────────────────────────
+# ── Reports: Products ────────────────────────────────────────────────────────────
 
-with tab_products:
+with r_products:
     if f_items.empty:
         st.info("No line items in the current filter.")
     else:
@@ -681,9 +685,9 @@ with tab_products:
                 use_container_width=True, hide_index=True,
             )
 
-# ── Customers ────────────────────────────────────────────────────────────────────
+# ── Reports: Customers ───────────────────────────────────────────────────────────
 
-with tab_customers:
+with r_customers:
     if f_po.empty:
         st.info("No orders in the current filter.")
     else:
@@ -718,6 +722,131 @@ with tab_customers:
             st.dataframe(
                 mdf[["customer_name", "prev", "curr", "Change"]].rename(columns={
                     "customer_name": "Customer", "prev": f"{prev_m} Revenue ($)", "curr": f"{curr_m} Revenue ($)",
+                }),
+                use_container_width=True, hide_index=True,
+            )
+
+# ── Reports: Requested vs Delivered ──────────────────────────────────────────────
+
+with r_rvd:
+    st.caption(
+        "Compares PO line items (requested) to matched QuickBooks invoice line items "
+        "(delivered), respecting the sidebar filters above. Confirm matches in the "
+        "Match POs & Invoices tab first — this report only reflects confirmed links."
+    )
+
+    po_ids = f_po["id"].tolist()
+    if not po_ids:
+        st.info("No orders in the current filter.")
+    else:
+        st.subheader("Detailed breakdown: requested vs. delivered")
+        st.caption("Complete detail — slice by time period, customer, product, and size, in any combination.")
+        bc1, bc2 = st.columns(2)
+        period_choice = bc1.selectbox(
+            "Time period", ["All time", "Week", "Month", "Quarter", "Year"], index=2, key="breakdown_period",
+        )
+        dims = bc2.multiselect(
+            "Break down by", ["Customer", "Product", "Size"], default=["Product"], key="breakdown_dims",
+        )
+
+        matched_items = load_matched_line_items()
+        detail = matched_items[matched_items["po_id"].isin(po_ids)].copy()
+
+        if detail.empty:
+            st.info("No confirmed matches with line-item detail in the current filter.")
+        else:
+            period_freq = {"Week": "W", "Month": "M", "Quarter": "Q", "Year": "Y"}
+            group_cols = []
+            if period_choice != "All time":
+                detail["Period"] = detail["effective_date"].dt.to_period(period_freq[period_choice]).dt.start_time
+                group_cols.append("Period")
+            dim_col_map = {"Customer": "customer_name", "Product": "product_name", "Size": "container_size"}
+            group_cols += [dim_col_map[d] for d in dims]
+
+            if not group_cols:
+                detail["All"] = "All"
+                group_cols = ["All"]
+
+            grouped = detail.groupby(group_cols, as_index=False).agg(
+                requested_qty=("requested_qty", "sum"), requested_amount=("requested_amount", "sum"),
+                delivered_qty=("delivered_qty", "sum"), delivered_amount=("delivered_amount", "sum"),
+            )
+            grouped["Qty Variance"] = grouped["delivered_qty"] - grouped["requested_qty"]
+            grouped["$ Variance"] = grouped["delivered_amount"] - grouped["requested_amount"]
+            grouped["Fulfillment %"] = grouped.apply(
+                lambda r: round(r["delivered_amount"] / r["requested_amount"] * 100, 1)
+                if r["requested_amount"] else None,
+                axis=1,
+            )
+            grouped = grouped.sort_values(
+                ["Period"] + [c for c in group_cols if c != "Period"] if "Period" in group_cols else "$ Variance"
+            )
+
+            display_df = grouped.rename(columns={
+                "customer_name": "Customer", "product_name": "Product", "container_size": "Size",
+                "requested_qty": "Requested Qty", "requested_amount": "Requested ($)",
+                "delivered_qty": "Delivered Qty", "delivered_amount": "Delivered ($)",
+            })
+            if "All" in display_df.columns:
+                display_df = display_df.drop(columns=["All"])
+
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            st.download_button(
+                "⬇️ Download breakdown (CSV)",
+                display_df.to_csv(index=False).encode("utf-8"),
+                file_name="requested_vs_delivered_breakdown.csv", mime="text/csv", key="dl_breakdown",
+            )
+
+            if period_choice != "All time":
+                chart_src = detail.groupby("Period", as_index=False).agg(
+                    requested_amount=("requested_amount", "sum"), delivered_amount=("delivered_amount", "sum"),
+                )
+                chart_long = chart_src.melt(
+                    id_vars="Period", value_vars=["requested_amount", "delivered_amount"],
+                    var_name="Type", value_name="Amount",
+                )
+                chart_long["Type"] = chart_long["Type"].map({
+                    "requested_amount": "Requested", "delivered_amount": "Delivered",
+                })
+                fig_bd = px.bar(
+                    chart_long, x="Period", y="Amount", color="Type", barmode="group",
+                    color_discrete_map={"Requested": palette["categorical"][0], "Delivered": palette["categorical"][1]},
+                    labels={"Period": "", "Amount": "Revenue ($)"},
+                )
+                st.plotly_chart(style(fig_bd, palette), use_container_width=True, key="chart_breakdown_period")
+                st.caption(
+                    "Chart aggregates across whatever breakdown dimensions are selected above — "
+                    "see the table for the full multi-dimensional detail."
+                )
+
+        st.subheader("Matched PO ↔ Invoice detail")
+        rvd_conn = psycopg2.connect(get_database_url())
+        try:
+            with rvd_conn.cursor() as cur:
+                cur.execute(
+                    "SELECT po.po_number, po.source_file, po.customer_name, po.total, "
+                    "inv.doc_number, inv.txn_date, inv.total_amt, l.match_method "
+                    "FROM po_invoice_links l "
+                    "JOIN purchase_orders po ON po.id = l.po_id "
+                    "JOIN qbo_invoices inv ON inv.id = l.invoice_id "
+                    "WHERE l.confirmed = TRUE AND l.po_id = ANY(%s) "
+                    "ORDER BY po.po_number",
+                    (po_ids,),
+                )
+                cols = [d[0] for d in cur.description]
+                detail_rows = cur.fetchall()
+        finally:
+            rvd_conn.close()
+        if not detail_rows:
+            st.caption("No confirmed matches in the current filter yet.")
+        else:
+            detail_df = pd.DataFrame(detail_rows, columns=cols)
+            detail_df["variance"] = detail_df["total_amt"].astype(float) - detail_df["total"].astype(float)
+            st.dataframe(
+                detail_df.rename(columns={
+                    "po_number": "PO Number", "source_file": "Source File", "customer_name": "Customer",
+                    "total": "PO Total ($)", "doc_number": "Invoice #", "txn_date": "Invoice Date",
+                    "total_amt": "Invoice Total ($)", "match_method": "Match Method", "variance": "Variance ($)",
                 }),
                 use_container_width=True, hide_index=True,
             )
@@ -997,13 +1126,13 @@ with tab_qbo:
                 idx = st.number_input("Row index", min_value=0, max_value=len(invoices_df) - 1, value=0)
                 st.json(invoices_df.iloc[int(idx)]["raw_json"])
 
-# ── Requested vs Shipped ─────────────────────────────────────────────────────────
+# ── Match POs & Invoices ─────────────────────────────────────────────────────────
 
-with tab_fulfillment:
+with tab_match:
     st.caption(
-        "Compares PO line items (requested) to matched QuickBooks invoice line items "
-        "(shipped), respecting the sidebar filters above. Run matching first — matches "
-        "are permanent decisions (confirm/reject), not recomputed from scratch each time."
+        "Match PO requests to QuickBooks invoices — run automated matching, review its "
+        "suggestions, or search and link manually. See the Reports tab's "
+        "\"Requested vs Delivered\" section for the resulting requested-vs-delivered report."
     )
 
     mc = psycopg2.connect(get_database_url())
@@ -1219,118 +1348,5 @@ with tab_fulfillment:
                 qbo_matcher.manual_link(mc, selected_po, selected_invoice, replace_existing=replace_existing)
                 st.success("Linked.")
                 st.rerun()
-
-        st.divider()
-        po_ids = f_po["id"].tolist()
-        if not po_ids:
-            st.info("No orders in the current filter.")
-        else:
-            st.subheader("Detailed breakdown: requested vs. delivered")
-            st.caption("Complete detail — slice by time period, customer, product, and size, in any combination.")
-            bc1, bc2 = st.columns(2)
-            period_choice = bc1.selectbox(
-                "Time period", ["All time", "Week", "Month", "Quarter", "Year"], index=2, key="breakdown_period",
-            )
-            dims = bc2.multiselect(
-                "Break down by", ["Customer", "Product", "Size"], default=["Product"], key="breakdown_dims",
-            )
-
-            matched_items = load_matched_line_items()
-            detail = matched_items[matched_items["po_id"].isin(po_ids)].copy()
-
-            if detail.empty:
-                st.info("No confirmed matches with line-item detail in the current filter.")
-            else:
-                period_freq = {"Week": "W", "Month": "M", "Quarter": "Q", "Year": "Y"}
-                group_cols = []
-                if period_choice != "All time":
-                    detail["Period"] = detail["effective_date"].dt.to_period(period_freq[period_choice]).dt.start_time
-                    group_cols.append("Period")
-                dim_col_map = {"Customer": "customer_name", "Product": "product_name", "Size": "container_size"}
-                group_cols += [dim_col_map[d] for d in dims]
-
-                if not group_cols:
-                    detail["All"] = "All"
-                    group_cols = ["All"]
-
-                grouped = detail.groupby(group_cols, as_index=False).agg(
-                    requested_qty=("requested_qty", "sum"), requested_amount=("requested_amount", "sum"),
-                    delivered_qty=("delivered_qty", "sum"), delivered_amount=("delivered_amount", "sum"),
-                )
-                grouped["Qty Variance"] = grouped["delivered_qty"] - grouped["requested_qty"]
-                grouped["$ Variance"] = grouped["delivered_amount"] - grouped["requested_amount"]
-                grouped["Fulfillment %"] = grouped.apply(
-                    lambda r: round(r["delivered_amount"] / r["requested_amount"] * 100, 1)
-                    if r["requested_amount"] else None,
-                    axis=1,
-                )
-                grouped = grouped.sort_values(
-                    ["Period"] + [c for c in group_cols if c != "Period"] if "Period" in group_cols else "$ Variance"
-                )
-
-                display_df = grouped.rename(columns={
-                    "customer_name": "Customer", "product_name": "Product", "container_size": "Size",
-                    "requested_qty": "Requested Qty", "requested_amount": "Requested ($)",
-                    "delivered_qty": "Delivered Qty", "delivered_amount": "Delivered ($)",
-                })
-                if "All" in display_df.columns:
-                    display_df = display_df.drop(columns=["All"])
-
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
-                st.download_button(
-                    "⬇️ Download breakdown (CSV)",
-                    display_df.to_csv(index=False).encode("utf-8"),
-                    file_name="requested_vs_delivered_breakdown.csv", mime="text/csv", key="dl_breakdown",
-                )
-
-                if period_choice != "All time":
-                    chart_src = detail.groupby("Period", as_index=False).agg(
-                        requested_amount=("requested_amount", "sum"), delivered_amount=("delivered_amount", "sum"),
-                    )
-                    chart_long = chart_src.melt(
-                        id_vars="Period", value_vars=["requested_amount", "delivered_amount"],
-                        var_name="Type", value_name="Amount",
-                    )
-                    chart_long["Type"] = chart_long["Type"].map({
-                        "requested_amount": "Requested", "delivered_amount": "Delivered",
-                    })
-                    fig_bd = px.bar(
-                        chart_long, x="Period", y="Amount", color="Type", barmode="group",
-                        color_discrete_map={"Requested": palette["categorical"][0], "Delivered": palette["categorical"][1]},
-                        labels={"Period": "", "Amount": "Revenue ($)"},
-                    )
-                    st.plotly_chart(style(fig_bd, palette), use_container_width=True, key="chart_breakdown_period")
-                    st.caption(
-                        "Chart aggregates across whatever breakdown dimensions are selected above — "
-                        "see the table for the full multi-dimensional detail."
-                    )
-
-            st.subheader("Matched PO ↔ Invoice detail")
-            with mc.cursor() as cur:
-                cur.execute(
-                    "SELECT po.po_number, po.source_file, po.customer_name, po.total, "
-                    "inv.doc_number, inv.txn_date, inv.total_amt, l.match_method "
-                    "FROM po_invoice_links l "
-                    "JOIN purchase_orders po ON po.id = l.po_id "
-                    "JOIN qbo_invoices inv ON inv.id = l.invoice_id "
-                    "WHERE l.confirmed = TRUE AND l.po_id = ANY(%s) "
-                    "ORDER BY po.po_number",
-                    (po_ids,),
-                )
-                cols = [d[0] for d in cur.description]
-                detail_rows = cur.fetchall()
-            if not detail_rows:
-                st.caption("No confirmed matches in the current filter yet.")
-            else:
-                detail_df = pd.DataFrame(detail_rows, columns=cols)
-                detail_df["variance"] = detail_df["total_amt"].astype(float) - detail_df["total"].astype(float)
-                st.dataframe(
-                    detail_df.rename(columns={
-                        "po_number": "PO Number", "source_file": "Source File", "customer_name": "Customer",
-                        "total": "PO Total ($)", "doc_number": "Invoice #", "txn_date": "Invoice Date",
-                        "total_amt": "Invoice Total ($)", "match_method": "Match Method", "variance": "Variance ($)",
-                    }),
-                    use_container_width=True, hide_index=True,
-                )
     finally:
         mc.close()
