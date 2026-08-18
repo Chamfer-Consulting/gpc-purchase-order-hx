@@ -4,9 +4,15 @@ Matches PO requests (purchase_orders) to QuickBooks invoices (qbo_invoices), so
 
 Primary key: normalized PO number, exact match — confirmed against real production data
 (1,124 of 1,188 real PO numbers, 94.6%, have an exact match after normalization against
-QBO's "PO Number" custom field). Falls back to a customer+date+amount score for the
-remainder, surfaced for manual review rather than auto-decided — some invoices genuinely
-have no PO (verbal/standing orders), and some POs genuinely have no invoice yet.
+QBO's "PO Number" custom field). Falls back to a customer+date+amount+line-item score for
+the remainder, surfaced for manual review rather than auto-decided — some invoices
+genuinely have no PO (verbal/standing orders), and some POs genuinely have no invoice yet.
+
+A PO-number match alone is not treated as absolute certainty: it's corroborated against
+customer name (a coincidental PO-number collision across two different customers should
+never silently auto-link) and, when a PO number is shared by more than one invoice
+(revisions, corrections), against line-item content to pick the real match instead of
+guessing.
 """
 
 from datetime import date, datetime
@@ -14,8 +20,12 @@ import re
 
 from psycopg2.extras import execute_values
 
-DATE_WINDOW_DAYS = 45
+DATE_WINDOW_DAYS_DEFAULT = 45   # used until enough confirmed matches exist to calibrate
+MIN_SAMPLES_TO_CALIBRATE = 20
 AMOUNT_TOLERANCE_PCT = 0.20
+AMOUNT_ABS_FLOOR = 10.0          # dollars — protects small orders from pure-percentage math
+AMBIGUOUS_ITEM_SIM_THRESHOLD = 0.7   # how good the best candidate's line-item overlap must be
+AMBIGUOUS_ITEM_SIM_MARGIN = 0.3      # ...and how much better than the runner-up
 MAX_FUZZY_CANDIDATES_PER_PO = 3
 
 _COMMON_SUFFIXES = {"inc", "llc", "co", "company", "produce", "corp", "corporation"}
@@ -47,6 +57,25 @@ def customers_match(po_customer, qbo_customer) -> bool:
     if not a or not b:
         return False
     return a in b or b in a
+
+
+def confidence_label(match_method: str, score) -> str:
+    """Human-readable certainty grade for the review UI."""
+    if match_method == "po_number":
+        return "Certain (PO number + customer)"
+    if match_method == "po_number_items":
+        return "Certain (PO number + line items)"
+    if match_method == "po_number_review":
+        return "PO number matched, but customer doesn't corroborate — verify"
+    if match_method == "manual":
+        return "Manual"
+    if score is None:
+        return "Unknown"
+    if score >= 0.75:
+        return "High"
+    if score >= 0.5:
+        return "Medium"
+    return "Low"
 
 
 def _parse_date(value):
@@ -111,32 +140,128 @@ def _load_invoices(conn) -> list[dict]:
     return rows
 
 
-def _score_candidate(po: dict, inv: dict):
-    """None means the candidate is outside acceptable date range — excluded entirely."""
+def _po_line_items(conn, po_ids: list[int]) -> dict[int, dict[str, float]]:
+    """po_id -> {product_name: total_quantity}, excluding samples/removed rows."""
+    if not po_ids:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT po_id, product_name, quantity FROM line_items "
+            "WHERE po_id = ANY(%s) AND is_sample = FALSE AND is_removed = FALSE",
+            (po_ids,),
+        )
+        rows = cur.fetchall()
+    out: dict[int, dict[str, float]] = {}
+    for po_id, product, qty in rows:
+        bucket = out.setdefault(po_id, {})
+        bucket[product] = bucket.get(product, 0.0) + float(qty or 0)
+    return out
+
+
+def _invoice_line_items(conn, invoice_ids: list[int]) -> dict[int, dict[str, float]]:
+    """invoice_id -> {product_name: total_quantity}, excluding samples."""
+    if not invoice_ids:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT invoice_id, product_name, quantity FROM qbo_invoice_items "
+            "WHERE invoice_id = ANY(%s) AND is_sample = FALSE",
+            (invoice_ids,),
+        )
+        rows = cur.fetchall()
+    out: dict[int, dict[str, float]] = {}
+    for invoice_id, product, qty in rows:
+        bucket = out.setdefault(invoice_id, {})
+        bucket[product] = bucket.get(product, 0.0) + float(qty or 0)
+    return out
+
+
+def _line_item_similarity(po_items: dict, inv_items: dict) -> float:
+    """Quantity-weighted intersection-over-union across {product: qty} maps.
+    1.0 = identical product+quantity sets. 0.0 = no product overlap at all.
+    0.5 (neutral, no signal either way) when one side has no line items at all."""
+    if not po_items or not inv_items:
+        return 0.5
+    products = set(po_items) | set(inv_items)
+    overlap = sum(min(po_items.get(p, 0.0), inv_items.get(p, 0.0)) for p in products)
+    total = sum(max(po_items.get(p, 0.0), inv_items.get(p, 0.0)) for p in products)
+    return overlap / total if total else 0.5
+
+
+def _amount_score(po_total, inv_total) -> float:
+    if not po_total or not inv_total:
+        return 0.3
+    po_total, inv_total = float(po_total), float(inv_total)
+    diff = abs(inv_total - po_total)
+    tolerance = max(AMOUNT_ABS_FLOOR, po_total * AMOUNT_TOLERANCE_PCT)
+    if diff > tolerance:
+        return 0.0
+    return 1 - diff / tolerance
+
+
+def _calibrated_date_window(conn) -> int:
+    """P95 of observed |invoice_date - PO_effective_date| across confirmed, customer-
+    corroborated PO-number matches — a data-driven fuzzy window instead of a guess.
+    Falls back to the default until there are enough confirmed matches to trust."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT po.sent_date, po.po_date, inv.txn_date
+            FROM po_invoice_links l
+            JOIN purchase_orders po ON po.id = l.po_id
+            JOIN qbo_invoices inv ON inv.id = l.invoice_id
+            WHERE l.confirmed = TRUE AND l.match_method IN ('po_number', 'po_number_items')
+            """
+        )
+        rows = cur.fetchall()
+    deltas = []
+    for sent_date, po_date, txn_date in rows:
+        effective = _parse_date(sent_date) or po_date
+        if effective and txn_date:
+            deltas.append(abs((txn_date - effective).days))
+    if len(deltas) < MIN_SAMPLES_TO_CALIBRATE:
+        return DATE_WINDOW_DAYS_DEFAULT
+    deltas.sort()
+    p95 = deltas[int(len(deltas) * 0.95)]
+    return max(14, min(90, p95))
+
+
+def _score_candidate(po, inv, po_items_map, inv_items_map, date_window):
+    """None means the candidate is outside the acceptable date range — excluded entirely.
+    Weighted toward line-item content (0.4) over date/amount (0.3 each) — matching
+    products and quantities is the strongest independent signal once PO number isn't
+    available at all."""
     po_date, inv_date = po.get("_effective_date"), inv.get("txn_date")
     if po_date and inv_date:
         delta_days = abs((inv_date - po_date).days)
-        if delta_days > DATE_WINDOW_DAYS:
+        if delta_days > date_window:
             return None
-        date_score = max(0.0, 1 - delta_days / DATE_WINDOW_DAYS)
+        date_score = max(0.0, 1 - delta_days / date_window)
     else:
-        date_score = 0.3  # unknown date on one side — small neutral credit, not a veto
+        date_score = 0.3
 
-    po_total, inv_total = po.get("total"), inv.get("total_amt")
-    if po_total and inv_total:
-        pct_diff = abs(float(inv_total) - float(po_total)) / float(po_total)
-        amount_score = 0.0 if pct_diff > AMOUNT_TOLERANCE_PCT else 1 - pct_diff / AMOUNT_TOLERANCE_PCT
-    else:
-        amount_score = 0.3
+    amount_score = _amount_score(po.get("total"), inv.get("total_amt"))
+    item_score = _line_item_similarity(po_items_map.get(po["id"], {}), inv_items_map.get(inv["id"], {}))
 
-    return round(0.5 * date_score + 0.5 * amount_score, 3)
+    return round(0.3 * date_score + 0.3 * amount_score + 0.4 * item_score, 3)
 
 
 def run_matching(conn) -> dict:
-    """Populates po_invoice_links. Idempotent w.r.t. already-decided pairs — never
-    re-proposes a (po_id, invoice_id) pair that's already confirmed or rejected."""
-    pos = get_latest_pos(conn)
+    """Populates po_invoice_links. Idempotent — never re-proposes a (po_id, invoice_id)
+    pair that's already confirmed/rejected, and never searches for *new* candidates for
+    a PO that already has a confirmed match (a PO is done once resolved, even though the
+    per-pair "decided" filter alone would otherwise let it accumulate spurious extra
+    fuzzy candidates against other invoices)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT po_id FROM po_invoice_links WHERE confirmed = TRUE")
+        already_resolved_po_ids = {r[0] for r in cur.fetchall()}
+
+    all_pos = get_latest_pos(conn)
+    pos = [po for po in all_pos if po["id"] not in already_resolved_po_ids]
     invoices = _load_invoices(conn)
+    po_items_map = _po_line_items(conn, [po["id"] for po in pos])
+    inv_items_map = _invoice_line_items(conn, [inv["id"] for inv in invoices])
+    date_window = _calibrated_date_window(conn)
 
     with conn.cursor() as cur:
         cur.execute("SELECT po_id, invoice_id FROM po_invoice_links WHERE confirmed OR rejected")
@@ -149,19 +274,48 @@ def run_matching(conn) -> dict:
         by_po_number.setdefault(inv["_po_number_norm"], []).append(inv)
 
     new_links = []  # (po_id, invoice_id, match_method, match_score, confirmed)
-    auto_matched = ambiguous = 0
+    auto_matched = ambiguous = customer_mismatch = 0
     unmatched_pos = []
 
     for po in pos:
         norm = normalize_po_number(po.get("po_number"))
         candidates = [c for c in by_po_number.get(norm, []) if (po["id"], c["id"]) not in decided] if norm else []
+
         if len(candidates) == 1:
-            new_links.append((po["id"], candidates[0]["id"], "po_number", 1.0, True))
-            auto_matched += 1
+            inv = candidates[0]
+            if customers_match(po.get("customer_name"), inv.get("customer_name")):
+                new_links.append((po["id"], inv["id"], "po_number", 1.0, True))
+                auto_matched += 1
+            else:
+                # PO number matched but nothing corroborates it — could be a genuine
+                # coincidental collision. Don't blind-trust a single signal.
+                new_links.append((po["id"], inv["id"], "po_number_review", 0.6, False))
+                customer_mismatch += 1
         elif len(candidates) > 1:
-            for c in candidates:
-                new_links.append((po["id"], c["id"], "po_number", 0.5, False))
-            ambiguous += 1
+            # Same PO number on multiple invoices (revisions/corrections) — use line-item
+            # content to pick the real match instead of guessing or dumping all of them
+            # into review.
+            scored = [
+                (_line_item_similarity(po_items_map.get(po["id"], {}), inv_items_map.get(c["id"], {})), c)
+                for c in candidates
+            ]
+            scored.sort(key=lambda x: -x[0])
+            best_sim, best_inv = scored[0]
+            runner_up_sim = scored[1][0] if len(scored) > 1 else 0.0
+            decisive = (
+                best_sim >= AMBIGUOUS_ITEM_SIM_THRESHOLD
+                and (best_sim - runner_up_sim) >= AMBIGUOUS_ITEM_SIM_MARGIN
+                and customers_match(po.get("customer_name"), best_inv.get("customer_name"))
+            )
+            if decisive:
+                new_links.append((po["id"], best_inv["id"], "po_number_items", best_sim, True))
+                for sim, c in scored[1:]:
+                    new_links.append((po["id"], c["id"], "po_number", round(sim, 3), False))
+                auto_matched += 1
+            else:
+                for sim, c in scored:
+                    new_links.append((po["id"], c["id"], "po_number", round(sim, 3), False))
+                ambiguous += 1
         else:
             unmatched_pos.append(po)
 
@@ -172,7 +326,7 @@ def run_matching(conn) -> dict:
         for inv in non_voided:
             if (po["id"], inv["id"]) in decided or not customers_match(po.get("customer_name"), inv.get("customer_name")):
                 continue
-            score = _score_candidate(po, inv)
+            score = _score_candidate(po, inv, po_items_map, inv_items_map, date_window)
             if score is not None:
                 scored.append((score, inv))
         scored.sort(key=lambda x: -x[0])
@@ -198,10 +352,13 @@ def run_matching(conn) -> dict:
 
     return {
         "auto_matched": auto_matched,
+        "already_resolved": len(already_resolved_po_ids),
         "ambiguous_po_number": ambiguous,
+        "customer_mismatch": customer_mismatch,
         "fuzzy_candidates": fuzzy_candidates,
         "no_candidates": no_candidates,
-        "total_pos": len(pos),
+        "total_pos": len(all_pos),
+        "date_window_days": date_window,
     }
 
 

@@ -881,11 +881,14 @@ with tab_fulfillment:
             with st.spinner("Matching POs to invoices..."):
                 summary = qbo_matcher.run_matching(mc)
             st.success(
-                f"{summary['auto_matched']} auto-matched by PO number, "
+                f"{summary['auto_matched']} auto-matched with certainty, "
+                f"{summary['customer_mismatch']} PO-number match(es) held for review "
+                f"(customer didn't corroborate), "
                 f"{summary['fuzzy_candidates']} fuzzy candidate(s) added for review, "
-                f"{summary['ambiguous_po_number']} ambiguous PO-number match(es), "
+                f"{summary['ambiguous_po_number']} still-ambiguous PO-number match(es), "
                 f"{summary['no_candidates']} PO(s) with no candidate at all "
-                f"(out of {summary['total_pos']} total POs)."
+                f"(out of {summary['total_pos']} total POs). "
+                f"Fuzzy date window: ±{summary['date_window_days']} days."
             )
 
         st.subheader("Needs review")
@@ -895,12 +898,13 @@ with tab_fulfillment:
         else:
             for row in needs_review:
                 c1, c2, c3 = st.columns([6, 1, 1])
+                confidence = qbo_matcher.confidence_label(row["match_method"], row["match_score"])
                 c1.write(
                     f"PO **{row['po_number'] or row['source_file']}** "
                     f"({row['po_customer']}, ${row['po_total'] or 0:,.2f}) ↔ "
                     f"Invoice **{row['doc_number']}** "
                     f"({row['inv_customer']}, {row['txn_date']}, ${row['total_amt'] or 0:,.2f}) "
-                    f"— *{row['match_method']}*, score {row['match_score']}"
+                    f"— **{confidence}** (score {row['match_score']})"
                 )
                 if c2.button("✅ Confirm", key=f"confirm_{row['po_id']}_{row['invoice_id']}"):
                     qbo_matcher.confirm_link(mc, row["po_id"], row["invoice_id"])
