@@ -268,14 +268,21 @@ def run_matching(conn) -> dict:
     pair that's already confirmed/rejected, and never searches for *new* candidates for
     a PO that already has a confirmed match (a PO is done once resolved, even though the
     per-pair "decided" filter alone would otherwise let it accumulate spurious extra
-    fuzzy candidates against other invoices)."""
+    fuzzy candidates against other invoices). Symmetrically, an invoice already confirmed
+    to some PO is excluded from every other PO's candidate pool entirely — one invoice
+    should back at most one PO, and without this an already-matched invoice could still
+    surface as a weak "Low" fuzzy suggestion for a completely unrelated PO that merely
+    shares its customer (seen live: an invoice correctly confirmed to PO 471441 was also
+    being offered to PO 471105, a different order for the same customer)."""
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT po_id FROM po_invoice_links WHERE confirmed = TRUE")
         already_resolved_po_ids = {r[0] for r in cur.fetchall()}
+        cur.execute("SELECT DISTINCT invoice_id FROM po_invoice_links WHERE confirmed = TRUE")
+        already_confirmed_invoice_ids = {r[0] for r in cur.fetchall()}
 
     all_pos = get_latest_pos(conn)
     pos = [po for po in all_pos if po["id"] not in already_resolved_po_ids]
-    invoices = _load_invoices(conn)
+    invoices = [inv for inv in _load_invoices(conn) if inv["id"] not in already_confirmed_invoice_ids]
     po_items_map = _po_line_items(conn, [po["id"] for po in pos])
     inv_items_map = _invoice_line_items(conn, [inv["id"] for inv in invoices])
     date_window = _calibrated_date_window(conn)
