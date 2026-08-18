@@ -877,6 +877,19 @@ with tab_fulfillment:
     )
 
     mc = psycopg2.connect(get_database_url())
+
+    def _items_table(items):
+        if not items:
+            st.caption("No line items.")
+            return
+        st.dataframe(
+            pd.DataFrame(items).rename(columns={
+                "product_name": "Product", "container_size": "Size", "quantity": "Qty",
+                "unit_price": "Unit $", "line_total": "Total $", "is_sample": "Sample",
+            }),
+            use_container_width=True, hide_index=True,
+        )
+
     try:
         mcol1, mcol2 = st.columns(2)
         if mcol1.button("🔄 Run matching"):
@@ -926,18 +939,6 @@ with tab_fulfillment:
                 mc, [r["po_id"] for r in needs_review], [r["invoice_id"] for r in needs_review],
             )
 
-            def _items_table(items):
-                if not items:
-                    st.caption("No line items.")
-                    return
-                st.dataframe(
-                    pd.DataFrame(items).rename(columns={
-                        "product_name": "Product", "container_size": "Size", "quantity": "Qty",
-                        "unit_price": "Unit $", "line_total": "Total $", "is_sample": "Sample",
-                    }),
-                    use_container_width=True, hide_index=True,
-                )
-
             for row in needs_review:
                 confidence = qbo_matcher.confidence_label(row["match_method"], row["match_score"])
                 summary = (
@@ -984,29 +985,104 @@ with tab_fulfillment:
                         qbo_matcher.reject_link(mc, row["po_id"], row["invoice_id"])
                         st.rerun()
 
-        unlinked = qbo_matcher.get_unlinked_pos(mc)
-        if unlinked:
-            with st.expander(f"POs with no candidate at all ({len(unlinked)}) — manual link"):
+        st.divider()
+        st.subheader("🔍 Search & match manually")
+        unresolved_count = len(qbo_matcher.get_unlinked_pos(mc))
+        st.caption(
+            "Find and link any PO to any invoice directly — independent of the automated "
+            f"suggestions above. {unresolved_count} PO(s) still without a confirmed match."
+        )
+
+        wc1, wc2 = st.columns(2)
+        selected_po = selected_invoice = None
+        po_detail = None
+
+        with wc1:
+            st.markdown("**Purchase Order**")
+            po_search = st.text_input("Search PO number, customer, or filename", key="workbench_po_search")
+            po_results = qbo_matcher.search_pos(mc, po_search, limit=50)
+            if not po_results:
+                st.caption("No matching POs.")
+            else:
                 po_label_map = {
-                    f"{po['po_number'] or po['source_file']} — {po['customer_name']}": po["id"]
-                    for po in unlinked
+                    f"{p['po_number'] or p['source_file']} — {p['customer_name']} — ${p['total'] or 0:,.2f}": p["id"]
+                    for p in po_results
                 }
-                picked_po = st.selectbox("PO", list(po_label_map.keys()), key="manual_link_po")
+                picked_po_label = st.selectbox("Results", list(po_label_map.keys()), key="workbench_po_pick")
+                selected_po = po_label_map[picked_po_label]
 
-                with mc.cursor() as cur:
-                    cur.execute(
-                        "SELECT id, doc_number, customer_name, txn_date, total_amt FROM qbo_invoices "
-                        "WHERE total_amt > 0 ORDER BY txn_date DESC LIMIT 500"
-                    )
-                    inv_options = cur.fetchall()
+            if selected_po:
+                po_detail = qbo_matcher.get_po_full_detail(mc, selected_po)
+                st.write(f"PO Number: {po_detail['po_number'] or po_detail['source_file']}")
+                if po_detail.get("drive_file_id"):
+                    st.markdown(f"[📄 Open original PDF ↗]({gdrive_client.file_view_url(po_detail['drive_file_id'])})")
+                st.write(f"Customer: {po_detail['customer_name']}")
+                st.write(
+                    f"PO Date: {po_detail['po_date'] or '—'} · Sent: {po_detail['sent_date'] or '—'} · "
+                    f"Delivery: {po_detail['delivery_date'] or '—'}"
+                )
+                st.write(
+                    f"Subtotal: ${po_detail['subtotal'] or 0:,.2f} · Tax: ${po_detail['tax'] or 0:,.2f} · "
+                    f"Total: ${po_detail['total'] or 0:,.2f}"
+                )
+                _items_table(po_detail["items"])
+
+        with wc2:
+            st.markdown("**QuickBooks Invoice**")
+            default_customer = po_detail["customer_name"] if po_detail else ""
+            inv_customer = st.text_input("Customer", value=default_customer or "", key="workbench_inv_customer")
+            inv_query = st.text_input("Search invoice #", key="workbench_inv_query")
+            ic1, ic2 = st.columns(2)
+            amount_min = ic1.number_input("Min $", value=0.0, step=10.0, key="workbench_inv_min")
+            amount_max = ic2.number_input("Max $ (0 = no limit)", value=0.0, step=10.0, key="workbench_inv_max")
+            include_voided = st.checkbox("Include voided/zero-$ invoices", key="workbench_inv_voided")
+            inv_results = qbo_matcher.search_invoices(
+                mc, customer=inv_customer, query=inv_query,
+                amount_min=(amount_min or None), amount_max=(amount_max or None),
+                include_voided=include_voided, limit=100,
+            )
+            if not inv_results:
+                st.caption("No matching invoices.")
+            else:
                 inv_label_map = {
-                    f"{r[1]} — {r[2]} — {r[3]} — ${r[4]:,.2f}": r[0] for r in inv_options
+                    f"{i['doc_number']} — {i['customer_name']} — {i['txn_date']} — ${i['total_amt'] or 0:,.2f}": i["id"]
+                    for i in inv_results
                 }
-                picked_inv = st.selectbox("Invoice", list(inv_label_map.keys()), key="manual_link_inv")
+                picked_inv_label = st.selectbox("Results", list(inv_label_map.keys()), key="workbench_inv_pick")
+                selected_invoice = inv_label_map[picked_inv_label]
 
-                if st.button("🔗 Link"):
-                    qbo_matcher.manual_link(mc, po_label_map[picked_po], inv_label_map[picked_inv])
-                    st.rerun()
+            if selected_invoice:
+                inv_detail = qbo_matcher.get_invoice_full_detail(mc, selected_invoice)
+                st.write(f"Invoice #: {inv_detail['doc_number']}")
+                st.markdown(f"[Open in QuickBooks ↗]({qbo_client.invoice_url(inv_detail['qbo_invoice_id'])})")
+                st.write(f"Customer: {inv_detail['customer_name']}")
+                st.write(f"Invoice Date: {inv_detail['txn_date'] or '—'} · Due: {inv_detail['due_date'] or '—'}")
+                st.write(f"Total: ${inv_detail['total_amt'] or 0:,.2f}")
+                if inv_detail.get("private_note"):
+                    st.caption(f"Note: {inv_detail['private_note']}")
+                _items_table(inv_detail["items"])
+
+        if selected_po and selected_invoice:
+            st.markdown("---")
+            replace_existing = False
+            existing_po_links = qbo_matcher.get_confirmed_invoices_for_po(mc, selected_po)
+            if existing_po_links:
+                names = ", ".join(f"{l['doc_number']} (${l['total_amt'] or 0:,.2f})" for l in existing_po_links)
+                st.warning(f"This PO is already confirmed-linked to: {names}")
+                replace_existing = st.checkbox("Replace existing link(s) with this one", key="workbench_replace")
+
+            other_po = qbo_matcher.get_confirmed_po_for_invoice(mc, selected_invoice)
+            if other_po and other_po["id"] != selected_po:
+                st.warning(
+                    f"This invoice is already confirmed to a different PO: "
+                    f"{other_po['po_number'] or other_po['source_file']}. Linking it here too is "
+                    f"allowed (e.g. split shipments) but double-check this is intentional."
+                )
+
+            if st.button("🔗 Link these"):
+                qbo_matcher.manual_link(mc, selected_po, selected_invoice, replace_existing=replace_existing)
+                st.success("Linked.")
+                st.rerun()
 
         st.divider()
         po_ids = f_po["id"].tolist()

@@ -125,6 +125,23 @@ def get_latest_pos(conn) -> list[dict]:
     return list(latest.values())
 
 
+def search_pos(conn, query: str = "", limit: int = 50) -> list[dict]:
+    """Filters get_latest_pos() by a case-insensitive substring match against PO number,
+    customer, or filename — for the manual search-and-match workbench. Filtering in
+    Python (not a separate SQL path) since get_latest_pos already loads the full,
+    already-deduped PO set fast (<1s over 1188 rows)."""
+    pos = sorted(get_latest_pos(conn), key=lambda r: r["_effective_date"] or date.min, reverse=True)
+    if query:
+        q = query.lower()
+        pos = [
+            p for p in pos
+            if q in (p.get("po_number") or "").lower()
+            or q in (p.get("customer_name") or "").lower()
+            or q in (p.get("source_file") or "").lower()
+        ]
+    return pos[:limit]
+
+
 def _load_invoices(conn) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
@@ -443,6 +460,115 @@ def get_line_items_for_review(conn, po_ids: list[int], invoice_ids: list[int]):
     return po_items, inv_items
 
 
+def search_invoices(
+    conn, customer: str = "", query: str = "", date_from=None, date_to=None,
+    amount_min=None, amount_max=None, include_voided: bool = False, limit: int = 100,
+) -> list[dict]:
+    """Server-side filtered invoice search for the manual search-and-match workbench —
+    unlike PO search, qbo_invoices is bigger and range filters (date/amount) belong in
+    SQL, not fetched-then-filtered in Python."""
+    clauses = []
+    params: dict = {}
+    if not include_voided:
+        clauses.append("total_amt IS NOT NULL AND total_amt != 0")
+        clauses.append("(private_note IS NULL OR private_note NOT ILIKE '%%void%%')")
+    if customer:
+        clauses.append("customer_name ILIKE %(customer)s")
+        params["customer"] = f"%{customer}%"
+    if query:
+        clauses.append("doc_number ILIKE %(query)s")
+        params["query"] = f"%{query}%"
+    if date_from:
+        clauses.append("txn_date >= %(date_from)s")
+        params["date_from"] = date_from
+    if date_to:
+        clauses.append("txn_date <= %(date_to)s")
+        params["date_to"] = date_to
+    if amount_min is not None:
+        clauses.append("total_amt >= %(amount_min)s")
+        params["amount_min"] = amount_min
+    if amount_max is not None:
+        clauses.append("total_amt <= %(amount_max)s")
+        params["amount_max"] = amount_max
+
+    where = " AND ".join(clauses) if clauses else "TRUE"
+    params["limit"] = limit
+    with conn.cursor() as cur:
+        cur.execute(
+            f"SELECT id, doc_number, customer_name, txn_date, total_amt FROM qbo_invoices "
+            f"WHERE {where} ORDER BY txn_date DESC NULLS LAST LIMIT %(limit)s",
+            params,
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def get_po_full_detail(conn, po_id: int) -> dict:
+    """Single-PO header + line items, for the search-and-match workbench's detail pane."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT po_number, source_file, customer_name, po_date, sent_date, "
+            "delivery_date, subtotal, tax, total, notes, drive_file_id "
+            "FROM purchase_orders WHERE id = %s",
+            (po_id,),
+        )
+        cols = [d[0] for d in cur.description]
+        detail = dict(zip(cols, cur.fetchone()))
+    po_items, _ = get_line_items_for_review(conn, [po_id], [])
+    detail["items"] = po_items.get(po_id, [])
+    return detail
+
+
+def get_invoice_full_detail(conn, invoice_id: int) -> dict:
+    """Single-invoice header + line items, for the search-and-match workbench's detail pane."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT qbo_invoice_id, doc_number, customer_name, txn_date, due_date, "
+            "total_amt, private_note FROM qbo_invoices WHERE id = %s",
+            (invoice_id,),
+        )
+        cols = [d[0] for d in cur.description]
+        detail = dict(zip(cols, cur.fetchone()))
+    _, inv_items = get_line_items_for_review(conn, [], [invoice_id])
+    detail["items"] = inv_items.get(invoice_id, [])
+    return detail
+
+
+def get_confirmed_invoices_for_po(conn, po_id: int) -> list[dict]:
+    """Any invoice(s) currently confirmed to this PO — used by the workbench to warn
+    before creating a second confirmed link, and to drive the replace_existing option."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT inv.id, inv.doc_number, inv.total_amt FROM po_invoice_links l
+            JOIN qbo_invoices inv ON inv.id = l.invoice_id
+            WHERE l.po_id = %s AND l.confirmed = TRUE
+            """,
+            (po_id,),
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def get_confirmed_po_for_invoice(conn, invoice_id: int) -> dict | None:
+    """The PO this invoice is currently confirmed to, if any — used by the workbench to
+    warn before confirming the same invoice against a second, different PO."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT po.id, po.po_number, po.source_file FROM po_invoice_links l
+            JOIN purchase_orders po ON po.id = l.po_id
+            WHERE l.invoice_id = %s AND l.confirmed = TRUE
+            LIMIT 1
+            """,
+            (invoice_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return {"id": row[0], "po_number": row[1], "source_file": row[2]}
+
+
 def get_unlinked_pos(conn) -> list[dict]:
     """Latest-version POs with no CONFIRMED link — either no candidate was ever proposed,
     or every proposed candidate got rejected. Both cases need the manual-link fallback to
@@ -481,8 +607,20 @@ def reject_link(conn, po_id: int, invoice_id: int) -> None:
     conn.commit()
 
 
-def manual_link(conn, po_id: int, invoice_id: int) -> None:
+def manual_link(conn, po_id: int, invoice_id: int, replace_existing: bool = False) -> None:
+    """Links a PO to an invoice directly (the search-and-match workbench, or the older
+    single-candidate fallback). Always clears the PO's other still-*pending* candidates —
+    a decision has been made, they're no longer relevant. A PO that already has a
+    *confirmed* link is left alone by default (multiple invoices per PO is sometimes
+    correct — partial shipments) unless replace_existing=True, in which case its other
+    confirmed link(s) are rejected first so this becomes the sole one."""
     with conn.cursor() as cur:
+        if replace_existing:
+            cur.execute(
+                "UPDATE po_invoice_links SET confirmed = FALSE, rejected = TRUE "
+                "WHERE po_id = %s AND invoice_id != %s AND confirmed = TRUE",
+                (po_id, invoice_id),
+            )
         cur.execute(
             """
             INSERT INTO po_invoice_links (po_id, invoice_id, match_method, match_score, confirmed)
