@@ -1000,7 +1000,8 @@ with tab_fulfillment:
         with wc1:
             st.markdown("**Purchase Order**")
             po_search = st.text_input("Search PO number, customer, or filename", key="workbench_po_search")
-            po_results = qbo_matcher.search_pos(mc, po_search, limit=50)
+            po_include_matched = st.checkbox("Include already-matched POs", key="workbench_po_include_matched")
+            po_results = qbo_matcher.search_pos(mc, po_search, limit=50, include_matched=po_include_matched)
             if not po_results:
                 st.caption("No matching POs.")
             else:
@@ -1035,11 +1036,13 @@ with tab_fulfillment:
             ic1, ic2 = st.columns(2)
             amount_min = ic1.number_input("Min $", value=0.0, step=10.0, key="workbench_inv_min")
             amount_max = ic2.number_input("Max $ (0 = no limit)", value=0.0, step=10.0, key="workbench_inv_max")
-            include_voided = st.checkbox("Include voided/zero-$ invoices", key="workbench_inv_voided")
+            ic3, ic4 = st.columns(2)
+            include_voided = ic3.checkbox("Include voided/zero-$ invoices", key="workbench_inv_voided")
+            inv_include_matched = ic4.checkbox("Include already-matched invoices", key="workbench_inv_include_matched")
             inv_results = qbo_matcher.search_invoices(
                 mc, customer=inv_customer, query=inv_query,
                 amount_min=(amount_min or None), amount_max=(amount_max or None),
-                include_voided=include_voided, limit=100,
+                include_voided=include_voided, include_matched=inv_include_matched, limit=100,
             )
             if not inv_results:
                 st.caption("No matching invoices.")

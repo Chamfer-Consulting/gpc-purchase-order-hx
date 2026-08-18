@@ -125,12 +125,20 @@ def get_latest_pos(conn) -> list[dict]:
     return list(latest.values())
 
 
-def search_pos(conn, query: str = "", limit: int = 50) -> list[dict]:
+def search_pos(conn, query: str = "", limit: int = 50, include_matched: bool = False) -> list[dict]:
     """Filters get_latest_pos() by a case-insensitive substring match against PO number,
     customer, or filename — for the manual search-and-match workbench. Filtering in
     Python (not a separate SQL path) since get_latest_pos already loads the full,
-    already-deduped PO set fast (<1s over 1188 rows)."""
+    already-deduped PO set fast (<1s over 1188 rows). Already-confirmed POs are excluded
+    by default — the point of this search is finding what still needs a decision;
+    include_matched=True brings them back for the rare case of reviewing/replacing an
+    existing link."""
     pos = sorted(get_latest_pos(conn), key=lambda r: r["_effective_date"] or date.min, reverse=True)
+    if not include_matched:
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT po_id FROM po_invoice_links WHERE confirmed = TRUE")
+            confirmed_ids = {r[0] for r in cur.fetchall()}
+        pos = [p for p in pos if p["id"] not in confirmed_ids]
     if query:
         q = query.lower()
         pos = [
@@ -216,14 +224,28 @@ def _amount_score(po_total, inv_total) -> float:
     return 1 - diff / tolerance
 
 
+def _best_date_delta(effective_date, delivery_date, txn_date):
+    """Smallest date gap between the invoice date and either PO reference date —
+    effective_date (sent_date, else po_date: when the order was placed) or
+    delivery_date (when the customer wanted it). Invoices are often generated at or
+    near actual delivery rather than at order placement, so delivery_date can be the
+    better predictor; take whichever is closer instead of picking just one."""
+    if not txn_date:
+        return None
+    candidates = [d for d in (effective_date, delivery_date) if d]
+    if not candidates:
+        return None
+    return min(abs((txn_date - d).days) for d in candidates)
+
+
 def _calibrated_date_window(conn) -> int:
-    """P95 of observed |invoice_date - PO_effective_date| across confirmed, customer-
-    corroborated PO-number matches — a data-driven fuzzy window instead of a guess.
-    Falls back to the default until there are enough confirmed matches to trust."""
+    """P95 of the best observed date gap (see _best_date_delta) across confirmed,
+    customer-corroborated PO-number matches — a data-driven fuzzy window instead of a
+    guess. Falls back to the default until there are enough confirmed matches to trust."""
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT po.sent_date, po.po_date, inv.txn_date
+            SELECT po.sent_date, po.po_date, po.delivery_date, inv.txn_date
             FROM po_invoice_links l
             JOIN purchase_orders po ON po.id = l.po_id
             JOIN qbo_invoices inv ON inv.id = l.invoice_id
@@ -232,10 +254,11 @@ def _calibrated_date_window(conn) -> int:
         )
         rows = cur.fetchall()
     deltas = []
-    for sent_date, po_date, txn_date in rows:
+    for sent_date, po_date, delivery_date, txn_date in rows:
         effective = _parse_date(sent_date) or po_date
-        if effective and txn_date:
-            deltas.append(abs((txn_date - effective).days))
+        delta = _best_date_delta(effective, delivery_date, txn_date)
+        if delta is not None:
+            deltas.append(delta)
     if len(deltas) < MIN_SAMPLES_TO_CALIBRATE:
         return DATE_WINDOW_DAYS_DEFAULT
     deltas.sort()
@@ -264,14 +287,13 @@ def _score_candidate(po, inv, po_items_map, inv_items_map, date_window):
     Line-item content and a possible embedded-PO-number hint are weighted highest
     (0.3, 0.2) since they're the most specific independent signals available once an
     exact PO-number match isn't; date/amount proximity (0.25 each) corroborate."""
-    po_date, inv_date = po.get("_effective_date"), inv.get("txn_date")
-    if po_date and inv_date:
-        delta_days = abs((inv_date - po_date).days)
-        if delta_days > date_window:
-            return None
-        date_score = max(0.0, 1 - delta_days / date_window)
-    else:
+    delta_days = _best_date_delta(po.get("_effective_date"), po.get("delivery_date"), inv.get("txn_date"))
+    if delta_days is None:
         date_score = 0.3
+    elif delta_days > date_window:
+        return None
+    else:
+        date_score = max(0.0, 1 - delta_days / date_window)
 
     amount_score = _amount_score(po.get("total"), inv.get("total_amt"))
     item_score = _line_item_similarity(po_items_map.get(po["id"], {}), inv_items_map.get(inv["id"], {}))
@@ -462,16 +484,21 @@ def get_line_items_for_review(conn, po_ids: list[int], invoice_ids: list[int]):
 
 def search_invoices(
     conn, customer: str = "", query: str = "", date_from=None, date_to=None,
-    amount_min=None, amount_max=None, include_voided: bool = False, limit: int = 100,
+    amount_min=None, amount_max=None, include_voided: bool = False,
+    include_matched: bool = False, limit: int = 100,
 ) -> list[dict]:
     """Server-side filtered invoice search for the manual search-and-match workbench —
     unlike PO search, qbo_invoices is bigger and range filters (date/amount) belong in
-    SQL, not fetched-then-filtered in Python."""
+    SQL, not fetched-then-filtered in Python. Already-confirmed invoices are excluded by
+    default — an invoice already backing a PO shouldn't clutter the search for a
+    different one; include_matched=True brings them back for the rare override case."""
     clauses = []
     params: dict = {}
     if not include_voided:
         clauses.append("total_amt IS NOT NULL AND total_amt != 0")
         clauses.append("(private_note IS NULL OR private_note NOT ILIKE '%%void%%')")
+    if not include_matched:
+        clauses.append("id NOT IN (SELECT invoice_id FROM po_invoice_links WHERE confirmed = TRUE)")
     if customer:
         clauses.append("customer_name ILIKE %(customer)s")
         params["customer"] = f"%{customer}%"
