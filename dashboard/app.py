@@ -226,14 +226,28 @@ def save_po_edit(po_id: int, header: dict, items: list[dict]) -> None:
 
 
 @st.cache_data(ttl=300, show_spinner="Loading PO data...")
-def load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     conn = psycopg2.connect(get_database_url())
     try:
         po_df = pd.read_sql_query("SELECT * FROM purchase_orders", conn)
         items_df = pd.read_sql_query("SELECT * FROM line_items", conn)
+        # One row per CONFIRMED PO<->invoice match — the only pairs anyone has actually
+        # verified, not just an algorithm's guess. Powers "requested vs. delivered" views.
+        matched_df = pd.read_sql_query(
+            """
+            SELECT po.id AS po_id, po.po_number, po.source_file, po.customer_name AS po_customer,
+                   po.po_date, po.sent_date, po.total AS po_total,
+                   inv.id AS invoice_id, inv.doc_number, inv.txn_date, inv.total_amt AS invoice_total
+            FROM po_invoice_links l
+            JOIN purchase_orders po ON po.id = l.po_id
+            JOIN qbo_invoices inv ON inv.id = l.invoice_id
+            WHERE l.confirmed = TRUE
+            """,
+            conn,
+        )
     finally:
         conn.close()
-    return po_df, items_df
+    return po_df, items_df, matched_df
 
 
 def prepare(po_df: pd.DataFrame, items_df: pd.DataFrame):
@@ -261,7 +275,7 @@ def prepare(po_df: pd.DataFrame, items_df: pd.DataFrame):
     return valid_po, latest_po, items, latest_items
 
 
-po_df, items_df = load_data()
+po_df, items_df, matched_df = load_data()
 
 if po_df.empty:
     st.info("No data yet — run `python sync_dashboard.py` after your first extraction batch.")
@@ -501,6 +515,53 @@ with tab_trends:
                 ticktext=["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
             )
             st.plotly_chart(style(fig3, palette), use_container_width=True)
+
+    st.divider()
+    st.subheader("Requested vs. delivered over time")
+    st.caption("Only includes PO↔invoice matches confirmed in the Requested vs Shipped tab.")
+    if matched_df.empty:
+        st.info("No confirmed PO↔invoice matches yet — link some in the Requested vs Shipped tab.")
+    else:
+        rd = matched_df.copy()
+        rd["effective_date"] = pd.to_datetime(rd["sent_date"], errors="coerce").fillna(
+            pd.to_datetime(rd["po_date"], errors="coerce")
+        )
+        rd = rd.dropna(subset=["effective_date"])
+        if start_ts is not None and end_ts is not None:
+            rd = rd[(rd["effective_date"] >= start_ts) & (rd["effective_date"] <= end_ts)]
+        if selected_customers:
+            rd = rd[rd["po_customer"].isin(selected_customers)]
+
+        if rd.empty:
+            st.info("No confirmed matches in the current filter.")
+        else:
+            rd["month"] = rd["effective_date"].dt.to_period("M").dt.to_timestamp()
+            by_month_rd = rd.groupby("month").agg(
+                requested=("po_total", "sum"), delivered=("invoice_total", "sum"),
+            ).reset_index().sort_values("month")
+
+            long_rd = by_month_rd.melt(
+                id_vars="month", value_vars=["requested", "delivered"],
+                var_name="Type", value_name="Amount",
+            )
+            long_rd["Type"] = long_rd["Type"].map({"requested": "Requested", "delivered": "Delivered"})
+            fig_rd = px.bar(
+                long_rd, x="month", y="Amount", color="Type", barmode="group",
+                color_discrete_map={"Requested": palette["categorical"][0], "Delivered": palette["categorical"][1]},
+                labels={"month": "", "Amount": "Revenue ($)"},
+            )
+            st.plotly_chart(style(fig_rd, palette), use_container_width=True)
+
+            by_month_rd["Variance ($)"] = by_month_rd["delivered"] - by_month_rd["requested"]
+            by_month_rd["Variance (%)"] = by_month_rd.apply(
+                lambda r: round((r["delivered"] / r["requested"] - 1) * 100, 1) if r["requested"] else None, axis=1,
+            )
+            st.dataframe(
+                by_month_rd.rename(columns={
+                    "month": "Month", "requested": "Requested ($)", "delivered": "Delivered ($)",
+                }),
+                use_container_width=True, hide_index=True,
+            )
 
 # ── Products ─────────────────────────────────────────────────────────────────────
 
