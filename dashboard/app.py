@@ -23,6 +23,7 @@ from math_check import validate_math  # noqa: E402 — needs the sys.path insert
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import qbo_client  # noqa: E402 — needs the sys.path insert above (AppTest doesn't add the script's own dir like `streamlit run` does)
 import qbo_matcher  # noqa: E402
+import gdrive_client  # noqa: E402
 
 st.set_page_config(page_title="Garfield Produce — PO Dashboard", layout="wide", page_icon="🌱")
 
@@ -877,7 +878,8 @@ with tab_fulfillment:
 
     mc = psycopg2.connect(get_database_url())
     try:
-        if st.button("🔄 Run matching"):
+        mcol1, mcol2 = st.columns(2)
+        if mcol1.button("🔄 Run matching"):
             with st.spinner("Matching POs to invoices..."):
                 summary = qbo_matcher.run_matching(mc)
             st.success(
@@ -890,6 +892,21 @@ with tab_fulfillment:
                 f"(out of {summary['total_pos']} total POs). "
                 f"Fuzzy date window: ±{summary['date_window_days']} days."
             )
+        if mcol2.button("📁 Sync Drive links"):
+            with st.spinner("Searching the Shared Drive for original PDFs..."):
+                try:
+                    drive_summary = gdrive_client.sync_drive_links(mc)
+                    st.success(
+                        f"{drive_summary['linked']} PO(s) linked to their PDF, "
+                        f"{drive_summary['not_found']} not found in the Shared Drive "
+                        f"(checked {drive_summary['total_checked']})."
+                    )
+                except Exception as e:
+                    st.error(f"Drive sync failed: {e}")
+        with mc.cursor() as _cur:
+            _cur.execute("SELECT COUNT(*), COUNT(drive_file_id) FROM purchase_orders WHERE error IS NULL")
+            _total_po, _linked_po = _cur.fetchone()
+        st.caption(f"📁 {_linked_po} of {_total_po} POs linked to their original PDF in Google Drive.")
 
         st.subheader("Needs review")
         needs_review = qbo_matcher.get_needs_review(mc)
@@ -925,6 +942,8 @@ with tab_fulfillment:
                     with dc1:
                         st.markdown("**Purchase Order**")
                         st.write(f"PO Number: {row['po_number'] or row['source_file']}")
+                        if row.get("drive_file_id"):
+                            st.markdown(f"[📄 Open original PDF ↗]({gdrive_client.file_view_url(row['drive_file_id'])})")
                         st.write(f"Customer: {row['po_customer']}")
                         st.write(
                             f"PO Date: {row['po_date'] or '—'} · Sent: {row['sent_date'] or '—'} · "

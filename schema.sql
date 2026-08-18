@@ -53,6 +53,12 @@ ALTER TABLE line_items ADD COLUMN IF NOT EXISTS changes TEXT;
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS edited BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
 
+-- Link to the original PDF's copy in the Google Shared Drive it was archived to on
+-- receipt — drive_file_id IS NULL is the incremental-sync filter (no time cursor needed,
+-- a once-found file never needs re-searching).
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS drive_file_id TEXT;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS drive_synced_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_line_items_po_id ON line_items(po_id);
 CREATE INDEX IF NOT EXISTS idx_po_po_number ON purchase_orders(po_number);
 CREATE INDEX IF NOT EXISTS idx_po_po_date ON purchase_orders(po_date);
