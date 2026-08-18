@@ -437,13 +437,16 @@ def get_line_items_for_review(conn, po_ids: list[int], invoice_ids: list[int]):
 
 
 def get_unlinked_pos(conn) -> list[dict]:
-    """Latest-version POs with no candidate link at all (not even an unconfirmed one) —
-    for a manual invoice-picker fallback in the UI."""
+    """Latest-version POs with no CONFIRMED link — either no candidate was ever proposed,
+    or every proposed candidate got rejected. Both cases need the manual-link fallback to
+    find them; keying this off "has any link row at all" (the earlier version) missed the
+    second case entirely — a PO whose every candidate was rejected would silently vanish
+    from both the review queue and this fallback, with no way left to resolve it."""
     pos = get_latest_pos(conn)
     with conn.cursor() as cur:
-        cur.execute("SELECT DISTINCT po_id FROM po_invoice_links")
-        linked_ids = {r[0] for r in cur.fetchall()}
-    return [po for po in pos if po["id"] not in linked_ids]
+        cur.execute("SELECT DISTINCT po_id FROM po_invoice_links WHERE confirmed = TRUE")
+        confirmed_ids = {r[0] for r in cur.fetchall()}
+    return [po for po in pos if po["id"] not in confirmed_ids]
 
 
 def confirm_link(conn, po_id: int, invoice_id: int) -> None:
