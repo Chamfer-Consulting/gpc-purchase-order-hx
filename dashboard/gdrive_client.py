@@ -1,13 +1,17 @@
 """
-Links PO records to their original PDF's copy in a Google Shared Drive (the business
-archives every PO PDF there on receipt) — Drive REST API v3 called directly via
-`requests`, authenticated with a service account.
+Links PO records to their original PDF's copy in a private Google Drive folder (the
+business's email-attachment auto-download tool saves every PO PDF there on receipt) —
+Drive REST API v3 called directly via `requests`, authenticated with a service account.
 
 Deliberately not using google-api-python-client: its transitive protobuf/gRPC stack
 requires protobuf>=6, which conflicts with Streamlit's pinned protobuf<6 (the same class
 of dependency conflict that forced separate venvs for the extraction pipeline and
 dashboard earlier in this project). Direct REST calls also match this project's existing
 style (qbo_client.py) of calling APIs directly over pulling in heavy SDK wrappers.
+
+A regular (non-Shared-Drive) folder, since the attachment-download tool doesn't work
+against Shared Drives — the service account is instead granted access the normal way,
+by sharing that specific folder with its client_email as a Viewer.
 """
 
 import requests
@@ -26,8 +30,8 @@ def _access_token() -> str:
     return credentials.token
 
 
-def find_file_id(access_token: str, shared_drive_id: str, filename: str) -> str | None:
-    """Searches the Shared Drive for a file with this exact name. Multiple matches
+def find_file_id(access_token: str, folder_id: str, filename: str) -> str | None:
+    """Searches the given folder for a file with this exact name. Multiple matches
     (duplicate filenames) -> the most recently modified one — filenames are confirmed to
     match exactly in the normal case, so true duplicates are the rare edge, not the rule."""
     escaped = filename.replace("'", "\\'")
@@ -35,9 +39,7 @@ def find_file_id(access_token: str, shared_drive_id: str, filename: str) -> str 
         DRIVE_API,
         headers={"Authorization": f"Bearer {access_token}"},
         params={
-            "q": f"name = '{escaped}' and trashed = false",
-            "corpora": "drive",
-            "driveId": shared_drive_id,
+            "q": f"name = '{escaped}' and '{folder_id}' in parents and trashed = false",
             "includeItemsFromAllDrives": "true",
             "supportsAllDrives": "true",
             "fields": "files(id,name,modifiedTime)",
@@ -54,12 +56,12 @@ def find_file_id(access_token: str, shared_drive_id: str, filename: str) -> str 
 
 
 def sync_drive_links(conn) -> dict:
-    """For every PO not yet linked, search the Shared Drive by its source_file name and
+    """For every PO not yet linked, search the Drive folder by its source_file name and
     record the match. Sequential requests — Drive's default read quota comfortably covers
     a ~1300-file backfill, and this only runs occasionally: once a PO is linked it's never
     re-searched (drive_file_id IS NULL is the incremental filter), and a not-found PO
     stays eligible for retry on the next sync in case the file gets archived later."""
-    shared_drive_id = st.secrets["gdrive_shared_drive_id"]
+    folder_id = st.secrets["gdrive_folder_id"]
     access_token = _access_token()
 
     with conn.cursor() as cur:
@@ -69,7 +71,7 @@ def sync_drive_links(conn) -> dict:
     linked = not_found = 0
     with conn.cursor() as cur:
         for po_id, source_file in rows:
-            file_id = find_file_id(access_token, shared_drive_id, source_file)
+            file_id = find_file_id(access_token, folder_id, source_file)
             if file_id:
                 cur.execute(
                     "UPDATE purchase_orders SET drive_file_id = %s, drive_synced_at = now() WHERE id = %s",
