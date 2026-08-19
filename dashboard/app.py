@@ -283,6 +283,44 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     return po_df, items_df, matched_df
 
 
+@st.cache_data(ttl=300, show_spinner="Loading QuickBooks invoice data...")
+def load_invoice_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The full QuickBooks invoice history — every customer, not just the 3 with PO
+    documents. This is what makes Overview/Trends/Products/Customers reflect the whole
+    business rather than the PO-covered slice of it."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        inv_df = pd.read_sql_query(
+            "SELECT id, doc_number, customer_name, txn_date, ship_date, total_amt, "
+            "private_note FROM qbo_invoices",
+            conn,
+        )
+        inv_items_df = pd.read_sql_query(
+            "SELECT ii.invoice_id, ii.product_name, ii.container_size, ii.category, "
+            "ii.is_sample, ii.quantity, ii.unit_price, ii.line_total, "
+            "inv.customer_name, inv.txn_date "
+            "FROM qbo_invoice_items ii JOIN qbo_invoices inv ON inv.id = ii.invoice_id",
+            conn,
+        )
+    finally:
+        conn.close()
+    return inv_df, inv_items_df
+
+
+def prepare_invoices(inv_df: pd.DataFrame, inv_items_df: pd.DataFrame):
+    """Excludes voided invoices — same heuristic as qbo_matcher._VOID_SQL (null/zero
+    total, or a private note mentioning void) — and derives effective_date."""
+    inv = inv_df[
+        inv_df["total_amt"].notna() & (inv_df["total_amt"] != 0)
+        & ~inv_df["private_note"].fillna("").str.contains("void", case=False)
+    ].copy()
+    inv["effective_date"] = pd.to_datetime(inv["txn_date"], errors="coerce")
+
+    items = inv_items_df.merge(inv[["id"]], left_on="invoice_id", right_on="id")
+    items["effective_date"] = pd.to_datetime(items["txn_date"], errors="coerce")
+    return inv, items
+
+
 _MATCHED_ITEMS_COLUMNS = [
     "po_id", "invoice_id", "customer_name", "effective_date",
     "product_name", "container_size", "requested_qty", "requested_amount",
@@ -422,6 +460,9 @@ if po_df.empty:
 
 valid_po, latest_po, all_items, latest_items = prepare(po_df, items_df)
 
+inv_df, inv_items_df = load_invoice_data()
+invoices, inv_items_all = prepare_invoices(inv_df, inv_items_df)
+
 # ── Sidebar: appearance ──────────────────────────────────────────────────────────
 # Theme is Streamlit's own native Light/Dark/"Use system setting" (⋮ menu → Settings)
 # so every built-in widget — tables, data_editor, buttons, inputs, alerts — is themed
@@ -437,8 +478,8 @@ st.sidebar.divider()
 
 st.sidebar.header("Filters")
 
-min_date = latest_po["effective_date"].min()
-max_date = latest_po["effective_date"].max()
+min_date = invoices["effective_date"].min()
+max_date = invoices["effective_date"].max()
 has_dates = pd.notna(min_date) and pd.notna(max_date)
 
 DATE_PRESETS = ["Last 30 days", "Last 90 days", "Year to date", "Year", "All time", "Custom"]
@@ -453,7 +494,7 @@ if has_dates:
     elif preset == "Year to date":
         start_ts, end_ts = pd.Timestamp(year=today.year, month=1, day=1), today
     elif preset == "Year":
-        year_options = sorted(latest_po["effective_date"].dt.year.dropna().unique().astype(int).tolist(), reverse=True)
+        year_options = sorted(invoices["effective_date"].dt.year.dropna().unique().astype(int).tolist(), reverse=True)
         picked_year = st.sidebar.selectbox("Year", year_options, key="filter_year")
         start_ts = pd.Timestamp(year=picked_year, month=1, day=1)
         end_ts = pd.Timestamp(year=picked_year, month=12, day=31)
@@ -470,10 +511,12 @@ if has_dates:
 else:
     start_ts, end_ts = None, None
 
-customers = sorted(latest_po["customer_name"].dropna().unique().tolist())
+customers = sorted(invoices["customer_name"].dropna().unique().tolist())
 selected_customers = st.sidebar.multiselect("Customer", customers, default=[], key="filter_customers")
 
-products = sorted(latest_items["product_name"].dropna().unique().tolist())
+products = sorted(
+    inv_items_all.loc[inv_items_all["category"] == "product", "product_name"].dropna().unique().tolist()
+)
 selected_products = st.sidebar.multiselect("Product", products, default=[], key="filter_products")
 
 include_samples = st.sidebar.checkbox("Include samples", value=False, key="include_samples")
@@ -505,7 +548,36 @@ if selected_products:
 if not include_samples:
     f_items = f_items[~f_items["is_sample"]]
 
-product_colors = color_map_for(latest_items["product_name"].dropna().unique().tolist(), palette)
+# Same filters applied to the invoice-based universe — this is what Overview/Trends/
+# Products/Customers are built from (see the "make QBO invoices the primary source"
+# rework); f_po/f_items above remain PO-scoped for the tabs that are inherently about
+# PO<->invoice comparison or the extraction pipeline's own data quality.
+f_inv = invoices.copy()
+f_inv_items = inv_items_all.copy()
+
+if start_ts is not None and end_ts is not None:
+    f_inv = f_inv[(f_inv["effective_date"] >= start_ts) & (f_inv["effective_date"] <= end_ts)]
+    f_inv_items = f_inv_items[f_inv_items["invoice_id"].isin(f_inv["id"])]
+
+if selected_customers:
+    f_inv = f_inv[f_inv["customer_name"].isin(selected_customers)]
+    f_inv_items = f_inv_items[f_inv_items["invoice_id"].isin(f_inv["id"])]
+
+if selected_products:
+    f_inv_items = f_inv_items[f_inv_items["product_name"].isin(selected_products)]
+
+# Delivery/donation/service/other aren't produce at all — always excluded from
+# product-facing invoice reports. "product" and "sample" are separate categories
+# (see classify_qbo_item); keep both here so the "Include samples" toggle below still
+# has something to act on, matching the existing PO-side behavior.
+f_inv_items = f_inv_items[f_inv_items["category"].isin(["product", "sample"])]
+
+if not include_samples:
+    f_inv_items = f_inv_items[~f_inv_items["is_sample"]]
+
+product_colors = color_map_for(
+    inv_items_all.loc[inv_items_all["category"] == "product", "product_name"].dropna().unique().tolist(), palette
+)
 
 # Precomputed once so both their own tab and the Overview export can use them.
 if f_items.empty:
@@ -523,6 +595,24 @@ else:
     )
     by_customer["avg_order_value"] = (by_customer["revenue"] / by_customer["orders"]).round(2)
 
+# Invoice-based equivalents — same shape, source is f_inv/f_inv_items (the full
+# customer/product universe) instead of the PO-only f_po/f_items above.
+if f_inv_items.empty:
+    by_product_inv = pd.DataFrame(columns=["product_name", "revenue", "quantity"])
+else:
+    by_product_inv = (
+        f_inv_items.groupby("product_name").agg(revenue=("line_total", "sum"), quantity=("quantity", "sum"))
+        .reset_index()
+    )
+
+if f_inv.empty:
+    by_customer_inv = pd.DataFrame(columns=["customer_name", "invoices", "revenue", "avg_invoice_value"])
+else:
+    by_customer_inv = (
+        f_inv.groupby("customer_name").agg(invoices=("id", "nunique"), revenue=("total_amt", "sum")).reset_index()
+    )
+    by_customer_inv["avg_invoice_value"] = (by_customer_inv["revenue"] / by_customer_inv["invoices"]).round(2)
+
 st.title("🌱 Garfield Produce — Purchase Order Dashboard")
 
 tab_reports, tab_match, tab_revisions, tab_data, tab_edit, tab_prices, tab_qbo = st.tabs(
@@ -538,43 +628,52 @@ with tab_reports:
 # ── Reports: Overview ────────────────────────────────────────────────────────────
 
 with r_overview:
-    total_orders = f_po["id"].nunique()
-    total_revenue = f_po["total"].sum()
-    unique_customers = f_po["customer_name"].nunique()
-    distinct_products = f_items["product_name"].nunique()
-    avg_order_value = f_po["total"].mean() if total_orders else 0
-    needs_review = int(f_po["math_check_failed"].sum())
-    extraction_errors = int(po_df["error"].notna().sum())
+    st.caption(
+        "Reflects the full QuickBooks invoice history — every customer, not just the "
+        "ones with formal PO documents. Respects the sidebar filters above."
+    )
+    total_invoices = f_inv["id"].nunique()
+    total_revenue = f_inv["total_amt"].sum()
+    unique_customers = f_inv["customer_name"].nunique()
+    distinct_products = f_inv_items.loc[f_inv_items["category"] == "product", "product_name"].nunique()
+    avg_invoice_value = f_inv["total_amt"].mean() if total_invoices else 0
 
-    delta_orders = delta_revenue = delta_aov = None
+    delta_invoices = delta_revenue = delta_aiv = None
     if start_ts is not None and end_ts is not None:
         span = end_ts - start_ts
         prev_end = start_ts - pd.Timedelta(days=1)
         prev_start = prev_end - span
-        prev_po = latest_po[(latest_po["effective_date"] >= prev_start) & (latest_po["effective_date"] <= prev_end)]
+        prev_inv = invoices[(invoices["effective_date"] >= prev_start) & (invoices["effective_date"] <= prev_end)]
         if selected_customers:
-            prev_po = prev_po[prev_po["customer_name"].isin(selected_customers)]
-        prev_orders = prev_po["id"].nunique()
-        if prev_orders:
-            delta_orders = total_orders - prev_orders
-            delta_revenue = total_revenue - prev_po["total"].sum()
-            delta_aov = avg_order_value - prev_po["total"].mean()
+            prev_inv = prev_inv[prev_inv["customer_name"].isin(selected_customers)]
+        prev_count = prev_inv["id"].nunique()
+        if prev_count:
+            delta_invoices = total_invoices - prev_count
+            delta_revenue = total_revenue - prev_inv["total_amt"].sum()
+            delta_aiv = avg_invoice_value - prev_inv["total_amt"].mean()
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Orders", f"{total_orders:,}", delta=fmt_delta(delta_orders))
+    c1.metric("Invoices", f"{total_invoices:,}", delta=fmt_delta(delta_invoices))
     c2.metric("Total Revenue", f"${total_revenue:,.0f}", delta=fmt_delta(delta_revenue, prefix="$"))
     c3.metric("Customers", f"{unique_customers:,}")
     c4.metric("Products", f"{distinct_products:,}")
 
-    c5, c6, c7 = st.columns(3)
-    c5.metric("Avg Order Value", f"${avg_order_value:,.2f}", delta=fmt_delta(delta_aov, prefix="$", decimals=2))
-    c6.metric("⚠️ Needs Review (math check)", f"{needs_review:,}")
-    c7.metric("❌ Extraction Errors", f"{extraction_errors:,}")
-
-    if needs_review or extraction_errors:
-        st.caption("See the **Revisions & Data Quality** tab for details on flagged orders.")
+    st.metric("Avg Invoice Value", f"${avg_invoice_value:,.2f}", delta=fmt_delta(delta_aiv, prefix="$", decimals=2))
     if start_ts is not None and end_ts is not None:
         st.caption("Deltas compare the selected date range to the immediately preceding period of equal length.")
+
+    st.divider()
+    st.subheader("📋 PO extraction data quality")
+    st.caption(
+        "Only covers the subset of orders with a formal PO document — not the metrics above."
+    )
+    needs_review = int(f_po["math_check_failed"].sum())
+    extraction_errors = int(po_df["error"].notna().sum())
+    dq1, dq2 = st.columns(2)
+    dq1.metric("⚠️ Needs Review (math check)", f"{needs_review:,}")
+    dq2.metric("❌ Extraction Errors", f"{extraction_errors:,}")
+    if needs_review or extraction_errors:
+        st.caption("See the **Revisions & Data Quality** tab for details on flagged orders.")
 
     st.divider()
     st.subheader("📈 Annual comparison")
@@ -586,33 +685,35 @@ with r_overview:
     ac1, ac2 = st.columns(2)
     with ac1:
         st.caption("Revenue")
-        fig_rev_yoy = yoy_annual_chart(f_po, "effective_date", "total", "sum", "Revenue ($)", palette, current_year)
+        fig_rev_yoy = yoy_annual_chart(f_inv, "effective_date", "total_amt", "sum", "Revenue ($)", palette, current_year)
         if fig_rev_yoy is not None:
             st.plotly_chart(style(fig_rev_yoy, palette), use_container_width=True, key="chart_overview_revenue_yoy")
         else:
-            st.caption("Not enough dated orders in the current filter.")
+            st.caption("Not enough dated invoices in the current filter.")
     with ac2:
-        st.caption("Orders")
-        fig_orders_yoy = yoy_annual_chart(f_po, "effective_date", "id", "nunique", "Orders", palette, current_year)
-        if fig_orders_yoy is not None:
-            st.plotly_chart(style(fig_orders_yoy, palette), use_container_width=True, key="chart_overview_orders_yoy")
+        st.caption("Invoices")
+        fig_inv_yoy = yoy_annual_chart(f_inv, "effective_date", "id", "nunique", "Invoices", palette, current_year)
+        if fig_inv_yoy is not None:
+            st.plotly_chart(style(fig_inv_yoy, palette), use_container_width=True, key="chart_overview_orders_yoy")
         else:
-            st.caption("Not enough dated orders in the current filter.")
+            st.caption("Not enough dated invoices in the current filter.")
 
     st.divider()
     st.subheader("Export")
     excel_buf = io.BytesIO()
     with pd.ExcelWriter(excel_buf, engine="openpyxl") as writer:
         pd.DataFrame({
-            "Metric": ["Orders", "Total Revenue", "Customers", "Products", "Avg Order Value",
-                       "Needs Review (math check)", "Extraction Errors"],
-            "Value": [total_orders, total_revenue, unique_customers, distinct_products,
-                      avg_order_value, needs_review, extraction_errors],
+            "Metric": ["Invoices", "Total Revenue", "Customers", "Products", "Avg Invoice Value",
+                       "Needs Review (math check, PO subset)", "Extraction Errors (PO subset)"],
+            "Value": [total_invoices, total_revenue, unique_customers, distinct_products,
+                      avg_invoice_value, needs_review, extraction_errors],
         }).to_excel(writer, sheet_name="Overview", index=False)
-        strip_tz(f_po.drop(columns=["po_key"], errors="ignore")).to_excel(writer, sheet_name="Orders", index=False)
-        strip_tz(f_items).to_excel(writer, sheet_name="Line Items", index=False)
-        by_product.to_excel(writer, sheet_name="Products", index=False)
-        by_customer.to_excel(writer, sheet_name="Customers", index=False)
+        strip_tz(f_inv.drop(columns=["private_note"], errors="ignore")).to_excel(writer, sheet_name="Invoices", index=False)
+        strip_tz(f_inv_items).to_excel(writer, sheet_name="Invoice Line Items", index=False)
+        by_product_inv.to_excel(writer, sheet_name="Products", index=False)
+        by_customer_inv.to_excel(writer, sheet_name="Customers", index=False)
+        strip_tz(f_po.drop(columns=["po_key"], errors="ignore")).to_excel(writer, sheet_name="POs", index=False)
+        strip_tz(f_items).to_excel(writer, sheet_name="PO Line Items", index=False)
     st.download_button(
         "📊 Export full report (Excel)",
         excel_buf.getvalue(),
@@ -625,26 +726,27 @@ with r_overview:
 # ── Reports: Trends ──────────────────────────────────────────────────────────────
 
 with r_trends:
-    monthly = f_po.dropna(subset=["effective_date"]).copy()
+    st.caption("Reflects the full QuickBooks invoice history. Respects the sidebar filters above.")
+    monthly = f_inv.dropna(subset=["effective_date"]).copy()
     monthly["month"] = monthly["effective_date"].dt.to_period("M").dt.to_timestamp()
-    by_month = monthly.groupby("month").agg(orders=("id", "nunique"), revenue=("total", "sum")).reset_index()
+    by_month = monthly.groupby("month").agg(orders=("id", "nunique"), revenue=("total_amt", "sum")).reset_index()
     by_month = by_month.sort_values("month")
 
     if by_month.empty:
-        st.info("Not enough dated orders in the current filter to show trends.")
+        st.info("Not enough dated invoices in the current filter to show trends.")
     else:
         by_month["rolling_avg"] = by_month["orders"].rolling(3, min_periods=1).mean().shift(1)
         by_month["is_spike"] = by_month["orders"] > (by_month["rolling_avg"].fillna(0) * 1.5)
         by_month["spike_label"] = by_month["is_spike"].map({True: "Spike", False: "Normal"})
 
-        st.subheader("Orders per month")
+        st.subheader("Invoices per month")
         fig = px.bar(
             by_month, x="month", y="orders", color="spike_label",
             color_discrete_map={"Normal": palette["categorical"][0], "Spike": palette["status"]["warning"]},
-            labels={"month": "", "orders": "Orders", "spike_label": ""},
+            labels={"month": "", "orders": "Invoices", "spike_label": ""},
         )
         st.plotly_chart(style(fig, palette), use_container_width=True, key="chart_orders_per_month")
-        st.caption("🟠 **Spike** = order count more than 1.5× the trailing 3-month average.")
+        st.caption("🟠 **Spike** = invoice count more than 1.5× the trailing 3-month average.")
 
         st.subheader("Revenue per month")
         fig2 = px.line(by_month, x="month", y="revenue", labels={"month": "", "revenue": "Revenue ($)"})
@@ -652,10 +754,10 @@ with r_trends:
         st.plotly_chart(style(fig2, palette), use_container_width=True, key="chart_revenue_per_month")
 
         st.subheader("Year-over-year comparison")
-        yoy_src = f_po.dropna(subset=["effective_date"]).copy()
+        yoy_src = f_inv.dropna(subset=["effective_date"]).copy()
         yoy_src["year"] = yoy_src["effective_date"].dt.year.astype(str)
         yoy_src["moy"] = yoy_src["effective_date"].dt.month
-        yoy = yoy_src.groupby(["year", "moy"]).agg(revenue=("total", "sum")).reset_index()
+        yoy = yoy_src.groupby(["year", "moy"]).agg(revenue=("total_amt", "sum")).reset_index()
         if yoy["year"].nunique() < 2:
             st.caption("Need orders spanning at least two calendar years in the current filter to compare.")
         else:
@@ -679,12 +781,13 @@ with r_trends:
 # ── Reports: Products ────────────────────────────────────────────────────────────
 
 with r_products:
-    if f_items.empty:
+    st.caption("Reflects the full QuickBooks invoice history. Respects the sidebar filters above.")
+    if f_inv_items.empty:
         st.info("No line items in the current filter.")
     else:
         st.subheader("Revenue by product")
         fig = px.bar(
-            by_product.sort_values("revenue", ascending=True), x="revenue", y="product_name", orientation="h",
+            by_product_inv.sort_values("revenue", ascending=True), x="revenue", y="product_name", orientation="h",
             color="product_name", color_discrete_map=product_colors,
             labels={"revenue": "Revenue ($)", "product_name": ""},
         )
@@ -692,13 +795,13 @@ with r_products:
         st.plotly_chart(style(fig, palette), use_container_width=True, key="chart_revenue_by_product")
         st.download_button(
             "⬇️ Download product revenue (CSV)",
-            by_product.rename(columns={"product_name": "Product", "revenue": "Revenue ($)", "quantity": "Quantity"})
+            by_product_inv.rename(columns={"product_name": "Product", "revenue": "Revenue ($)", "quantity": "Quantity"})
             .to_csv(index=False).encode("utf-8"),
             file_name="revenue_by_product.csv", mime="text/csv", key="dl_products",
         )
 
         st.subheader("Product mix over time (quantity)")
-        by_month_product = f_items.dropna(subset=["effective_date"]).copy()
+        by_month_product = f_inv_items.dropna(subset=["effective_date"]).copy()
         by_month_product["month"] = by_month_product["effective_date"].dt.to_period("M").dt.to_timestamp()
         mix = by_month_product.groupby(["month", "product_name"])["quantity"].sum().reset_index()
         if mix.empty:
@@ -712,7 +815,7 @@ with r_products:
             st.plotly_chart(style(fig3, palette), use_container_width=True, key="chart_product_mix_time")
 
         st.subheader("Top movers (month over month)")
-        movers = month_over_month_movers(f_items, "effective_date", "product_name", "line_total")
+        movers = month_over_month_movers(f_inv_items, "effective_date", "product_name", "line_total")
         if movers is None:
             st.caption("Need at least two distinct months of data in the current filter to compare.")
         else:
@@ -728,11 +831,15 @@ with r_products:
 # ── Reports: Customers ───────────────────────────────────────────────────────────
 
 with r_customers:
-    if f_po.empty:
-        st.info("No orders in the current filter.")
+    st.caption(
+        "Reflects the full QuickBooks invoice history — every customer, not just the "
+        "ones with formal PO documents. Respects the sidebar filters above."
+    )
+    if f_inv.empty:
+        st.info("No invoices in the current filter.")
     else:
         st.subheader("Top customers by revenue")
-        top = by_customer.sort_values("revenue", ascending=False).head(15).sort_values("revenue")
+        top = by_customer_inv.sort_values("revenue", ascending=False).head(15).sort_values("revenue")
         fig = px.bar(
             top, x="revenue", y="customer_name", orientation="h",
             labels={"revenue": "Revenue ($)", "customer_name": ""},
@@ -740,42 +847,42 @@ with r_customers:
         fig.update_traces(marker_color=palette["sequential_blue"][4])
         st.plotly_chart(style(fig, palette), use_container_width=True, key="chart_top_customers")
 
-        cust_month = f_po.dropna(subset=["effective_date"]).copy()
+        cust_month = f_inv.dropna(subset=["effective_date"]).copy()
         cust_month["month"] = cust_month["effective_date"].dt.to_period("M").dt.to_timestamp()
 
         st.subheader("Customer revenue over time")
-        rev_over_time = cust_month.groupby(["month", "customer_name"], as_index=False)["total"].sum()
+        rev_over_time = cust_month.groupby(["month", "customer_name"], as_index=False)["total_amt"].sum()
         if rev_over_time.empty:
-            st.caption("Not enough dated orders in the current filter to show revenue over time.")
+            st.caption("Not enough dated invoices in the current filter to show revenue over time.")
         else:
             fig_rev_time = px.line(
-                rev_over_time, x="month", y="total", color="customer_name", markers=True,
+                rev_over_time, x="month", y="total_amt", color="customer_name", markers=True,
                 color_discrete_map=color_map_for(rev_over_time["customer_name"].dropna().unique().tolist(), palette),
-                labels={"month": "", "total": "Revenue ($)", "customer_name": "Customer"},
+                labels={"month": "", "total_amt": "Revenue ($)", "customer_name": "Customer"},
             )
             st.plotly_chart(style(fig_rev_time, palette), use_container_width=True, key="chart_customer_revenue_time")
 
-        st.subheader("Customer orders over time")
+        st.subheader("Customer invoices over time")
         orders_over_time = cust_month.groupby(["month", "customer_name"], as_index=False)["id"].nunique()
-        orders_over_time = orders_over_time.rename(columns={"id": "orders"})
+        orders_over_time = orders_over_time.rename(columns={"id": "invoices"})
         if orders_over_time.empty:
-            st.caption("Not enough dated orders in the current filter to show order count over time.")
+            st.caption("Not enough dated invoices in the current filter to show invoice count over time.")
         else:
             fig_orders_time = px.line(
-                orders_over_time, x="month", y="orders", color="customer_name", markers=True,
+                orders_over_time, x="month", y="invoices", color="customer_name", markers=True,
                 color_discrete_map=color_map_for(orders_over_time["customer_name"].dropna().unique().tolist(), palette),
-                labels={"month": "", "orders": "Orders", "customer_name": "Customer"},
+                labels={"month": "", "invoices": "Invoices", "customer_name": "Customer"},
             )
             st.plotly_chart(style(fig_orders_time, palette), use_container_width=True, key="chart_customer_orders_time")
 
-        st.subheader("Requested product mix over time, by customer")
-        st.caption("Pick a customer to see what they've ordered, by product, over time.")
-        cust_options = sorted(all_items["customer_name"].dropna().unique())
+        st.subheader("Product mix over time, by customer")
+        st.caption("Pick a customer to see what they've bought, by product, over time.")
+        cust_options = sorted(inv_items_all["customer_name"].dropna().unique())
         if not cust_options:
             st.caption("No customers with line items in the data yet.")
         else:
             picked_customer = st.selectbox("Customer", cust_options, key="customer_product_trend_pick")
-            cust_items = f_items[f_items["customer_name"] == picked_customer].dropna(subset=["effective_date"]).copy()
+            cust_items = f_inv_items[f_inv_items["customer_name"] == picked_customer].dropna(subset=["effective_date"]).copy()
             cust_items["month"] = cust_items["effective_date"].dt.to_period("M").dt.to_timestamp()
             cust_mix = cust_items.groupby(["month", "product_name"], as_index=False)["quantity"].sum()
             if cust_mix.empty:
@@ -789,9 +896,9 @@ with r_customers:
                 st.plotly_chart(style(fig_cust_mix, palette), use_container_width=True, key="chart_customer_product_mix_time")
 
         st.subheader("Customer summary")
-        customer_table = by_customer.sort_values("revenue", ascending=False).rename(columns={
-            "customer_name": "Customer", "orders": "Orders",
-            "revenue": "Revenue ($)", "avg_order_value": "Avg Order ($)",
+        customer_table = by_customer_inv.sort_values("revenue", ascending=False).rename(columns={
+            "customer_name": "Customer", "invoices": "Invoices",
+            "revenue": "Revenue ($)", "avg_invoice_value": "Avg Invoice ($)",
         })
         st.dataframe(customer_table, use_container_width=True, hide_index=True)
         st.download_button(
@@ -801,7 +908,7 @@ with r_customers:
         )
 
         st.subheader("Top movers (month over month)")
-        movers = month_over_month_movers(f_po, "effective_date", "customer_name", "total")
+        movers = month_over_month_movers(f_inv, "effective_date", "customer_name", "total_amt")
         if movers is None:
             st.caption("Need at least two distinct months of data in the current filter to compare.")
         else:
@@ -823,20 +930,25 @@ with r_rvd:
         "Match POs & Invoices tab first — this report only reflects confirmed links."
     )
 
+    # Controls are always rendered (not gated on po_ids) — the sidebar date range is
+    # now based on the wider invoice timeline (see the QBO-invoices-as-primary-source
+    # rework), so a narrow preset can easily fall entirely outside the PO date range;
+    # gating these widgets on po_ids made them vanish across reruns in exactly that
+    # case (the same class of bug fixed for the Pricing tab's product/size pickers).
+    st.subheader("Detailed breakdown: requested vs. delivered")
+    st.caption("Complete detail — slice by time period, customer, product, and size, in any combination.")
+    bc1, bc2 = st.columns(2)
+    period_choice = bc1.selectbox(
+        "Time period", ["All time", "Day", "Week", "Month", "Quarter", "Year"], index=3, key="breakdown_period",
+    )
+    dims = bc2.multiselect(
+        "Break down by", ["Customer", "Product", "Size"], default=["Product"], key="breakdown_dims",
+    )
+
     po_ids = f_po["id"].tolist()
     if not po_ids:
         st.info("No orders in the current filter.")
     else:
-        st.subheader("Detailed breakdown: requested vs. delivered")
-        st.caption("Complete detail — slice by time period, customer, product, and size, in any combination.")
-        bc1, bc2 = st.columns(2)
-        period_choice = bc1.selectbox(
-            "Time period", ["All time", "Day", "Week", "Month", "Quarter", "Year"], index=3, key="breakdown_period",
-        )
-        dims = bc2.multiselect(
-            "Break down by", ["Customer", "Product", "Size"], default=["Product"], key="breakdown_dims",
-        )
-
         matched_items = load_matched_line_items()
         detail = matched_items[matched_items["po_id"].isin(po_ids)].copy()
 
