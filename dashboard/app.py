@@ -615,23 +615,30 @@ else:
 
 st.title("🌱 Garfield Produce — Purchase Order Dashboard")
 
-tab_reports, tab_match, tab_revisions, tab_data, tab_edit, tab_prices, tab_qbo = st.tabs(
-    ["📊 Reports", "🔗 Match POs & Invoices", "Revisions & Data Quality", "Raw Data",
-     "✏️ Edit", "💲 Reference Prices", "🔗 QuickBooks"]
+tab_reports, tab_fulfillment, tab_datamgmt, tab_qbo = st.tabs(
+    ["📊 Reports", "📦 PO Fulfillment", "🗂️ Data Management", "🔗 QuickBooks"]
 )
 
 with tab_reports:
-    r_overview, r_trends, r_products, r_customers, r_rvd, r_pricing = st.tabs(
-        ["Overview", "Trends", "Products", "Customers", "Requested vs Delivered", "Pricing"]
-    )
-
-# ── Reports: Overview ────────────────────────────────────────────────────────────
-
-with r_overview:
     st.caption(
         "Reflects the full QuickBooks invoice history — every customer, not just the "
         "ones with formal PO documents. Respects the sidebar filters above."
     )
+    r_overview, r_trends, r_products, r_customers, r_pricing, r_ref_prices = st.tabs(
+        ["Overview", "Trends", "Products", "Customers", "Pricing", "🏷️ Reference Prices"]
+    )
+
+with tab_fulfillment:
+    pf_match, pf_rvd, pf_revisions = st.tabs(
+        ["🔗 Match", "Requested vs Delivered", "⚠️ Revisions & Data Quality"]
+    )
+
+with tab_datamgmt:
+    dm_raw, dm_edit = st.tabs(["Raw Data", "✏️ Edit"])
+
+# ── Reports: Overview ────────────────────────────────────────────────────────────
+
+with r_overview:
     total_invoices = f_inv["id"].nunique()
     total_revenue = f_inv["total_amt"].sum()
     unique_customers = f_inv["customer_name"].nunique()
@@ -726,7 +733,6 @@ with r_overview:
 # ── Reports: Trends ──────────────────────────────────────────────────────────────
 
 with r_trends:
-    st.caption("Reflects the full QuickBooks invoice history. Respects the sidebar filters above.")
     monthly = f_inv.dropna(subset=["effective_date"]).copy()
     monthly["month"] = monthly["effective_date"].dt.to_period("M").dt.to_timestamp()
     by_month = monthly.groupby("month").agg(orders=("id", "nunique"), revenue=("total_amt", "sum")).reset_index()
@@ -775,13 +781,12 @@ with r_trends:
 
         st.caption(
             "For a detailed requested-vs-delivered trend (day/week/month, per-customer lines), "
-            "see the **Requested vs Delivered** tab."
+            "see **Requested vs Delivered** under **📦 PO Fulfillment**."
         )
 
 # ── Reports: Products ────────────────────────────────────────────────────────────
 
 with r_products:
-    st.caption("Reflects the full QuickBooks invoice history. Respects the sidebar filters above.")
     if f_inv_items.empty:
         st.info("No line items in the current filter.")
     else:
@@ -831,10 +836,6 @@ with r_products:
 # ── Reports: Customers ───────────────────────────────────────────────────────────
 
 with r_customers:
-    st.caption(
-        "Reflects the full QuickBooks invoice history — every customer, not just the "
-        "ones with formal PO documents. Respects the sidebar filters above."
-    )
     if f_inv.empty:
         st.info("No invoices in the current filter.")
     else:
@@ -921,13 +922,13 @@ with r_customers:
                 use_container_width=True, hide_index=True,
             )
 
-# ── Reports: Requested vs Delivered ──────────────────────────────────────────────
+# ── PO Fulfillment: Requested vs Delivered ────────────────────────────────────────
 
-with r_rvd:
+with pf_rvd:
     st.caption(
         "Compares PO line items (requested) to matched QuickBooks invoice line items "
         "(delivered), respecting the sidebar filters above. Confirm matches in the "
-        "Match POs & Invoices tab first — this report only reflects confirmed links."
+        "🔗 Match tab first — this report only reflects confirmed links."
     )
 
     # Controls are always rendered (not gated on po_ids) — the sidebar date range is
@@ -1196,11 +1197,11 @@ with r_pricing:
                     }),
                     use_container_width=True, hide_index=True,
                 )
-            st.caption("Manage/override reference prices in the 💲 Reference Prices tab.")
+            st.caption("Manage/override reference prices in the 🏷️ Reference Prices tab.")
 
-# ── Revisions & Data Quality ───────────────────────────────────────────────────────
+# ── PO Fulfillment: Revisions & Data Quality ──────────────────────────────────────
 
-with tab_revisions:
+with pf_revisions:
     st.caption("Respects the sidebar filters above, except **Extraction errors** (errored files often have no usable date).")
 
     st.subheader("Orders with revisions")
@@ -1284,7 +1285,7 @@ with tab_revisions:
     st.subheader("💲 Price anomalies")
     st.caption(
         "Line items whose unit price deviates more than 10% from the reference price for "
-        "that customer/product/size. See the Reference Prices tab to review or override."
+        "that customer/product/size. See 🏷️ Reference Prices (under 📊 Reports) to review or override."
     )
     price_issues = all_items[all_items["po_id"].isin(f_po["id"]) & all_items["price_anomaly"].notna()]
     if price_issues.empty:
@@ -1314,9 +1315,9 @@ with tab_revisions:
             file_name="extraction_errors.csv", mime="text/csv", key="dl_errors",
         )
 
-# ── Raw Data ─────────────────────────────────────────────────────────────────────
+# ── Data Management: Raw Data ─────────────────────────────────────────────────────
 
-with tab_data:
+with dm_raw:
     st.caption("Filtered line items — current version of each PO, per the sidebar filters.")
     display_cols = [
         "po_number", "effective_date", "customer_name", "product_name", "container_size",
@@ -1337,9 +1338,9 @@ with tab_data:
         key="dl_raw",
     )
 
-# ── Edit ─────────────────────────────────────────────────────────────────────────
+# ── Data Management: Edit ─────────────────────────────────────────────────────────
 
-with tab_edit:
+with dm_edit:
     st.caption(
         "Edits are permanent — once saved, that PO stops receiving updates from future "
         "extraction syncs (its header and line items are frozen as you leave them here)."
@@ -1419,9 +1420,9 @@ with tab_edit:
             st.success("Saved.")
             st.rerun()
 
-# ── Reference Prices ─────────────────────────────────────────────────────────────
+# ── Reports: Reference Prices ─────────────────────────────────────────────────────
 
-with tab_prices:
+with r_ref_prices:
     st.caption(
         "Expected/current price per customer, product, and size — the basis for the "
         "💲 Price anomalies flag in Revisions & Data Quality. **auto** rows refresh "
@@ -1575,13 +1576,13 @@ with tab_qbo:
                 use_container_width=True, hide_index=True,
             )
 
-# ── Match POs & Invoices ─────────────────────────────────────────────────────────
+# ── PO Fulfillment: Match ──────────────────────────────────────────────────────────
 
-with tab_match:
+with pf_match:
     st.caption(
         "Match PO requests to QuickBooks invoices — run automated matching, review its "
-        "suggestions, or search and link manually. See the Reports tab's "
-        "\"Requested vs Delivered\" section for the resulting requested-vs-delivered report."
+        "suggestions, or search and link manually. See the **Requested vs Delivered** "
+        "tab alongside this one for the resulting report."
     )
 
     mc = psycopg2.connect(get_database_url())
