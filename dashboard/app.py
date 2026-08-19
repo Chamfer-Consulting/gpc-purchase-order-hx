@@ -666,52 +666,10 @@ with r_trends:
             )
             st.plotly_chart(style(fig3, palette), use_container_width=True, key="chart_yoy")
 
-    st.divider()
-    st.subheader("Requested vs. delivered over time")
-    st.caption("Only includes PO↔invoice matches confirmed in the Match POs & Invoices tab.")
-    if matched_df.empty:
-        st.info("No confirmed PO↔invoice matches yet — link some in the Match POs & Invoices tab.")
-    else:
-        rd = matched_df.copy()
-        rd["effective_date"] = pd.to_datetime(rd["sent_date"], errors="coerce").fillna(
-            pd.to_datetime(rd["po_date"], errors="coerce")
+        st.caption(
+            "For a detailed requested-vs-delivered trend (day/week/month, per-customer lines), "
+            "see the **Requested vs Delivered** tab."
         )
-        rd = rd.dropna(subset=["effective_date"])
-        if start_ts is not None and end_ts is not None:
-            rd = rd[(rd["effective_date"] >= start_ts) & (rd["effective_date"] <= end_ts)]
-        if selected_customers:
-            rd = rd[rd["po_customer"].isin(selected_customers)]
-
-        if rd.empty:
-            st.info("No confirmed matches in the current filter.")
-        else:
-            rd["month"] = rd["effective_date"].dt.to_period("M").dt.to_timestamp()
-            by_month_rd = rd.groupby("month").agg(
-                requested=("po_total", "sum"), delivered=("invoice_total", "sum"),
-            ).reset_index().sort_values("month")
-
-            long_rd = by_month_rd.melt(
-                id_vars="month", value_vars=["requested", "delivered"],
-                var_name="Type", value_name="Amount",
-            )
-            long_rd["Type"] = long_rd["Type"].map({"requested": "Requested", "delivered": "Delivered"})
-            fig_rd = px.bar(
-                long_rd, x="month", y="Amount", color="Type", barmode="group",
-                color_discrete_map={"Requested": palette["categorical"][0], "Delivered": palette["categorical"][1]},
-                labels={"month": "", "Amount": "Revenue ($)"},
-            )
-            st.plotly_chart(style(fig_rd, palette), use_container_width=True, key="chart_trends_requested_delivered")
-
-            by_month_rd["Variance ($)"] = by_month_rd["delivered"] - by_month_rd["requested"]
-            by_month_rd["Variance (%)"] = by_month_rd.apply(
-                lambda r: round((r["delivered"] / r["requested"] - 1) * 100, 1) if r["requested"] else None, axis=1,
-            )
-            st.dataframe(
-                by_month_rd.rename(columns={
-                    "month": "Month", "requested": "Requested ($)", "delivered": "Delivered ($)",
-                }),
-                use_container_width=True, hide_index=True,
-            )
 
 # ── Reports: Products ────────────────────────────────────────────────────────────
 
@@ -776,6 +734,54 @@ with r_customers:
         )
         fig.update_traces(marker_color=palette["sequential_blue"][4])
         st.plotly_chart(style(fig, palette), use_container_width=True, key="chart_top_customers")
+
+        cust_month = f_po.dropna(subset=["effective_date"]).copy()
+        cust_month["month"] = cust_month["effective_date"].dt.to_period("M").dt.to_timestamp()
+
+        st.subheader("Customer revenue over time")
+        rev_over_time = cust_month.groupby(["month", "customer_name"], as_index=False)["total"].sum()
+        if rev_over_time.empty:
+            st.caption("Not enough dated orders in the current filter to show revenue over time.")
+        else:
+            fig_rev_time = px.line(
+                rev_over_time, x="month", y="total", color="customer_name", markers=True,
+                color_discrete_map=color_map_for(rev_over_time["customer_name"].dropna().unique().tolist(), palette),
+                labels={"month": "", "total": "Revenue ($)", "customer_name": "Customer"},
+            )
+            st.plotly_chart(style(fig_rev_time, palette), use_container_width=True, key="chart_customer_revenue_time")
+
+        st.subheader("Customer orders over time")
+        orders_over_time = cust_month.groupby(["month", "customer_name"], as_index=False)["id"].nunique()
+        orders_over_time = orders_over_time.rename(columns={"id": "orders"})
+        if orders_over_time.empty:
+            st.caption("Not enough dated orders in the current filter to show order count over time.")
+        else:
+            fig_orders_time = px.line(
+                orders_over_time, x="month", y="orders", color="customer_name", markers=True,
+                color_discrete_map=color_map_for(orders_over_time["customer_name"].dropna().unique().tolist(), palette),
+                labels={"month": "", "orders": "Orders", "customer_name": "Customer"},
+            )
+            st.plotly_chart(style(fig_orders_time, palette), use_container_width=True, key="chart_customer_orders_time")
+
+        st.subheader("Requested product mix over time, by customer")
+        st.caption("Pick a customer to see what they've ordered, by product, over time.")
+        cust_options = sorted(all_items["customer_name"].dropna().unique())
+        if not cust_options:
+            st.caption("No customers with line items in the data yet.")
+        else:
+            picked_customer = st.selectbox("Customer", cust_options, key="customer_product_trend_pick")
+            cust_items = f_items[f_items["customer_name"] == picked_customer].dropna(subset=["effective_date"]).copy()
+            cust_items["month"] = cust_items["effective_date"].dt.to_period("M").dt.to_timestamp()
+            cust_mix = cust_items.groupby(["month", "product_name"], as_index=False)["quantity"].sum()
+            if cust_mix.empty:
+                st.caption(f"No dated line items for {picked_customer} in the current filter.")
+            else:
+                fig_cust_mix = px.bar(
+                    cust_mix, x="month", y="quantity", color="product_name",
+                    color_discrete_map=product_colors,
+                    labels={"month": "", "quantity": "Quantity", "product_name": "Product"},
+                )
+                st.plotly_chart(style(fig_cust_mix, palette), use_container_width=True, key="chart_customer_product_mix_time")
 
         st.subheader("Customer summary")
         customer_table = by_customer.sort_values("revenue", ascending=False).rename(columns={
