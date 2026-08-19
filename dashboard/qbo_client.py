@@ -187,13 +187,21 @@ def fetch_all_items(access_token: str, realm_id: str) -> list[dict]:
     """Paginates QBO's Query API to pull every Item — the product master catalog.
     Always a full pull (no incremental cursor): the item list is small (a couple
     hundred rows across ~45 category groups), so there's no cost benefit to
-    incremental sync, and a full pull can't miss an item quietly un-deleted."""
+    incremental sync, and a full pull can't miss an item quietly un-deleted.
+
+    Explicitly includes inactive items (QBO's query API only returns Active=true
+    by default) — most of the items historical invoice lines actually reference
+    have since been deleted/deactivated in QBO, so leaving this off would silently
+    exclude most of the catalog past invoices need to classify against."""
     items = []
     start_position = 1
     page_size = 1000
     headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
     while True:
-        query = f"SELECT * FROM Item STARTPOSITION {start_position} MAXRESULTS {page_size}"
+        query = (
+            f"SELECT * FROM Item WHERE Active IN (true, false) "
+            f"STARTPOSITION {start_position} MAXRESULTS {page_size}"
+        )
         resp = requests.get(
             f"{api_base()}/v3/company/{realm_id}/query",
             headers=headers,

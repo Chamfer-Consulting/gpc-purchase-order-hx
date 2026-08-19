@@ -35,37 +35,55 @@ SUSPICIOUS_PRICE_THRESHOLD = 5.00
 # (lighting/racking/etc equipment purchases) — not products, not services either.
 EQUIPMENT_KEYWORDS = re.compile(r"light|channel|tank|pump|fan|tray|misc material", re.I)
 
+# Financial/administrative items that aren't typed "Service" in QBO (so item_type
+# alone won't catch them) but are just as clearly not a product.
+NONPRODUCT_KEYWORDS = re.compile(r"bad debt|miscellaneous income|facilit|growing line", re.I)
+
 
 def classify_qbo_item(name: str, item_type: str) -> tuple[str, str, str]:
     """
-    Classifies a QuickBooks Item by its full hierarchical name (e.g.
-    "Arugula:Arugula - 8oz", "Services:Delivery", "Samples & Trials:Cilantro
-    (deleted)") into (category, product_name, container_size).
+    Classifies a QuickBooks Item into (category, product_name, container_size).
 
     category is one of: product | sample | delivery | donation | service | other.
-    product_name/container_size are only meaningful for "product"/"sample" —
-    tries the existing PRODUCT_PATTERNS first (so e.g. the "Basil" parent still
-    resolves to the established "Genovese Basil" canonical name), then falls back
-    to the parent segment itself (deleted-item suffix stripped) — this is what
-    correctly names every produce line the hardcoded pattern list doesn't know
-    about yet, without having to hand-maintain a pattern per product.
+
+    The business restructured its QBO item catalog at some point: older invoices
+    reference now-deleted hierarchical items ("Services:Delivery", "Samples &
+    Trials:Cilantro (deleted)"), while the current catalog is flatter (a top-level
+    "Delivery" item; "Consulting"/"Marketing"/"Tours"/etc typed "Service" instead of
+    nested under a "Services:" parent). Classification therefore checks keywords
+    against the full name (matches both naming styles) and leans on QBO's own
+    item_type as a primary signal, not just parent-name conventions:
+    - item_type == "Category" is a grouping folder, never a real orderable line
+      item (invoices reference the leaf item under it) — always "other".
+    - item_type == "Service" reliably marks non-produce professional-services
+      items in the current catalog (Consulting, Customer Prepay, Marketing,
+      Tours, Grant Expense Reimbursement) — checked after the sample/donation/
+      delivery keyword checks so a "Service"-typed delivery-ish item still gets
+      the more specific "delivery" category.
+
+    product_name/container_size are only meaningful for "product"/"sample" — tries
+    the existing PRODUCT_PATTERNS first (so e.g. "Basil" still resolves to the
+    established "Genovese Basil" canonical name), then falls back to the sub-item
+    (or whole name, for a single-level item) with size/deleted-suffix stripped —
+    this is what correctly names every produce line the hardcoded pattern list
+    doesn't know about yet, without hand-maintaining a pattern per product.
     """
     parts = (name or "").split(":")
     parent = parts[0].strip()
     sub = parts[1].strip() if len(parts) > 1 else ""
-    parent_lower = parent.lower()
+    full_lower = (name or "").lower()
 
-    if SAMPLE_PATTERN.search(parent_lower) or "trial" in parent_lower:
+    if item_type == "Category":
+        category = "other"
+    elif SAMPLE_PATTERN.search(full_lower) or "trial" in full_lower:
         category = "sample"
-    elif parent_lower == "services":
-        name_lower = (name or "").lower()
-        if "donation" in name_lower:
-            category = "donation"
-        elif "delivery" in name_lower or "mileage" in name_lower or "freight" in name_lower:
-            category = "delivery"
-        else:
-            category = "service"
-    elif EQUIPMENT_KEYWORDS.search(parent_lower):
+    elif "donation" in full_lower:
+        category = "donation"
+    elif "delivery" in full_lower or "mileage" in full_lower or "freight" in full_lower:
+        category = "delivery"
+    elif item_type == "Service":
+        category = "service"
+    elif NONPRODUCT_KEYWORDS.search(full_lower) or EQUIPMENT_KEYWORDS.search(full_lower):
         category = "other"
     else:
         category = "product"
