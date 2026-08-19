@@ -423,30 +423,14 @@ if po_df.empty:
 valid_po, latest_po, all_items, latest_items = prepare(po_df, items_df)
 
 # ── Sidebar: appearance ──────────────────────────────────────────────────────────
-
-theme = st.sidebar.radio("🌗 Theme", ["Light", "Dark"], horizontal=True, key="theme_choice")
-palette = DARK if theme == "Dark" else LIGHT
-
-if theme == "Dark":
-    st.markdown(
-        f"""
-        <style>
-        [data-testid="stAppViewContainer"], [data-testid="stHeader"] {{
-            background-color: {palette["page_plane"]};
-            color: {palette["ink_primary"]};
-        }}
-        [data-testid="stSidebar"] {{
-            background-color: {palette["surface"]};
-            color: {palette["ink_primary"]};
-        }}
-        [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {{
-            color: {palette["ink_primary"]} !important;
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
+# Theme is Streamlit's own native Light/Dark/"Use system setting" (⋮ menu → Settings)
+# so every built-in widget — tables, data_editor, buttons, inputs, alerts — is themed
+# correctly and consistently, not just the few containers a hand-rolled CSS override
+# could reach. We only need to know which one is active so charts (Plotly renders a
+# static spec, it can't inherit Streamlit's CSS) pick the matching validated palette.
+theme_type = (st.context.theme.type if st.context.theme else None) or "light"
+palette = DARK if theme_type == "dark" else LIGHT
+st.sidebar.caption("🌗 Switch Light/Dark/system theme via the ⋮ menu (top right) → Settings.")
 st.sidebar.divider()
 
 # ── Sidebar: filters ─────────────────────────────────────────────────────────────
