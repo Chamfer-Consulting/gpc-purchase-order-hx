@@ -135,6 +135,26 @@ CREATE TABLE IF NOT EXISTS qbo_invoice_items (
     line_total     NUMERIC
 );
 
+-- QuickBooks' own Item list — the product master catalog. Matched to invoice line
+-- items by qbo_item_id (QBO's stable Item ID), not fragile name-parsing; see
+-- product_catalog.classify_qbo_item(). Always a full re-pull (small table).
+CREATE TABLE IF NOT EXISTS qbo_items (
+    id             SERIAL PRIMARY KEY,
+    qbo_item_id    TEXT NOT NULL UNIQUE,
+    name           TEXT NOT NULL,
+    item_type      TEXT,
+    active         BOOLEAN NOT NULL DEFAULT TRUE,
+    unit_price     NUMERIC,
+    sku            TEXT,
+    category       TEXT NOT NULL,  -- product | sample | delivery | donation | service | other
+    product_name   TEXT,
+    container_size TEXT,
+    synced_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE qbo_invoice_items ADD COLUMN IF NOT EXISTS qbo_item_id TEXT;
+ALTER TABLE qbo_invoice_items ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'product';
+
 CREATE TABLE IF NOT EXISTS po_invoice_links (
     id            SERIAL PRIMARY KEY,
     po_id         INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,

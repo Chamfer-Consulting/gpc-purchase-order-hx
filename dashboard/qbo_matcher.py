@@ -190,7 +190,7 @@ def _invoice_line_items(conn, invoice_ids: list[int]) -> dict[int, dict[str, flo
     with conn.cursor() as cur:
         cur.execute(
             "SELECT invoice_id, product_name, quantity FROM qbo_invoice_items "
-            "WHERE invoice_id = ANY(%s) AND is_sample = FALSE",
+            "WHERE invoice_id = ANY(%s) AND is_sample = FALSE AND category = 'product'",
             (invoice_ids,),
         )
         rows = cur.fetchall()
@@ -513,7 +513,7 @@ def get_line_items_for_review(conn, po_ids: list[int], invoice_ids: list[int]):
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT invoice_id, product_name, container_size, quantity, unit_price, "
-                "line_total, is_sample FROM qbo_invoice_items "
+                "line_total, is_sample, category FROM qbo_invoice_items "
                 "WHERE invoice_id = ANY(%s) ORDER BY id",
                 (invoice_ids,),
             )

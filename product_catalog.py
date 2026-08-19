@@ -31,6 +31,67 @@ SAMPLE_PATTERN = re.compile(r"\bsamp(le)?s?\b", re.I)
 # "needs review" highlight — may be an untagged sample or data error.
 SUSPICIOUS_PRICE_THRESHOLD = 5.00
 
+# Non-produce QuickBooks item parents that show up as rare historical one-offs
+# (lighting/racking/etc equipment purchases) — not products, not services either.
+EQUIPMENT_KEYWORDS = re.compile(r"light|channel|tank|pump|fan|tray|misc material", re.I)
+
+
+def classify_qbo_item(name: str, item_type: str) -> tuple[str, str, str]:
+    """
+    Classifies a QuickBooks Item by its full hierarchical name (e.g.
+    "Arugula:Arugula - 8oz", "Services:Delivery", "Samples & Trials:Cilantro
+    (deleted)") into (category, product_name, container_size).
+
+    category is one of: product | sample | delivery | donation | service | other.
+    product_name/container_size are only meaningful for "product"/"sample" —
+    tries the existing PRODUCT_PATTERNS first (so e.g. the "Basil" parent still
+    resolves to the established "Genovese Basil" canonical name), then falls back
+    to the parent segment itself (deleted-item suffix stripped) — this is what
+    correctly names every produce line the hardcoded pattern list doesn't know
+    about yet, without having to hand-maintain a pattern per product.
+    """
+    parts = (name or "").split(":")
+    parent = parts[0].strip()
+    sub = parts[1].strip() if len(parts) > 1 else ""
+    parent_lower = parent.lower()
+
+    if SAMPLE_PATTERN.search(parent_lower) or "trial" in parent_lower:
+        category = "sample"
+    elif parent_lower == "services":
+        name_lower = (name or "").lower()
+        if "donation" in name_lower:
+            category = "donation"
+        elif "delivery" in name_lower or "mileage" in name_lower or "freight" in name_lower:
+            category = "delivery"
+        else:
+            category = "service"
+    elif EQUIPMENT_KEYWORDS.search(parent_lower):
+        category = "other"
+    else:
+        category = "product"
+
+    product_name = "UNKNOWN"
+    for pattern, canon in PRODUCT_PATTERNS:
+        if pattern.search(name or ""):
+            product_name = canon
+            break
+    else:
+        if category in ("product", "sample"):
+            # Prefer the sub-item (the specific product) over the parent, which for
+            # grouped items like "Lettuce:Allstar Gourmet Lettuce - 3oz" or
+            # "Samples & Trials:Spicy Mix (deleted)" is just a generic bucket name —
+            # a single-level item (no colon) has no sub-item, so use the whole name.
+            candidate = sub or parent
+            candidate = re.sub(r"\s*-\s*\d+\s*oz\.?\s*$", "", candidate, flags=re.I)
+            candidate = re.sub(r"\s*\(deleted(-\d+)?\)\s*$", "", candidate, flags=re.I).strip()
+            if candidate:
+                product_name = candidate
+
+    size_match = SIZE_PATTERN.search(name or "")
+    container_size = f"{size_match.group(1)}oz" if size_match else ""
+
+    return category, product_name, container_size
+
 
 def normalize_product(raw, unit_price=None):
     """

@@ -20,7 +20,7 @@ import streamlit as st
 from psycopg2.extras import Json, execute_values
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from product_catalog import normalize_product  # noqa: E402 — needs the sys.path insert above
+from product_catalog import normalize_product, classify_qbo_item  # noqa: E402 — needs the sys.path insert above
 
 AUTHORIZE_URL = "https://appcenter.intuit.com/connect/oauth2"
 TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
@@ -183,6 +183,78 @@ def fetch_all_invoices(access_token: str, realm_id: str, since: datetime | None 
     return invoices
 
 
+def fetch_all_items(access_token: str, realm_id: str) -> list[dict]:
+    """Paginates QBO's Query API to pull every Item — the product master catalog.
+    Always a full pull (no incremental cursor): the item list is small (a couple
+    hundred rows across ~45 category groups), so there's no cost benefit to
+    incremental sync, and a full pull can't miss an item quietly un-deleted."""
+    items = []
+    start_position = 1
+    page_size = 1000
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+    while True:
+        query = f"SELECT * FROM Item STARTPOSITION {start_position} MAXRESULTS {page_size}"
+        resp = requests.get(
+            f"{api_base()}/v3/company/{realm_id}/query",
+            headers=headers,
+            params={"query": query, "minorversion": "65"},
+            timeout=30,
+        )
+        if not resp.ok:
+            raise RuntimeError(f"QuickBooks API error {resp.status_code}: {resp.text}")
+        batch = resp.json().get("QueryResponse", {}).get("Item", [])
+        items.extend(batch)
+        if len(batch) < page_size:
+            break
+        start_position += page_size
+    return items
+
+
+def sync_items(conn) -> int:
+    """Pulls the full Item list from QuickBooks and upserts it into qbo_items —
+    the product master catalog that sync_invoices() matches invoice lines against
+    by ID. Must run before sync_invoices() for that lookup to have fresh data."""
+    access_token, realm_id = get_valid_access_token(conn)
+    items = fetch_all_items(access_token, realm_id)
+    if not items:
+        return 0
+
+    rows = []
+    for it in items:
+        name = it.get("Name", "")
+        category, product_name, container_size = classify_qbo_item(name, it.get("Type"))
+        rows.append((
+            it.get("Id"), name, it.get("Type"), bool(it.get("Active", True)),
+            it.get("UnitPrice"), it.get("Sku"), category, product_name, container_size,
+        ))
+
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """
+            INSERT INTO qbo_items (
+                qbo_item_id, name, item_type, active, unit_price, sku,
+                category, product_name, container_size, synced_at
+            ) VALUES %s
+            ON CONFLICT (qbo_item_id) DO UPDATE SET
+                name           = EXCLUDED.name,
+                item_type      = EXCLUDED.item_type,
+                active         = EXCLUDED.active,
+                unit_price     = EXCLUDED.unit_price,
+                sku            = EXCLUDED.sku,
+                category       = EXCLUDED.category,
+                product_name   = EXCLUDED.product_name,
+                container_size = EXCLUDED.container_size,
+                synced_at      = now()
+            """,
+            rows,
+            template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,now())",
+            page_size=500,
+        )
+    conn.commit()
+    return len(items)
+
+
 def sync_invoices(conn, full_resync: bool = False) -> int:
     """Pulls invoices from QuickBooks and upserts them into qbo_invoices.
 
@@ -234,6 +306,14 @@ def sync_invoices(conn, full_resync: bool = False) -> int:
             )
             id_lookup = dict(returned)
 
+            # Product master catalog (see sync_items()) — matching by QBO's stable
+            # Item ID instead of re-parsing text. {qbo_item_id: (category, product_name,
+            # container_size)}. Loaded once; falls back to normalize_product() text
+            # matching for any item not in the catalog (sync_items() never run yet, or
+            # the item was purged from QBO entirely) so nothing regresses.
+            cur.execute("SELECT qbo_item_id, category, product_name, container_size FROM qbo_items")
+            catalog = {row[0]: (row[1], row[2], row[3]) for row in cur.fetchall()}
+
             item_rows = []
             invoice_ids = []
             for inv in invoices:
@@ -245,15 +325,25 @@ def sync_invoices(conn, full_resync: bool = False) -> int:
                     detail = line.get("SalesItemLineDetail")
                     if not detail:
                         continue
-                    item_ref = (detail.get("ItemRef") or {}).get("name", "")
+                    item_ref_obj = detail.get("ItemRef") or {}
+                    item_ref_id = item_ref_obj.get("value")
+                    item_ref = item_ref_obj.get("name", "")
                     description = line.get("Description", "")
                     unit_price = detail.get("UnitPrice")
-                    product_name, size, is_sample, _ = normalize_product(
-                        f"{item_ref} {description}", unit_price=unit_price,
-                    )
+
+                    catalog_entry = catalog.get(item_ref_id)
+                    if catalog_entry is not None:
+                        category, product_name, size = catalog_entry
+                        is_sample = category == "sample"
+                    else:
+                        product_name, size, is_sample, _ = normalize_product(
+                            f"{item_ref} {description}", unit_price=unit_price,
+                        )
+                        category = "sample" if is_sample else "product"
+
                     item_rows.append((
                         invoice_id, item_ref, description, product_name, size, is_sample,
-                        detail.get("Qty"), unit_price, line.get("Amount"),
+                        detail.get("Qty"), unit_price, line.get("Amount"), item_ref_id, category,
                     ))
 
             if invoice_ids:
@@ -264,7 +354,7 @@ def sync_invoices(conn, full_resync: bool = False) -> int:
                     """
                     INSERT INTO qbo_invoice_items (
                         invoice_id, item_raw, description, product_name, container_size,
-                        is_sample, quantity, unit_price, line_total
+                        is_sample, quantity, unit_price, line_total, qbo_item_id, category
                     ) VALUES %s
                     """,
                     item_rows,

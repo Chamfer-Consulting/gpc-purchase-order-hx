@@ -322,7 +322,7 @@ def load_matched_line_items() -> pd.DataFrame:
         )
         inv_items = pd.read_sql_query(
             "SELECT invoice_id, product_name, container_size, quantity, line_total FROM qbo_invoice_items "
-            "WHERE invoice_id = ANY(%(ids)s) AND is_sample = FALSE",
+            "WHERE invoice_id = ANY(%(ids)s) AND is_sample = FALSE AND category = 'product'",
             conn, params={"ids": invoice_ids},
         )
     finally:
@@ -982,6 +982,45 @@ with r_rvd:
                 use_container_width=True, hide_index=True,
             )
 
+        st.subheader("🚚 Delivery & donation charges by customer")
+        st.caption(
+            "QuickBooks Delivery/Donation line items, attributed to whichever PO their "
+            "containing invoice is confirmed-linked to. Only invoices confirmed-linked "
+            "in the current filter appear here."
+        )
+        dd_conn = psycopg2.connect(get_database_url())
+        try:
+            dd_rows = pd.read_sql_query(
+                "SELECT po.customer_name, po.po_number, po.source_file, ii.category, "
+                "SUM(ii.line_total) AS total, COUNT(*) AS n_lines "
+                "FROM po_invoice_links l "
+                "JOIN purchase_orders po ON po.id = l.po_id "
+                "JOIN qbo_invoice_items ii ON ii.invoice_id = l.invoice_id "
+                "WHERE l.confirmed = TRUE AND l.po_id = ANY(%(ids)s) "
+                "AND ii.category IN ('delivery', 'donation') "
+                "GROUP BY po.customer_name, po.po_number, po.source_file, ii.category "
+                "ORDER BY po.customer_name, po.po_number",
+                dd_conn, params={"ids": po_ids},
+            )
+        finally:
+            dd_conn.close()
+
+        if dd_rows.empty:
+            st.caption("No delivery or donation charges on confirmed-linked invoices in the current filter.")
+        else:
+            st.dataframe(
+                dd_rows.rename(columns={
+                    "customer_name": "Customer", "po_number": "PO Number", "source_file": "Source File",
+                    "category": "Type", "total": "Total ($)", "n_lines": "# Lines",
+                }),
+                use_container_width=True, hide_index=True,
+            )
+            st.download_button(
+                "⬇️ Download delivery & donation charges (CSV)",
+                dd_rows.to_csv(index=False).encode("utf-8"),
+                file_name="delivery_donation_by_po.csv", mime="text/csv", key="dl_delivery_donation",
+            )
+
 # ── Reports: Pricing ─────────────────────────────────────────────────────────────
 
 with r_pricing:
@@ -1349,9 +1388,11 @@ with tab_qbo:
         if c1.button("🔄 Sync invoices"):
             sync_conn = psycopg2.connect(get_database_url())
             try:
+                with st.spinner("Pulling the product catalog from QuickBooks..."):
+                    item_count = qbo_client.sync_items(sync_conn)
                 with st.spinner("Pulling invoices from QuickBooks..."):
                     count = qbo_client.sync_invoices(sync_conn, full_resync=full_resync)
-                st.success(f"Synced {count} invoice(s).")
+                st.success(f"Synced {item_count} catalog item(s) and {count} invoice(s).")
             except Exception as e:
                 st.error(f"Sync failed: {e}")
             finally:
@@ -1390,6 +1431,38 @@ with tab_qbo:
                 idx = st.number_input("Row index", min_value=0, max_value=len(invoices_df) - 1, value=0)
                 st.json(invoices_df.iloc[int(idx)]["raw_json"])
 
+        st.divider()
+        st.subheader("📦 Item Catalog")
+        st.caption(
+            "QuickBooks' own Item list — the product master catalog invoice lines are "
+            "matched against by ID. Read-only here; re-synced each time you click Sync invoices above."
+        )
+        cat_conn = psycopg2.connect(get_database_url())
+        try:
+            items_df = pd.read_sql_query(
+                "SELECT name, item_type, active, category, product_name, container_size, "
+                "unit_price, sku FROM qbo_items ORDER BY category, name",
+                cat_conn,
+            )
+        finally:
+            cat_conn.close()
+
+        if items_df.empty:
+            st.caption("No catalog synced yet — click Sync invoices above.")
+        else:
+            counts = items_df["category"].value_counts()
+            cat_cols = st.columns(len(counts))
+            for col, (cat, n) in zip(cat_cols, counts.items()):
+                col.metric(cat.capitalize(), n)
+            st.dataframe(
+                items_df.rename(columns={
+                    "name": "Name", "item_type": "QBO Type", "active": "Active",
+                    "category": "Category", "product_name": "Product", "container_size": "Size",
+                    "unit_price": "List Price ($)", "sku": "SKU",
+                }),
+                use_container_width=True, hide_index=True,
+            )
+
 # ── Match POs & Invoices ─────────────────────────────────────────────────────────
 
 with tab_match:
@@ -1409,6 +1482,7 @@ with tab_match:
             pd.DataFrame(items).rename(columns={
                 "product_name": "Product", "container_size": "Size", "quantity": "Qty",
                 "unit_price": "Unit $", "line_total": "Total $", "is_sample": "Sample",
+                "category": "Category",
             }),
             use_container_width=True, hide_index=True,
         )
