@@ -624,8 +624,8 @@ with tab_reports:
         "Reflects the full QuickBooks invoice history — every customer, not just the "
         "ones with formal PO documents. Respects the sidebar filters above."
     )
-    r_overview, r_trends, r_products, r_customers, r_pricing, r_ref_prices = st.tabs(
-        ["Overview", "Trends", "Products", "Customers", "Pricing", "🏷️ Reference Prices"]
+    r_overview, r_trends, r_products, r_customers, r_breakdown, r_pricing, r_ref_prices = st.tabs(
+        ["Overview", "Trends", "Products", "Customers", "Breakdown", "Pricing", "🏷️ Reference Prices"]
     )
 
 with tab_fulfillment:
@@ -1132,6 +1132,82 @@ with pf_rvd:
                 "⬇️ Download delivery & donation charges (CSV)",
                 dd_rows.to_csv(index=False).encode("utf-8"),
                 file_name="delivery_donation_by_po.csv", mime="text/csv", key="dl_delivery_donation",
+            )
+
+# ── Reports: Breakdown ────────────────────────────────────────────────────────────
+
+with r_breakdown:
+    st.caption(
+        "Slice revenue and quantity across time, customer, product, and size, in any "
+        "combination — the full QuickBooks invoice history, respecting the sidebar filters above."
+    )
+    bc1, bc2 = st.columns(2)
+    b_period = bc1.selectbox(
+        "Time period", ["All time", "Day", "Week", "Month", "Quarter", "Year"], index=3, key="rpt_breakdown_period",
+    )
+    b_dims = bc2.multiselect(
+        "Break down by", ["Customer", "Product", "Size"], default=["Product"], key="rpt_breakdown_dims",
+    )
+
+    if f_inv_items.empty:
+        st.info("No line items in the current filter.")
+    else:
+        detail = f_inv_items.dropna(subset=["effective_date"]).copy()
+        period_freq = {"Day": "D", "Week": "W", "Month": "M", "Quarter": "Q", "Year": "Y"}
+        group_cols = []
+        if b_period != "All time":
+            detail["Period"] = detail["effective_date"].dt.to_period(period_freq[b_period]).dt.start_time
+            group_cols.append("Period")
+        dim_col_map = {"Customer": "customer_name", "Product": "product_name", "Size": "container_size"}
+        group_cols += [dim_col_map[d] for d in b_dims]
+
+        if not group_cols:
+            detail["All"] = "All"
+            group_cols = ["All"]
+
+        grouped = detail.groupby(group_cols, as_index=False).agg(
+            revenue=("line_total", "sum"), quantity=("quantity", "sum"),
+        )
+        if "Period" in group_cols:
+            grouped = grouped.sort_values(["Period"] + [c for c in group_cols if c != "Period"])
+        else:
+            grouped = grouped.sort_values("revenue", ascending=False)
+
+        display_df = grouped.rename(columns={
+            "customer_name": "Customer", "product_name": "Product", "container_size": "Size",
+            "revenue": "Revenue ($)", "quantity": "Quantity",
+        })
+        if "All" in display_df.columns:
+            display_df = display_df.drop(columns=["All"])
+
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        st.download_button(
+            "⬇️ Download breakdown (CSV)",
+            display_df.to_csv(index=False).encode("utf-8"),
+            file_name="business_breakdown.csv", mime="text/csv", key="dl_business_breakdown",
+        )
+
+        if b_period != "All time":
+            show_by_customer = "Customer" in b_dims
+            chart_group_cols = ["Period"] + (["customer_name"] if show_by_customer else [])
+            chart_src = detail.groupby(chart_group_cols, as_index=False)["line_total"].sum()
+            if show_by_customer:
+                fig_bd = px.line(
+                    chart_src, x="Period", y="line_total", color="customer_name", markers=True,
+                    color_discrete_map=color_map_for(chart_src["customer_name"].dropna().unique().tolist(), palette),
+                    labels={"Period": "", "line_total": "Revenue ($)", "customer_name": "Customer"},
+                )
+            else:
+                fig_bd = px.line(
+                    chart_src, x="Period", y="line_total", markers=True,
+                    labels={"Period": "", "line_total": "Revenue ($)"},
+                )
+                fig_bd.update_traces(line_color=palette["categorical"][0])
+            st.plotly_chart(style(fig_bd, palette), use_container_width=True, key="chart_business_breakdown")
+            st.caption(
+                "Chart aggregates across product/size even when selected above — see the "
+                "table for the full multi-dimensional detail."
+                + (" One line per customer." if show_by_customer else "")
             )
 
 # ── Reports: Pricing ─────────────────────────────────────────────────────────────
