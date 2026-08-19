@@ -18,10 +18,17 @@ def validate_math(data: dict) -> None:
 
     for item in items:
         qty, price, total = item.get("quantity"), item.get("unit_price"), item.get("line_total")
+        additional = item.get("additional_cost") or 0
         if qty is not None and price is not None and total is not None:
             has_totals = True
-            if abs(qty * price - total) > MATH_TOLERANCE:
-                item["math_mismatch"] = f"{qty} × ${price} = ${qty * price:.2f}, not ${total}"
+            expected = qty * price + additional
+            if abs(expected - total) > MATH_TOLERANCE:
+                if additional:
+                    item["math_mismatch"] = (
+                        f"{qty} × ${price} + ${additional} = ${expected:.2f}, not ${total}"
+                    )
+                else:
+                    item["math_mismatch"] = f"{qty} × ${price} = ${expected:.2f}, not ${total}"
         if total is not None:
             line_total_sum += total
 

@@ -47,6 +47,33 @@ CREATE TABLE IF NOT EXISTS line_items (
 
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS changes TEXT;
 
+-- Some vendors (e.g. Get Fresh) print a separate per-line surcharge (freight/adtl.
+-- cost) on top of unit_price × quantity, folded into the printed line_total —
+-- captured separately so math_check.py can validate qty×price+additional_cost=total
+-- instead of flagging a false mismatch.
+ALTER TABLE line_items ADD COLUMN IF NOT EXISTS additional_cost NUMERIC;
+
+-- Flags a line item whose price deviates from its (customer, product, size) reference
+-- price by more than price_check.PRICE_TOLERANCE_PCT.
+ALTER TABLE line_items ADD COLUMN IF NOT EXISTS price_anomaly TEXT;
+
+-- Expected/current price per (customer, product, size) — basis for the price_anomaly
+-- flag above. Local SQLite (extract_pos.py) is the auto-refreshed source of truth;
+-- edited = TRUE marks a manual override made in the dashboard's Reference Prices tab,
+-- which the next sync must never clobber (same guard shape as purchase_orders.edited).
+CREATE TABLE IF NOT EXISTS reference_prices (
+    id              SERIAL PRIMARY KEY,
+    customer_name   TEXT NOT NULL,
+    product_name    TEXT NOT NULL,
+    container_size  TEXT NOT NULL,
+    price           NUMERIC NOT NULL,
+    source          TEXT NOT NULL DEFAULT 'auto',
+    edited          BOOLEAN NOT NULL DEFAULT FALSE,
+    edited_at       TIMESTAMPTZ,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(customer_name, product_name, container_size)
+);
+
 -- Dashboard-side manual edits are permanent: once a PO is edited, sync_dashboard.py
 -- must never overwrite its header or line items again (see sync_dashboard.py's
 -- ON CONFLICT ... WHERE clause).

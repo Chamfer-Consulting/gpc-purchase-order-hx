@@ -146,11 +146,12 @@ def _publish_to_postgres(results: list, database_url: str) -> list:
                 for item in r.get("line_items") or []:
                     line_item_rows.append((
                         po_id, item.get("product_raw"), item.get("sku"),
-                        item.get("quantity"), item.get("unit_price"), item.get("line_total"),
+                        item.get("quantity"), item.get("unit_price"), item.get("additional_cost"),
+                        item.get("line_total"),
                         item.get("product_name"), item.get("container_size"),
                         bool(item.get("is_sample", False)), bool(item.get("needs_review", False)),
                         item.get("math_mismatch"), item.get("revision_status"),
-                        bool(item.get("_removed", False)), item.get("changes"),
+                        bool(item.get("_removed", False)), item.get("changes"), item.get("price_anomaly"),
                     ))
 
             if po_ids_to_refresh:
@@ -160,9 +161,9 @@ def _publish_to_postgres(results: list, database_url: str) -> list:
                     cur,
                     """
                     INSERT INTO line_items (
-                        po_id, product_raw, sku, quantity, unit_price, line_total,
+                        po_id, product_raw, sku, quantity, unit_price, additional_cost, line_total,
                         product_name, container_size, is_sample, needs_review,
-                        math_mismatch, revision_status, is_removed, changes
+                        math_mismatch, revision_status, is_removed, changes, price_anomaly
                     ) VALUES %s
                     """,
                     line_item_rows,
@@ -174,6 +175,39 @@ def _publish_to_postgres(results: list, database_url: str) -> list:
         pg_conn.close()
 
     return bad_dates
+
+
+def _publish_reference_prices(sqlite_path: str, database_url: str) -> int:
+    """Publishes local reference_prices to Postgres — 'auto' rows are refreshed every
+    sync; rows a user has manually edited in the dashboard (edited=TRUE) are protected
+    by the same WHERE-guard idiom as purchase_orders, so this never overwrites them."""
+    conn = db.connect(sqlite_path)
+    rows = db.get_reference_price_rows(conn)
+    conn.close()
+    if not rows:
+        return 0
+
+    pg_conn = psycopg2.connect(database_url)
+    try:
+        with pg_conn.cursor() as cur:
+            execute_values(
+                cur,
+                """
+                INSERT INTO reference_prices (customer_name, product_name, container_size, price, source)
+                VALUES %s
+                ON CONFLICT (customer_name, product_name, container_size) DO UPDATE SET
+                    price      = EXCLUDED.price,
+                    source     = EXCLUDED.source,
+                    updated_at = now()
+                WHERE reference_prices.edited = FALSE
+                """,
+                [(r["customer_name"], r["product_name"], r["container_size"], r["price"], r["source"]) for r in rows],
+                page_size=500,
+            )
+        pg_conn.commit()
+    finally:
+        pg_conn.close()
+    return len(rows)
 
 
 def publish(sqlite_path: str, database_url: str) -> tuple[int, list]:
@@ -193,6 +227,7 @@ def publish(sqlite_path: str, database_url: str) -> tuple[int, list]:
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             bad_dates = _publish_to_postgres(results, database_url)
+            _publish_reference_prices(sqlite_path, database_url)
             return len(results), bad_dates
         except psycopg2.OperationalError as e:
             if attempt == MAX_ATTEMPTS:

@@ -117,6 +117,39 @@ def month_over_month_movers(df: pd.DataFrame, date_col: str, group_col: str, val
     return merged, curr_m, prev_m
 
 
+def yoy_annual_chart(df: pd.DataFrame, date_col: str, agg_col: str, agg_fn: str, y_label: str, palette: dict, current_year: str):
+    """Line chart with one line per calendar year (month-of-year on the x-axis),
+    current_year emphasized (bold, full opacity) against past years (thin, dotted,
+    muted) for an at-a-glance annual comparison. Returns None if there's no dated data."""
+    src = df.dropna(subset=[date_col]).copy()
+    if src.empty:
+        return None
+    src["year"] = src[date_col].dt.year.astype(str)
+    src["moy"] = src[date_col].dt.month
+    if agg_fn == "nunique":
+        grouped = src.groupby(["year", "moy"])[agg_col].nunique().reset_index(name="value")
+    else:
+        grouped = src.groupby(["year", "moy"])[agg_col].sum().reset_index(name="value")
+    if grouped.empty:
+        return None
+
+    year_colors = color_map_for(grouped["year"].unique().tolist(), palette)
+    fig = px.line(
+        grouped, x="moy", y="value", color="year", markers=True,
+        color_discrete_map=year_colors, labels={"moy": "", "value": y_label, "year": "Year"},
+    )
+    fig.update_xaxes(
+        tickmode="array", tickvals=list(range(1, 13)),
+        ticktext=["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    )
+    for trace in fig.data:
+        if trace.name == current_year:
+            trace.update(line=dict(width=4), opacity=1.0, marker=dict(size=8))
+        else:
+            trace.update(line=dict(width=1.5, dash="dot"), opacity=0.55, marker=dict(size=5))
+    return fig
+
+
 def get_database_url() -> str:
     url = st.secrets.get("database_url") or os.environ.get("DATABASE_URL")
     if not url:
@@ -253,7 +286,7 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 _MATCHED_ITEMS_COLUMNS = [
     "po_id", "invoice_id", "customer_name", "effective_date",
     "product_name", "container_size", "requested_qty", "requested_amount",
-    "delivered_qty", "delivered_amount",
+    "delivered_qty", "delivered_amount", "po_math_note",
 ]
 
 
@@ -282,7 +315,8 @@ def load_matched_line_items() -> pd.DataFrame:
         po_ids = links["po_id"].unique().tolist()
         invoice_ids = links["invoice_id"].unique().tolist()
         po_items = pd.read_sql_query(
-            "SELECT po_id, product_name, container_size, quantity, line_total FROM line_items "
+            "SELECT po_id, product_name, container_size, quantity, line_total, math_mismatch "
+            "FROM line_items "
             "WHERE po_id = ANY(%(ids)s) AND is_sample = FALSE AND is_removed = FALSE",
             conn, params={"ids": po_ids},
         )
@@ -301,6 +335,7 @@ def load_matched_line_items() -> pd.DataFrame:
 
     po_grouped = po_items.groupby(["po_id", "product_name", "container_size"], as_index=False).agg(
         requested_qty=("quantity", "sum"), requested_amount=("line_total", "sum"),
+        po_math_note=("math_mismatch", lambda s: next((x for x in s if x), None)),
     )
     inv_grouped = inv_items.groupby(["invoice_id", "product_name", "container_size"], as_index=False).agg(
         delivered_qty=("quantity", "sum"), delivered_amount=("line_total", "sum"),
@@ -317,6 +352,41 @@ def load_matched_line_items() -> pd.DataFrame:
     for col in ("requested_qty", "requested_amount", "delivered_qty", "delivered_amount"):
         combined[col] = combined[col].fillna(0.0)
     return combined[_MATCHED_ITEMS_COLUMNS]
+
+
+@st.cache_data(ttl=300, show_spinner="Loading reference prices...")
+def load_reference_prices() -> pd.DataFrame:
+    conn = psycopg2.connect(get_database_url())
+    try:
+        df = pd.read_sql_query(
+            "SELECT id, customer_name, product_name, container_size, price, source, edited, edited_at, updated_at "
+            "FROM reference_prices ORDER BY customer_name, product_name, container_size",
+            conn,
+        )
+    finally:
+        conn.close()
+    return df
+
+
+def save_reference_prices(rows: list[dict]) -> None:
+    """Upserts each row straight to Postgres and marks it edited=TRUE so the next
+    sync_dashboard.py run never overwrites it — same guard shape as save_po_edit()."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn.cursor() as cur:
+            for row in rows:
+                cur.execute(
+                    """
+                    INSERT INTO reference_prices (customer_name, product_name, container_size, price, source, edited, edited_at)
+                    VALUES (%(customer_name)s, %(product_name)s, %(container_size)s, %(price)s, 'manual', TRUE, now())
+                    ON CONFLICT (customer_name, product_name, container_size) DO UPDATE SET
+                        price = EXCLUDED.price, source = 'manual', edited = TRUE, edited_at = now()
+                    """,
+                    row,
+                )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def prepare(po_df: pd.DataFrame, items_df: pd.DataFrame):
@@ -466,14 +536,14 @@ else:
 
 st.title("🌱 Garfield Produce — Purchase Order Dashboard")
 
-tab_reports, tab_match, tab_revisions, tab_data, tab_edit, tab_qbo = st.tabs(
+tab_reports, tab_match, tab_revisions, tab_data, tab_edit, tab_prices, tab_qbo = st.tabs(
     ["📊 Reports", "🔗 Match POs & Invoices", "Revisions & Data Quality", "Raw Data",
-     "✏️ Edit", "🔗 QuickBooks"]
+     "✏️ Edit", "💲 Reference Prices", "🔗 QuickBooks"]
 )
 
 with tab_reports:
-    r_overview, r_trends, r_products, r_customers, r_rvd = st.tabs(
-        ["Overview", "Trends", "Products", "Customers", "Requested vs Delivered"]
+    r_overview, r_trends, r_products, r_customers, r_rvd, r_pricing = st.tabs(
+        ["Overview", "Trends", "Products", "Customers", "Requested vs Delivered", "Pricing"]
     )
 
 # ── Reports: Overview ────────────────────────────────────────────────────────────
@@ -516,6 +586,29 @@ with r_overview:
         st.caption("See the **Revisions & Data Quality** tab for details on flagged orders.")
     if start_ts is not None and end_ts is not None:
         st.caption("Deltas compare the selected date range to the immediately preceding period of equal length.")
+
+    st.divider()
+    st.subheader("📈 Annual comparison")
+    current_year = str(pd.Timestamp.now().year)
+    st.caption(
+        f"{current_year} vs. each prior year, by calendar month — {current_year} is bold, "
+        "past years are muted for reference. Respects the sidebar filters above."
+    )
+    ac1, ac2 = st.columns(2)
+    with ac1:
+        st.caption("Revenue")
+        fig_rev_yoy = yoy_annual_chart(f_po, "effective_date", "total", "sum", "Revenue ($)", palette, current_year)
+        if fig_rev_yoy is not None:
+            st.plotly_chart(style(fig_rev_yoy, palette), use_container_width=True, key="chart_overview_revenue_yoy")
+        else:
+            st.caption("Not enough dated orders in the current filter.")
+    with ac2:
+        st.caption("Orders")
+        fig_orders_yoy = yoy_annual_chart(f_po, "effective_date", "id", "nunique", "Orders", palette, current_year)
+        if fig_orders_yoy is not None:
+            st.plotly_chart(style(fig_orders_yoy, palette), use_container_width=True, key="chart_overview_orders_yoy")
+        else:
+            st.caption("Not enough dated orders in the current filter.")
 
     st.divider()
     st.subheader("Export")
@@ -743,7 +836,7 @@ with r_rvd:
         st.caption("Complete detail — slice by time period, customer, product, and size, in any combination.")
         bc1, bc2 = st.columns(2)
         period_choice = bc1.selectbox(
-            "Time period", ["All time", "Week", "Month", "Quarter", "Year"], index=2, key="breakdown_period",
+            "Time period", ["All time", "Day", "Week", "Month", "Quarter", "Year"], index=3, key="breakdown_period",
         )
         dims = bc2.multiselect(
             "Break down by", ["Customer", "Product", "Size"], default=["Product"], key="breakdown_dims",
@@ -755,7 +848,7 @@ with r_rvd:
         if detail.empty:
             st.info("No confirmed matches with line-item detail in the current filter.")
         else:
-            period_freq = {"Week": "W", "Month": "M", "Quarter": "Q", "Year": "Y"}
+            period_freq = {"Day": "D", "Week": "W", "Month": "M", "Quarter": "Q", "Year": "Y"}
             group_cols = []
             if period_choice != "All time":
                 detail["Period"] = detail["effective_date"].dt.to_period(period_freq[period_choice]).dt.start_time
@@ -770,6 +863,7 @@ with r_rvd:
             grouped = detail.groupby(group_cols, as_index=False).agg(
                 requested_qty=("requested_qty", "sum"), requested_amount=("requested_amount", "sum"),
                 delivered_qty=("delivered_qty", "sum"), delivered_amount=("delivered_amount", "sum"),
+                po_math_notes=("po_math_note", lambda s: "; ".join(sorted(set(x for x in s if isinstance(x, str) and x)))[:200]),
             )
             grouped["Qty Variance"] = grouped["delivered_qty"] - grouped["requested_qty"]
             grouped["$ Variance"] = grouped["delivered_amount"] - grouped["requested_amount"]
@@ -786,11 +880,17 @@ with r_rvd:
                 "customer_name": "Customer", "product_name": "Product", "container_size": "Size",
                 "requested_qty": "Requested Qty", "requested_amount": "Requested ($)",
                 "delivered_qty": "Delivered Qty", "delivered_amount": "Delivered ($)",
+                "po_math_notes": "PO Math Note",
             })
             if "All" in display_df.columns:
                 display_df = display_df.drop(columns=["All"])
 
             st.dataframe(display_df, use_container_width=True, hide_index=True)
+            st.caption(
+                "**PO Math Note** flags a known arithmetic quirk on the PO side (e.g. a "
+                "per-unit surcharge baked into the printed total) — a $ Variance next to a "
+                "note is a documented pricing quirk, not necessarily a fulfillment shortfall."
+            )
             st.download_button(
                 "⬇️ Download breakdown (CSV)",
                 display_df.to_csv(index=False).encode("utf-8"),
@@ -798,26 +898,62 @@ with r_rvd:
             )
 
             if period_choice != "All time":
-                chart_src = detail.groupby("Period", as_index=False).agg(
+                show_by_customer = "Customer" in dims
+                trend_group_cols = ["Period"] + (["customer_name"] if show_by_customer else [])
+
+                st.subheader("📈 Requested vs. delivered trend")
+                chart_src = detail.groupby(trend_group_cols, as_index=False).agg(
                     requested_amount=("requested_amount", "sum"), delivered_amount=("delivered_amount", "sum"),
                 )
                 chart_long = chart_src.melt(
-                    id_vars="Period", value_vars=["requested_amount", "delivered_amount"],
+                    id_vars=trend_group_cols, value_vars=["requested_amount", "delivered_amount"],
                     var_name="Type", value_name="Amount",
                 )
                 chart_long["Type"] = chart_long["Type"].map({
                     "requested_amount": "Requested", "delivered_amount": "Delivered",
                 })
-                fig_bd = px.bar(
-                    chart_long, x="Period", y="Amount", color="Type", barmode="group",
-                    color_discrete_map={"Requested": palette["categorical"][0], "Delivered": palette["categorical"][1]},
-                    labels={"Period": "", "Amount": "Revenue ($)"},
-                )
+                if show_by_customer:
+                    cust_colors = color_map_for(chart_long["customer_name"].dropna().unique().tolist(), palette)
+                    fig_bd = px.line(
+                        chart_long, x="Period", y="Amount", color="customer_name", line_dash="Type",
+                        color_discrete_map=cust_colors, markers=True,
+                        labels={"Period": "", "Amount": "Revenue ($)", "customer_name": "Customer"},
+                    )
+                else:
+                    fig_bd = px.line(
+                        chart_long, x="Period", y="Amount", color="Type", markers=True,
+                        color_discrete_map={"Requested": palette["categorical"][0], "Delivered": palette["categorical"][1]},
+                        labels={"Period": "", "Amount": "Revenue ($)"},
+                    )
                 st.plotly_chart(style(fig_bd, palette), use_container_width=True, key="chart_breakdown_period")
                 st.caption(
-                    "Chart aggregates across whatever breakdown dimensions are selected above — "
-                    "see the table for the full multi-dimensional detail."
+                    "Chart aggregates across product/size even when selected above — see the table for "
+                    "the full multi-dimensional detail."
+                    + (" One line per customer; dashed = Delivered, solid = Requested." if show_by_customer else "")
                 )
+
+                st.subheader("📅 Ordering trends")
+                st.caption(
+                    "Number of purchase orders placed per period, per the sidebar filters — reflects "
+                    "every order in the filter, not just ones with a confirmed QuickBooks match."
+                )
+                order_src = f_po.dropna(subset=["effective_date"]).copy()
+                order_src["Period"] = order_src["effective_date"].dt.to_period(period_freq[period_choice]).dt.start_time
+                order_group_cols = ["Period"] + (["customer_name"] if show_by_customer else [])
+                order_counts = (
+                    order_src.groupby(order_group_cols, as_index=False)["id"].nunique()
+                    .rename(columns={"id": "Orders"})
+                )
+                if show_by_customer:
+                    fig_orders = px.line(
+                        order_counts, x="Period", y="Orders", color="customer_name", markers=True,
+                        color_discrete_map=color_map_for(order_counts["customer_name"].dropna().unique().tolist(), palette),
+                        labels={"Period": "", "customer_name": "Customer"},
+                    )
+                else:
+                    fig_orders = px.line(order_counts, x="Period", y="Orders", markers=True, labels={"Period": ""})
+                    fig_orders.update_traces(line_color=palette["categorical"][0])
+                st.plotly_chart(style(fig_orders, palette), use_container_width=True, key="chart_order_trend")
 
         st.subheader("Matched PO ↔ Invoice detail")
         rvd_conn = psycopg2.connect(get_database_url())
@@ -850,6 +986,71 @@ with r_rvd:
                 }),
                 use_container_width=True, hide_index=True,
             )
+
+# ── Reports: Pricing ─────────────────────────────────────────────────────────────
+
+with r_pricing:
+    st.caption(
+        "Unit price paid over time per customer, for a selected product/size — see the "
+        "pre/post-2024-06-01 pricing standardization and any ongoing drift. Respects the "
+        "sidebar filters above."
+    )
+    # Product/size options come from ALL priced history (not the sidebar date filter),
+    # so the selectors stay stable across filter changes — only the plotted series below
+    # is scoped to the current filter. Keeps the widgets' `key`-bound state valid across
+    # reruns instead of the option list shrinking out from under a prior selection.
+    priced_all = all_items[
+        (~all_items["is_sample"].fillna(False)) & all_items["unit_price"].notna()
+        & (all_items["product_name"] != "UNKNOWN")
+    ]
+
+    if priced_all.empty:
+        st.info("No priced line items in the data yet.")
+    else:
+        pc1, pc2 = st.columns(2)
+        products = sorted(priced_all["product_name"].dropna().unique())
+        prod_choice = pc1.selectbox("Product", products, key="pricing_product")
+        sizes = sorted(priced_all.loc[priced_all["product_name"] == prod_choice, "container_size"].dropna().unique())
+        size_choice = pc2.selectbox("Size", sizes, key="pricing_size")
+
+        series = priced_all[
+            priced_all["po_id"].isin(f_po["id"])
+            & (priced_all["product_name"] == prod_choice) & (priced_all["container_size"] == size_choice)
+        ].sort_values("effective_date")
+
+        if series.empty:
+            st.info("No priced history for this product/size in the current filter.")
+        else:
+            cust_colors = color_map_for(series["customer_name"].dropna().unique().tolist(), palette)
+            fig_price = px.scatter(
+                series, x="effective_date", y="unit_price", color="customer_name",
+                color_discrete_map=cust_colors,
+                labels={"effective_date": "", "unit_price": "Unit Price ($)", "customer_name": "Customer"},
+            )
+            fig_price.update_traces(mode="lines+markers")
+            fig_price.add_shape(
+                type="line", x0="2024-06-01", x1="2024-06-01", y0=0, y1=1, yref="paper",
+                line=dict(dash="dash", color=palette["ink_muted"]),
+            )
+            fig_price.add_annotation(
+                x="2024-06-01", y=1, yref="paper", showarrow=False, yanchor="bottom",
+                text="Pricing standardized", font=dict(color=palette["ink_muted"], size=10),
+            )
+            st.plotly_chart(style(fig_price, palette), use_container_width=True, key="chart_pricing_history")
+
+            ref_prices_df = load_reference_prices()
+            ref_for_selection = ref_prices_df[
+                (ref_prices_df["product_name"] == prod_choice) & (ref_prices_df["container_size"] == size_choice)
+            ]
+            if not ref_for_selection.empty:
+                st.caption("Current reference price for this product/size, per customer:")
+                st.dataframe(
+                    ref_for_selection[["customer_name", "price", "source"]].rename(columns={
+                        "customer_name": "Customer", "price": "Reference Price ($)", "source": "Source",
+                    }),
+                    use_container_width=True, hide_index=True,
+                )
+            st.caption("Manage/override reference prices in the 💲 Reference Prices tab.")
 
 # ── Revisions & Data Quality ───────────────────────────────────────────────────────
 
@@ -930,6 +1131,27 @@ with tab_revisions:
         st.download_button(
             "⬇️ Download math check failures (CSV)", math_table.to_csv(index=False).encode("utf-8"),
             file_name="math_check_failures.csv", mime="text/csv", key="dl_math_fail",
+        )
+
+    st.subheader("💲 Price anomalies")
+    st.caption(
+        "Line items whose unit price deviates more than 10% from the reference price for "
+        "that customer/product/size. See the Reference Prices tab to review or override."
+    )
+    price_issues = all_items[all_items["po_id"].isin(f_po["id"]) & all_items["price_anomaly"].notna()]
+    if price_issues.empty:
+        st.caption("None — every price is within range of its reference.")
+    else:
+        price_table = price_issues[
+            ["po_number", "customer_name", "product_name", "container_size", "price_anomaly"]
+        ].rename(columns={
+            "po_number": "PO Number", "customer_name": "Customer", "product_name": "Product",
+            "container_size": "Size", "price_anomaly": "Issue",
+        })
+        st.dataframe(price_table, use_container_width=True, hide_index=True)
+        st.download_button(
+            "⬇️ Download price anomalies (CSV)", price_table.to_csv(index=False).encode("utf-8"),
+            file_name="price_anomalies.csv", mime="text/csv", key="dl_price_anomalies",
         )
 
     st.subheader("❌ Extraction errors")
@@ -1048,6 +1270,51 @@ with tab_edit:
             load_data.clear()
             st.success("Saved.")
             st.rerun()
+
+# ── Reference Prices ─────────────────────────────────────────────────────────────
+
+with tab_prices:
+    st.caption(
+        "Expected/current price per customer, product, and size — the basis for the "
+        "💲 Price anomalies flag in Revisions & Data Quality. **auto** rows refresh "
+        "automatically from the most recent price actually paid each time new POs are "
+        "extracted; edit a price or add a row below to set a permanent manual override — "
+        "overrides are never touched by future refreshes."
+    )
+    ref_df = load_reference_prices()
+    editor_seed = ref_df[["customer_name", "product_name", "container_size", "price", "source"]].copy()
+    edited_prices = st.data_editor(
+        editor_seed, num_rows="dynamic", use_container_width=True, key="reference_prices_editor",
+        column_config={
+            "customer_name": st.column_config.TextColumn("Customer"),
+            "product_name": st.column_config.TextColumn("Product"),
+            "container_size": st.column_config.TextColumn("Size"),
+            "price": st.column_config.NumberColumn("Price ($)", format="%.2f"),
+            "source": st.column_config.TextColumn("Source", disabled=True),
+        },
+    )
+
+    if st.button("💾 Save changes", key="save_reference_prices"):
+        seed_key_price = {
+            (r["customer_name"], r["product_name"], r["container_size"]): r["price"]
+            for r in editor_seed.to_dict("records")
+        }
+        rows = []
+        for r in edited_prices.to_dict("records"):
+            cust, prod, size, price = r.get("customer_name"), r.get("product_name"), r.get("container_size"), r.get("price")
+            if not (cust and prod and size) or price is None:
+                continue
+            key = (cust, prod, size)
+            if key in seed_key_price and float(seed_key_price[key]) == float(price):
+                continue  # unchanged — leave alone so it can still auto-refresh later
+            rows.append({"customer_name": cust, "product_name": prod, "container_size": size, "price": price})
+        if rows:
+            save_reference_prices(rows)
+            load_reference_prices.clear()
+            st.success(f"Saved {len(rows)} changed/added reference price(s).")
+            st.rerun()
+        else:
+            st.info("No changes to save.")
 
 # ── QuickBooks ───────────────────────────────────────────────────────────────────
 

@@ -35,6 +35,7 @@ import pdfplumber
 import anthropic
 
 from math_check import validate_math
+from price_check import flag_price_anomaly
 from product_catalog import normalize_product
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -85,6 +86,13 @@ Rules:
 - Preserve the full original product description in product_raw exactly as written
 - sent_date: look for labels like 'Sent', 'Issued', 'Created', 'Date Sent', 'Transmitted'
 - revision_number/revision_label: look for 'Rev', 'Revision', 'Revised', 'Amendment', 'Version', 'Ver'
+- Some documents show a separate additional per-line charge on top of the main unit
+  price — e.g. a column labeled 'Adtl. Cost', 'Additional Cost', 'Surcharge', or
+  'Freight' that is added into that line's printed total. If a line has one, extract
+  its total dollar amount for that line into additional_cost (per-unit rate × quantity,
+  not the per-unit rate itself). If a line has no such charge, leave additional_cost
+  null. line_total is always the full total exactly as printed, including any such
+  charge — never subtract it out.
 - Set is_po to false if the document is not a purchase order, and leave the other fields empty
 """
 
@@ -122,6 +130,7 @@ EXTRACTION_TOOL = {
                         "sku": {"type": ["string", "null"]},
                         "quantity": {"type": ["number", "null"]},
                         "unit_price": {"type": ["number", "null"]},
+                        "additional_cost": {"type": ["number", "null"]},
                         "line_total": {"type": ["number", "null"]},
                     },
                     "required": ["product_raw"],
@@ -180,6 +189,9 @@ def _diff_items(prev_items, curr_items):
             pp, cp = p.get("unit_price"), item.get("unit_price")
             if pp != cp and not (pp is None and cp is None):
                 changes.append(f"Price: ${pp} → ${cp}")
+            pa, ca = p.get("additional_cost"), item.get("additional_cost")
+            if pa != ca and not (pa is None and ca is None):
+                changes.append(f"Adtl: ${pa} → ${ca}")
             pt, ct = p.get("line_total"), item.get("line_total")
             if pt != ct and not (pt is None and ct is None):
                 changes.append(f"Total: ${pt} → ${ct}")
@@ -292,6 +304,7 @@ def extract_po_data(
     client: anthropic.Anthropic,
     pdf_path: str,
     stop_event: threading.Event | None = None,
+    reference_prices: dict | None = None,
 ) -> dict | None:
     """
     Extract PO data from a single PDF. Uses text extraction first, falls back to vision.
@@ -299,6 +312,11 @@ def extract_po_data(
     Returns None (instead of an error dict) if stop_event is already set when this
     call starts — used to fast-drain queued work after an out-of-credits pause without
     making further API calls or writing spurious error rows for files never attempted.
+
+    reference_prices, if given, is a read-only {(customer, product, size): price} dict
+    (computed once per run via db.refresh_reference_prices/get_reference_prices) used to
+    flag line items whose price looks anomalous — safe to share across worker threads
+    since it's never mutated after being built.
     """
     filename = os.path.basename(pdf_path)
     text = extract_pdf_text(pdf_path)
@@ -370,6 +388,8 @@ def extract_po_data(
                 item["container_size"] = size
                 item["is_sample"] = is_sample
                 item["needs_review"] = needs_review
+                if reference_prices:
+                    flag_price_anomaly(item, data.get("customer_name"), reference_prices)
 
             validate_math(data)
 
@@ -482,8 +502,8 @@ def build_excel(all_results: list[dict], output_path: str):
         "Source File", "PO Number", "Version", "PO Date", "Sent Date", "Delivery Date",
         "Customer Name", "Customer ID",
         "Product", "Container Size", "Sample", "Quantity",
-        "Unit Price ($)", "Line Total ($)", "PO Subtotal ($)", "PO Tax ($)", "PO Total ($)",
-        "Revision Status", "Changes", "Math Check",
+        "Unit Price ($)", "Adtl. Cost ($)", "Line Total ($)", "PO Subtotal ($)", "PO Tax ($)", "PO Total ($)",
+        "Revision Status", "Changes", "Math Check", "Price Anomaly",
         "SKU", "Notes", "Extraction Method"
     ]
     ws_lines.append(line_headers)
@@ -523,7 +543,8 @@ def build_excel(all_results: list[dict], output_path: str):
 
             is_sample     = item.get("is_sample", False)
             math_mismatch = item.get("math_mismatch", "")
-            needs_review  = item.get("needs_review", False) or bool(math_mismatch)
+            price_anomaly = item.get("price_anomaly", "")
+            needs_review  = item.get("needs_review", False) or bool(math_mismatch) or bool(price_anomaly)
             rev_status    = item.get("revision_status", "")
             is_removed    = item.get("_removed", False)
 
@@ -541,6 +562,7 @@ def build_excel(all_results: list[dict], output_path: str):
                 "Yes" if is_sample else ("Review ⚠️" if needs_review else "No"),
                 item.get("quantity"),
                 item.get("unit_price"),
+                item.get("additional_cost"),
                 item.get("line_total"),
                 result.get("subtotal"),
                 result.get("tax"),
@@ -548,6 +570,7 @@ def build_excel(all_results: list[dict], output_path: str):
                 rev_status,
                 item.get("changes", ""),
                 math_mismatch,
+                price_anomaly,
                 item.get("sku", ""),
                 result.get("notes", ""),
                 result.get("_extraction_method", "")
@@ -575,7 +598,7 @@ def build_excel(all_results: list[dict], output_path: str):
             data_row += 1
 
     # Column widths for Line Items
-    col_widths = [22, 16, 10, 13, 13, 13, 26, 16, 18, 14, 9, 10, 14, 14, 15, 11, 13, 14, 28, 24, 14, 30, 16]
+    col_widths = [22, 16, 10, 13, 13, 13, 26, 16, 18, 14, 9, 10, 14, 14, 14, 15, 11, 13, 14, 28, 24, 24, 14, 30, 16]
     for i, w in enumerate(col_widths, 1):
         ws_lines.column_dimensions[get_column_letter(i)].width = w
 
@@ -709,6 +732,11 @@ def main():
     conn = db.connect(args.db)
     db.init_db(conn)
 
+    # Refresh reference prices from everything known *before* this run, so new
+    # extractions are compared against the latest prior price, not a moving target.
+    db.refresh_reference_prices(conn)
+    reference_prices = db.get_reference_prices(conn)
+
     file_hashes = {}
     results = []
     to_extract = []
@@ -743,7 +771,7 @@ def main():
 
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = {
-            executor.submit(extract_po_data, client, str(p), stop_event): p
+            executor.submit(extract_po_data, client, str(p), stop_event, reference_prices): p
             for p in to_extract
         }
         with tqdm(total=len(futures), unit="pdf", ncols=80) as pbar:

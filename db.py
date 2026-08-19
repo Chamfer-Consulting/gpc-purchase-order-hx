@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS line_items (
     sku             TEXT,
     quantity        REAL,
     unit_price      REAL,
+    additional_cost REAL,
     line_total      REAL,
     product_name    TEXT,
     container_size  TEXT,
@@ -53,6 +54,20 @@ CREATE TABLE IF NOT EXISTS line_items (
 
 CREATE INDEX IF NOT EXISTS idx_line_items_po_id ON line_items(po_id);
 CREATE INDEX IF NOT EXISTS idx_po_po_number ON purchase_orders(po_number);
+
+-- Expected/current price per (customer, product, size) — the basis for flagging
+-- price anomalies on new extractions. Refreshed automatically before each
+-- extract_pos.py run from the most recent price actually paid in local history.
+CREATE TABLE IF NOT EXISTS reference_prices (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_name   TEXT NOT NULL,
+    product_name    TEXT NOT NULL,
+    container_size  TEXT NOT NULL,
+    price           REAL NOT NULL,
+    source          TEXT NOT NULL DEFAULT 'auto',
+    updated_at      TEXT NOT NULL,
+    UNIQUE(customer_name, product_name, container_size)
+);
 """
 
 
@@ -65,6 +80,14 @@ def connect(db_path: str) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    # CREATE TABLE IF NOT EXISTS above is a no-op against an existing older DB —
+    # add columns introduced after the initial schema explicitly. (Older SQLite
+    # builds don't support "ADD COLUMN IF NOT EXISTS", so check first.)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(line_items)")}
+    if "additional_cost" not in cols:
+        conn.execute("ALTER TABLE line_items ADD COLUMN additional_cost REAL")
+    if "price_anomaly" not in cols:
+        conn.execute("ALTER TABLE line_items ADD COLUMN price_anomaly TEXT")
     conn.commit()
 
 
@@ -107,6 +130,7 @@ def _row_to_result(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
             "sku": it["sku"],
             "quantity": it["quantity"],
             "unit_price": it["unit_price"],
+            "additional_cost": it["additional_cost"],
             "line_total": it["line_total"],
             "product_name": it["product_name"],
             "container_size": it["container_size"],
@@ -115,6 +139,8 @@ def _row_to_result(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         }
         if it["math_mismatch"]:
             item["math_mismatch"] = it["math_mismatch"]
+        if it["price_anomaly"]:
+            item["price_anomaly"] = it["price_anomaly"]
         result["line_items"].append(item)
 
     return result
@@ -166,16 +192,17 @@ def save_result(conn: sqlite3.Connection, file_hash: str, result: dict) -> None:
         cur.execute(
             """
             INSERT INTO line_items (
-                po_id, product_raw, sku, quantity, unit_price, line_total,
-                product_name, container_size, is_sample, needs_review, math_mismatch
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                po_id, product_raw, sku, quantity, unit_price, additional_cost, line_total,
+                product_name, container_size, is_sample, needs_review, math_mismatch, price_anomaly
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 po_id, item.get("product_raw"), item.get("sku"),
-                item.get("quantity"), item.get("unit_price"), item.get("line_total"),
+                item.get("quantity"), item.get("unit_price"), item.get("additional_cost"),
+                item.get("line_total"),
                 item.get("product_name"), item.get("container_size"),
                 int(bool(item.get("is_sample"))), int(bool(item.get("needs_review"))),
-                item.get("math_mismatch"),
+                item.get("math_mismatch"), item.get("price_anomaly"),
             ),
         )
 
@@ -190,3 +217,50 @@ def update_math_check(conn: sqlite3.Connection, po_id: int, failed: bool, detail
         "UPDATE purchase_orders SET math_check_failed = ?, math_check_detail = ? WHERE id = ?",
         (int(bool(failed)), detail, po_id),
     )
+
+
+def refresh_reference_prices(conn: sqlite3.Connection) -> None:
+    """Recomputes each (customer, product, size)'s reference price as the unit_price
+    from the most recent PO (by po_date, then id as a tiebreak) among non-sample,
+    non-removed line items on successfully-extracted POs. Called once at the start of
+    each extract_pos.py run, before any new extractions, so new prices are always
+    compared against everything known prior to this run."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO reference_prices
+            (customer_name, product_name, container_size, price, source, updated_at)
+        SELECT customer_name, product_name, container_size, unit_price, 'auto', ?
+        FROM (
+            SELECT po.customer_name AS customer_name, li.product_name AS product_name,
+                   li.container_size AS container_size, li.unit_price AS unit_price,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY po.customer_name, li.product_name, li.container_size
+                       ORDER BY po.po_date DESC, po.id DESC
+                   ) AS rn
+            FROM line_items li
+            JOIN purchase_orders po ON po.id = li.po_id
+            WHERE po.error IS NULL AND li.is_sample = 0
+              AND li.unit_price IS NOT NULL AND li.unit_price > 0
+              AND po.customer_name IS NOT NULL AND li.product_name IS NOT NULL
+              AND li.container_size IS NOT NULL AND li.container_size != ''
+        )
+        WHERE rn = 1
+        """,
+        (now,),
+    )
+    conn.commit()
+
+
+def get_reference_prices(conn: sqlite3.Connection) -> dict:
+    """Returns {(customer_name, product_name, container_size): price} for every
+    reference price currently on file."""
+    rows = conn.execute("SELECT customer_name, product_name, container_size, price FROM reference_prices").fetchall()
+    return {(r["customer_name"], r["product_name"], r["container_size"]): r["price"] for r in rows}
+
+
+def get_reference_price_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Returns every reference_prices row, for publishing to the dashboard database."""
+    return conn.execute(
+        "SELECT customer_name, product_name, container_size, price, source FROM reference_prices"
+    ).fetchall()
