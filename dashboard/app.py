@@ -441,8 +441,8 @@ min_date = latest_po["effective_date"].min()
 max_date = latest_po["effective_date"].max()
 has_dates = pd.notna(min_date) and pd.notna(max_date)
 
-DATE_PRESETS = ["Last 30 days", "Last 90 days", "Year to date", "All time", "Custom"]
-preset = st.sidebar.selectbox("Date range", DATE_PRESETS, index=3, key="date_preset")
+DATE_PRESETS = ["Last 30 days", "Last 90 days", "Year to date", "Year", "All time", "Custom"]
+preset = st.sidebar.selectbox("Date range", DATE_PRESETS, index=4, key="date_preset")
 
 if has_dates:
     today = pd.Timestamp(max_date.date())
@@ -452,6 +452,11 @@ if has_dates:
         start_ts, end_ts = today - pd.Timedelta(days=89), today
     elif preset == "Year to date":
         start_ts, end_ts = pd.Timestamp(year=today.year, month=1, day=1), today
+    elif preset == "Year":
+        year_options = sorted(latest_po["effective_date"].dt.year.dropna().unique().astype(int).tolist(), reverse=True)
+        picked_year = st.sidebar.selectbox("Year", year_options, key="filter_year")
+        start_ts = pd.Timestamp(year=picked_year, month=1, day=1)
+        end_ts = pd.Timestamp(year=picked_year, month=12, day=31)
     elif preset == "All time":
         start_ts, end_ts = min_date, max_date
     else:  # Custom
@@ -478,7 +483,7 @@ if fc1.button("🔄 Refresh data"):
     load_data.clear()
     st.rerun()
 if fc2.button("✖️ Clear filters"):
-    for key in ("filter_customers", "filter_products", "date_preset", "custom_range", "include_samples"):
+    for key in ("filter_customers", "filter_products", "date_preset", "filter_year", "custom_range", "include_samples"):
         st.session_state.pop(key, None)
     st.rerun()
 
@@ -1045,8 +1050,10 @@ with r_pricing:
 # ── Revisions & Data Quality ───────────────────────────────────────────────────────
 
 with tab_revisions:
+    st.caption("Respects the sidebar filters above, except **Extraction errors** (errored files often have no usable date).")
+
     st.subheader("Orders with revisions")
-    rev_po = valid_po[valid_po["is_revision"]]
+    rev_po = f_po[f_po["is_revision"]]
     if rev_po.empty:
         st.caption("No revisions found in the current data.")
     else:
@@ -1109,7 +1116,7 @@ with tab_revisions:
         )
 
     st.subheader("⚠️ Math check failures")
-    math_fail = valid_po[valid_po["math_check_failed"]]
+    math_fail = f_po[f_po["math_check_failed"]]
     if math_fail.empty:
         st.caption("None — arithmetic on every order checks out.")
     else:
