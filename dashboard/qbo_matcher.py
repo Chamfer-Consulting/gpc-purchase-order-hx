@@ -78,6 +78,15 @@ def confidence_label(match_method: str, score) -> str:
     return "Low"
 
 
+def is_quick_confirm(confidence: str) -> bool:
+    """True for confidence_label() outputs worth a one-click confirm (Certain/High) vs.
+    ones that need a full side-by-side look (Medium/Low/ambiguous/customer-mismatch).
+    Shared by the Match & Review page's quick-confirm/needs-judgment split and
+    dashboard/attention.py's Home digest, so the two surfaces never disagree on what
+    counts as "quick"."""
+    return confidence.startswith("Certain") or confidence == "High"
+
+
 def _parse_date(value):
     if not value:
         return None
@@ -300,6 +309,68 @@ def _score_candidate(po, inv, po_items_map, inv_items_map, date_window):
     hint_score = _po_number_hint_score(po, inv)
 
     return round(0.25 * date_score + 0.25 * amount_score + 0.3 * item_score + 0.2 * hint_score, 3)
+
+
+def explain_candidate(conn, po_id: int, invoice_id: int) -> dict | None:
+    """Recomputes _score_candidate()'s four weighted sub-scores (date/amount/item-overlap/
+    PO-number hint) for one PO<->invoice pair, for display in the Match & Review page's
+    score-breakdown popover (dashboard/views/fulfillment_match.py) — reuses the exact same
+    helper functions and weights run_matching() uses, so the breakdown shown to a reviewer
+    can never drift from what the algorithm actually computed. Purely for display: this
+    result is never persisted and never used to decide anything. Returns None if either
+    side no longer exists (e.g. deleted between page load and popover open)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, po_number, customer_name, total, po_date, sent_date, delivery_date "
+            "FROM purchase_orders WHERE id = %s",
+            (po_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        cols = [d[0] for d in cur.description]
+        po = dict(zip(cols, row))
+        po["_effective_date"] = _parse_date(po.get("sent_date")) or po.get("po_date")
+
+        cur.execute(
+            "SELECT id, customer_name, txn_date, total_amt, raw_json FROM qbo_invoices WHERE id = %s",
+            (invoice_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        cols = [d[0] for d in cur.description]
+        inv = dict(zip(cols, row))
+        inv["_po_number_norm"] = normalize_po_number(_invoice_po_number(inv["raw_json"]))
+
+    po_items_map = _po_line_items(conn, [po_id])
+    inv_items_map = _invoice_line_items(conn, [invoice_id])
+    date_window = _calibrated_date_window(conn)
+
+    delta_days = _best_date_delta(po.get("_effective_date"), po.get("delivery_date"), inv.get("txn_date"))
+    outside_window = delta_days is not None and delta_days > date_window
+    if delta_days is None:
+        date_score = 0.3
+    elif outside_window:
+        date_score = 0.0  # _score_candidate() would exclude this candidate entirely;
+                           # shown as 0 here so the breakdown still explains why.
+    else:
+        date_score = max(0.0, 1 - delta_days / date_window)
+
+    amount_score = _amount_score(po.get("total"), inv.get("total_amt"))
+    item_score = _line_item_similarity(po_items_map.get(po_id, {}), inv_items_map.get(invoice_id, {}))
+    hint_score = _po_number_hint_score(po, inv)
+
+    return {
+        "date_score": round(date_score, 3),
+        "date_delta_days": delta_days,
+        "date_window_days": date_window,
+        "outside_date_window": outside_window,
+        "amount_score": round(amount_score, 3),
+        "item_score": round(item_score, 3),
+        "hint_score": round(hint_score, 3),
+        "weighted_total": round(0.25 * date_score + 0.25 * amount_score + 0.3 * item_score + 0.2 * hint_score, 3),
+    }
 
 
 # Matches _is_voided()'s logic, as a SQL fragment — an invoice can be voided in
