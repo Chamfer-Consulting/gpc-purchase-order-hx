@@ -31,6 +31,7 @@ from data import (  # noqa: E402
     color_map_for,
     get_database_url,
     load_data,
+    load_hidden_products,
     load_invoice_data,
     prepare,
     prepare_invoices,
@@ -163,10 +164,15 @@ else:
 customers = sorted(invoices["customer_name"].dropna().unique().tolist())
 selected_customers = st.sidebar.multiselect("Customer", customers, default=[], key="filter_customers")
 
+hidden_products = load_hidden_products()
+
 products = sorted(
-    inv_items_all.loc[inv_items_all["category"] == "product", "product_name"].dropna().unique().tolist()
+    set(inv_items_all.loc[inv_items_all["category"] == "product", "product_name"].dropna().unique().tolist())
+    - hidden_products
 )
 selected_products = st.sidebar.multiselect("Product", products, default=[], key="filter_products")
+if hidden_products:
+    st.sidebar.caption(f"🙈 {len(hidden_products)} product(s) hidden — manage on the Products report page.")
 
 include_samples = st.sidebar.checkbox("Include samples", value=False, key="include_samples")
 
@@ -194,6 +200,9 @@ if selected_customers:
 if selected_products:
     f_items = f_items[f_items["product_name"].isin(selected_products)]
 
+if hidden_products:
+    f_items = f_items[~f_items["product_name"].isin(hidden_products)]
+
 if not include_samples:
     f_items = f_items[~f_items["is_sample"]]
 
@@ -215,6 +224,9 @@ if selected_customers:
 if selected_products:
     f_inv_items = f_inv_items[f_inv_items["product_name"].isin(selected_products)]
 
+if hidden_products:
+    f_inv_items = f_inv_items[~f_inv_items["product_name"].isin(hidden_products)]
+
 # Delivery/donation/service/other aren't produce at all — always excluded from
 # product-facing invoice reports. "product" and "sample" are separate categories
 # (see classify_qbo_item); keep both here so the "Include samples" toggle below still
@@ -225,7 +237,9 @@ if not include_samples:
     f_inv_items = f_inv_items[~f_inv_items["is_sample"]]
 
 product_colors = color_map_for(
-    inv_items_all.loc[inv_items_all["category"] == "product", "product_name"].dropna().unique().tolist(), palette
+    set(inv_items_all.loc[inv_items_all["category"] == "product", "product_name"].dropna().unique().tolist())
+    - hidden_products,
+    palette,
 )
 
 # Precomputed once so multiple pages can reuse them.
@@ -280,6 +294,7 @@ ctx = AppContext(
     f_items=f_items,
     f_inv=f_inv,
     f_inv_items=f_inv_items,
+    hidden_products=hidden_products,
     by_product=by_product,
     by_customer=by_customer,
     by_product_inv=by_product_inv,

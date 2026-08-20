@@ -4,7 +4,7 @@ import plotly.express as px
 import streamlit as st
 
 from data import color_map_for, month_over_month_movers, style
-from ui_kit import data_table, empty_state, page_header, section_card
+from ui_kit import data_table, empty_state, page_header, period_drilldown, section_card
 
 
 def render(ctx) -> None:
@@ -29,7 +29,10 @@ def render(ctx) -> None:
     cust_month = f_inv.dropna(subset=["effective_date"]).copy()
     cust_month["month"] = cust_month["effective_date"].dt.to_period("M").dt.to_timestamp()
 
-    with section_card("Customer revenue over time"):
+    cust_breakdown_dims = [("Customer", "customer_name")]
+    cust_agg_spec = {"Invoices": ("id", "nunique"), "Revenue ($)": ("total_amt", "sum")}
+
+    with section_card("Customer revenue over time", "Click a point for a per-customer breakdown."):
         rev_over_time = cust_month.groupby(["month", "customer_name"], as_index=False)["total_amt"].sum()
         if rev_over_time.empty:
             st.caption("Not enough dated invoices in the current filter to show revenue over time.")
@@ -39,9 +42,9 @@ def render(ctx) -> None:
                 color_discrete_map=color_map_for(rev_over_time["customer_name"].dropna().unique().tolist(), palette),
                 labels={"month": "", "total_amt": "Revenue ($)", "customer_name": "Customer"},
             )
-            st.plotly_chart(style(fig_rev_time, palette, height=340), use_container_width=True, key="chart_customer_revenue_time")
+            period_drilldown(fig_rev_time, "chart_customer_revenue_time", cust_month, "month", cust_breakdown_dims, cust_agg_spec, palette)
 
-    with section_card("Customer invoices over time"):
+    with section_card("Customer invoices over time", "Click a point for a per-customer breakdown."):
         orders_over_time = cust_month.groupby(["month", "customer_name"], as_index=False)["id"].nunique()
         orders_over_time = orders_over_time.rename(columns={"id": "invoices"})
         if orders_over_time.empty:
@@ -52,7 +55,7 @@ def render(ctx) -> None:
                 color_discrete_map=color_map_for(orders_over_time["customer_name"].dropna().unique().tolist(), palette),
                 labels={"month": "", "invoices": "Invoices", "customer_name": "Customer"},
             )
-            st.plotly_chart(style(fig_orders_time, palette, height=340), use_container_width=True, key="chart_customer_orders_time")
+            period_drilldown(fig_orders_time, "chart_customer_orders_time", cust_month, "month", cust_breakdown_dims, cust_agg_spec, palette)
 
     with section_card("Product mix over time, by customer", "Pick a customer to see what they've bought, by product, over time."):
         cust_options = sorted(inv_items_all["customer_name"].dropna().unique())

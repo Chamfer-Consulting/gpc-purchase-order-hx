@@ -54,7 +54,10 @@ def _price_anomaly_items(ctx) -> list[AttentionItem]:
     should join reference_prices to compute the precise
     (unit_price - reference_price) * quantity deviation instead — that requires a
     reference-prices lookup this module doesn't have in Phase 1."""
-    flagged = ctx.all_items[ctx.all_items["po_id"].isin(ctx.f_po["id"]) & ctx.all_items["price_anomaly"].notna()]
+    flagged = ctx.all_items[
+        ctx.all_items["po_id"].isin(ctx.f_po["id"]) & ctx.all_items["price_anomaly"].notna()
+        & (~ctx.all_items["product_name"].isin(ctx.hidden_products))
+    ]
     if flagged.empty:
         return []
     total_impact = flagged["line_total"].abs().sum()

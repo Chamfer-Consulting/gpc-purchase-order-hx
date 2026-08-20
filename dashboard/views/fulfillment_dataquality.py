@@ -56,11 +56,15 @@ def render(ctx) -> None:
 
     diff_items = all_items[
         all_items["po_id"].isin(f_po["id"]) & all_items["revision_status"].isin(["Added", "Changed", "Removed"])
+        & (~all_items["product_name"].isin(ctx.hidden_products))
     ]
 
     math_fail = f_po[f_po["math_check_failed"]]
 
-    price_issues = all_items[all_items["po_id"].isin(f_po["id"]) & all_items["price_anomaly"].notna()]
+    price_issues = all_items[
+        all_items["po_id"].isin(f_po["id"]) & all_items["price_anomaly"].notna()
+        & (~all_items["product_name"].isin(ctx.hidden_products))
+    ]
     if not price_issues.empty:
         # Ranked by the flagged line's own dollar size — a proxy for impact (see
         # dashboard/attention.py's _price_anomaly_items, which uses the same signal for

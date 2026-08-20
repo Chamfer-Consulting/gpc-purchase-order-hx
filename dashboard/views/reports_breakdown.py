@@ -5,7 +5,7 @@ import plotly.express as px
 import streamlit as st
 
 from data import color_map_for, style
-from ui_kit import data_table, empty_state, page_header, section_card
+from ui_kit import data_table, empty_state, page_header, period_drilldown, section_card
 
 
 def render(ctx) -> None:
@@ -82,7 +82,12 @@ def render(ctx) -> None:
                     labels={"Period": "", "line_total": "Revenue ($)"},
                 )
                 fig_bd.update_traces(line_color=palette["categorical"][0])
-            st.plotly_chart(style(fig_bd, palette, height=340), use_container_width=True, key="chart_business_breakdown")
+            period_drilldown(
+                fig_bd, "chart_business_breakdown", detail, "Period",
+                [("Customer", "customer_name"), ("Product", "product_name"), ("Size", "container_size")],
+                {"Revenue ($)": ("line_total", "sum"), "Quantity": ("quantity", "sum")},
+                palette,
+            )
             st.caption(
                 "Chart aggregates across product/size even when selected above — see the "
                 "table for the full multi-dimensional detail."

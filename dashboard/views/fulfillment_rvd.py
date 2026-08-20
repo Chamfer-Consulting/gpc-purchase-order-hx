@@ -12,7 +12,7 @@ import psycopg2
 import streamlit as st
 
 from data import color_map_for, get_database_url, load_matched_line_items, style
-from ui_kit import data_table, empty_state, page_header, section_card
+from ui_kit import data_table, empty_state, page_header, period_drilldown, section_card
 
 
 def _variance_styler(palette):
@@ -51,7 +51,9 @@ def render(ctx) -> None:
             st.info("No orders in the current filter.")
         else:
             matched_items = load_matched_line_items()
-            detail = matched_items[matched_items["po_id"].isin(po_ids)].copy()
+            detail = matched_items[
+                matched_items["po_id"].isin(po_ids) & (~matched_items["product_name"].isin(ctx.hidden_products))
+            ].copy()
 
             if detail.empty:
                 st.info("No confirmed matches with line-item detail in the current filter.")
@@ -141,7 +143,12 @@ def render(ctx) -> None:
                             color_discrete_map={"Requested": palette["categorical"][0], "Delivered": palette["categorical"][1]},
                             labels={"Period": "", "Amount": "Revenue ($)"},
                         )
-                    st.plotly_chart(style(fig_bd, palette, height=340), use_container_width=True, key="chart_breakdown_period")
+                    period_drilldown(
+                        fig_bd, "chart_breakdown_period", detail, "Period",
+                        [("Customer", "customer_name"), ("Product", "product_name"), ("Size", "container_size")],
+                        {"Requested ($)": ("requested_amount", "sum"), "Delivered ($)": ("delivered_amount", "sum")},
+                        palette,
+                    )
                     st.caption(
                         "Chart aggregates across product/size even when selected above — see the table for "
                         "the full multi-dimensional detail."
@@ -169,7 +176,10 @@ def render(ctx) -> None:
                     else:
                         fig_orders = px.line(order_counts, x="Period", y="Orders", markers=True, labels={"Period": ""})
                         fig_orders.update_traces(line_color=palette["categorical"][0])
-                    st.plotly_chart(style(fig_orders, palette, height=340), use_container_width=True, key="chart_order_trend")
+                    period_drilldown(
+                        fig_orders, "chart_order_trend", order_src, "Period",
+                        [("Customer", "customer_name")], {"Orders": ("id", "nunique")}, palette,
+                    )
 
             with section_card("Matched PO ↔ Invoice detail"):
                 rvd_conn = psycopg2.connect(get_database_url())

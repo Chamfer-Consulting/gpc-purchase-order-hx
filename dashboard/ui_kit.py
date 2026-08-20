@@ -3,13 +3,12 @@ Shared visual/component vocabulary for dashboard/views/*.py pages — built once
 every page stops being visually ad hoc (see Phase 1 of
 /Users/jcaternolo/.claude/plans/golden-soaring-robin.md). Composes on top of
 dashboard/data.py's palette/style()/color_map_for() etc.; does not replace them.
-
-Not yet imported by any page as of Phase 1 (foundation phase — the mechanical page
-extraction is behavior-identical to the old app.py). Phases 2-4 apply these helpers
-page by page.
 """
 
+import pandas as pd
 import streamlit as st
+
+from data import style
 
 # Maps this app's validated status semantics (see dashboard/data.py's LIGHT/DARK
 # palette["status"]) onto st.badge's fixed color enum.
@@ -124,3 +123,78 @@ def data_table(df, column_config=None, hide_index: bool = True, height=None, **k
         df, width="stretch", hide_index=hide_index, column_config=column_config,
         height=height if height is not None else "auto", **kwargs,
     )
+
+
+def _breakdown_table(detail_df: pd.DataFrame, mask, breakdown_dims: list[tuple[str, str]], agg_spec: dict, period_label: str) -> None:
+    matched = detail_df[mask]
+    if matched.empty:
+        st.caption(f"No detail rows for **{period_label}**.")
+        return
+    group_cols = [col for _, col in breakdown_dims]
+    grouped = matched.groupby(group_cols, as_index=False).agg(**agg_spec)
+    grouped = grouped.rename(columns={col: label for label, col in breakdown_dims})
+    sort_col = next(iter(agg_spec))
+    grouped = grouped.sort_values(sort_col, ascending=False)
+    st.caption(f"Breakdown for **{period_label}**:")
+    data_table(grouped)
+
+
+def period_drilldown(
+    fig, key: str, detail_df: pd.DataFrame, period_col: str,
+    breakdown_dims: list[tuple[str, str]], agg_spec: dict, palette: dict, height: int = 340,
+) -> None:
+    """Renders a Plotly chart where clicking a bar/point shows a breakdown table below
+    for that period, grouped by breakdown_dims and aggregated per agg_spec.
+
+    breakdown_dims: [(display_label, column_name), ...] — columns to group the
+    detail_df by (e.g. [("Customer", "customer_name")]).
+    agg_spec: named-aggregation kwargs for the groupby, e.g.
+    {"Invoices": ("id", "nunique"), "Revenue ($)": ("total_amt", "sum")} — the table
+    sorts by whichever key comes first.
+    detail_df must carry a `period_col` column with values directly comparable (as
+    datetimes) to the chart's own x-axis — i.e. the same already-truncated period
+    column the chart was built from, not raw per-row dates.
+    """
+    event = st.plotly_chart(
+        style(fig, palette, height=height), use_container_width=True, key=key,
+        on_select="rerun", selection_mode="points",
+    )
+    points = (event.get("selection") or {}).get("points") or []
+    if not points:
+        st.caption("💡 Click a bar/point above to see its breakdown. Click it again to clear.")
+        return
+    clicked = pd.to_datetime(points[0]["x"])
+    mask = pd.to_datetime(detail_df[period_col]) == clicked
+    _breakdown_table(detail_df, mask, breakdown_dims, agg_spec, clicked.strftime("%b %d, %Y"))
+
+
+def yoy_drilldown(
+    fig, key: str, detail_df: pd.DataFrame, date_col: str,
+    breakdown_dims: list[tuple[str, str]], agg_spec: dict, palette: dict, height: int = 340,
+) -> None:
+    """Like period_drilldown, but for year-over-year charts where the x-axis is
+    month-of-year (1-12) shared across years and each year is a separate colored
+    trace — the clicked point's trace name (the "year" value px.line's color=
+    param assigns) disambiguates which year's month was actually clicked."""
+    event = st.plotly_chart(
+        style(fig, palette, height=height), use_container_width=True, key=key,
+        on_select="rerun", selection_mode="points",
+    )
+    points = (event.get("selection") or {}).get("points") or []
+    if not points:
+        st.caption("💡 Click a point above to see its breakdown. Click it again to clear.")
+        return
+    point = points[0]
+    curve_number = point.get("curve_number")
+    if curve_number is None or curve_number >= len(fig.data) or not fig.data[curve_number].name:
+        st.caption("Couldn't determine which year was clicked.")
+        return
+    try:
+        year, moy = int(fig.data[curve_number].name), int(point["x"])
+    except (TypeError, ValueError):
+        st.caption("Couldn't determine which year was clicked.")
+        return
+    dates = pd.to_datetime(detail_df[date_col], errors="coerce")
+    mask = (dates.dt.year == year) & (dates.dt.month == moy)
+    label = pd.Timestamp(year=year, month=moy, day=1).strftime("%B %Y")
+    _breakdown_table(detail_df, mask, breakdown_dims, agg_spec, label)

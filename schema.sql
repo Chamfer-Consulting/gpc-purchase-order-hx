@@ -171,3 +171,14 @@ CREATE INDEX IF NOT EXISTS idx_qbo_invoice_items_invoice_id ON qbo_invoice_items
 CREATE INDEX IF NOT EXISTS idx_qbo_invoice_items_product_name ON qbo_invoice_items(product_name);
 CREATE INDEX IF NOT EXISTS idx_po_invoice_links_po_id ON po_invoice_links(po_id);
 CREATE INDEX IF NOT EXISTS idx_po_invoice_links_invoice_id ON po_invoice_links(invoice_id);
+
+-- Dashboard-side product visibility override — a product listed here is excluded from
+-- every reporting surface (charts, tables, filters, exports, picker dropdowns) app-wide,
+-- without touching the underlying PO/invoice line-item data. Toggled from the Products
+-- report page's "Manage products" section (dashboard/views/reports_products.py); the
+-- Edit PO page and the QuickBooks Invoice Explorer/Item Catalog pages intentionally
+-- ignore this table, since those are data-correction/inspection tools, not reports.
+CREATE TABLE IF NOT EXISTS hidden_products (
+    product_name TEXT PRIMARY KEY,
+    hidden_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);

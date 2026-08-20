@@ -39,6 +39,7 @@ def _render_price_history(ctx) -> None:
     priced_all = all_items[
         (~all_items["is_sample"].fillna(False)) & all_items["unit_price"].notna()
         & (all_items["product_name"] != "UNKNOWN")
+        & (~all_items["product_name"].isin(ctx.hidden_products))
     ]
 
     if priced_all.empty:

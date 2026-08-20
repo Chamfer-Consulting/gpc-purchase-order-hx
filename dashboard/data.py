@@ -110,6 +110,22 @@ def month_over_month_movers(df: pd.DataFrame, date_col: str, group_col: str, val
     return merged, curr_m, prev_m
 
 
+def top_entity_per_period(detail_df: pd.DataFrame, period_col: str, entity_col: str, value_col: str, agg: str = "sum") -> pd.Series:
+    """Returns a Series indexed by period value -> "entity (value)" string for whichever
+    entity_col value is largest in that period — used to enrich a chart's hover tooltip
+    (merge the result onto the chart's already-grouped dataframe by period_col) so
+    hovering a bar shows more than just the raw aggregate number. Empty Series if
+    detail_df has nothing to summarize."""
+    if detail_df.empty:
+        return pd.Series(dtype=object)
+    grouped = detail_df.dropna(subset=[period_col, entity_col]).groupby([period_col, entity_col])[value_col].agg(agg).reset_index()
+    if grouped.empty:
+        return pd.Series(dtype=object)
+    idx = grouped.groupby(period_col)[value_col].idxmax()
+    top = grouped.loc[idx].set_index(period_col)
+    return top.apply(lambda r: f"{r[entity_col]} ({r[value_col]:,.0f})", axis=1)
+
+
 def yoy_annual_chart(df: pd.DataFrame, date_col: str, agg_col: str, agg_fn: str, y_label: str, palette: dict, current_year: str):
     """Line chart with one line per calendar year (month-of-year on the x-axis),
     current_year emphasized (bold, full opacity) against past years (thin, dotted,
@@ -375,6 +391,37 @@ def save_reference_prices(rows: list[dict]) -> None:
         conn.close()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_hidden_products() -> set[str]:
+    """Product names currently excluded from reporting (see hidden_products in
+    schema.sql) — Edit PO and the QuickBooks Invoice Explorer/Item Catalog pages
+    intentionally don't consult this; every other page filters by it."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT product_name FROM hidden_products")
+            return {row[0] for row in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def set_product_hidden(product_name: str, hidden: bool) -> None:
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn.cursor() as cur:
+            if hidden:
+                cur.execute(
+                    "INSERT INTO hidden_products (product_name) VALUES (%s) "
+                    "ON CONFLICT (product_name) DO NOTHING",
+                    (product_name,),
+                )
+            else:
+                cur.execute("DELETE FROM hidden_products WHERE product_name = %s", (product_name,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def prepare(po_df: pd.DataFrame, items_df: pd.DataFrame):
     """Dedupe to the latest version of each PO and join line items to it."""
     po = po_df.copy()
@@ -448,6 +495,13 @@ class AppContext:
     by_product_inv: pd.DataFrame = None
     by_customer_inv: pd.DataFrame = None
     product_colors: dict = field(default_factory=dict)
+
+    # Product names excluded from reporting (see data.load_hidden_products) — already
+    # applied to f_items/f_inv_items/by_product*/product_colors/the sidebar product
+    # picker by app.py; pages reading all_items/inv_items_all directly (Pricing, Data
+    # Quality, the Requested vs Delivered detail query) must filter by this themselves.
+    # Edit PO deliberately does not.
+    hidden_products: set = field(default_factory=set)
 
     # StreamlitPage objects for cross-page deep links (see docstring above)
     pages: dict = field(default_factory=dict)

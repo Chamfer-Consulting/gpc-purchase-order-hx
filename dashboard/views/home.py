@@ -12,8 +12,8 @@ import streamlit as st
 
 import attention
 import qbo_matcher
-from data import fmt_delta, get_database_url, load_matched_line_items, strip_tz, style, yoy_annual_chart
-from ui_kit import kpi_row, page_header, section_card, severity_badge
+from data import fmt_delta, get_database_url, load_matched_line_items, strip_tz, yoy_annual_chart
+from ui_kit import kpi_row, page_header, section_card, severity_badge, yoy_drilldown
 
 _SPARKLINE_MONTHS = 6
 
@@ -117,24 +117,33 @@ def render(ctx) -> None:
             st.caption("See the **Data Quality** page (under 📦 Fulfillment) for details on flagged orders.")
 
     current_year = str(pd.Timestamp.now().year)
+    yoy_breakdown_dims = [("Customer", "customer_name")]
+    yoy_agg_spec = {"Invoices": ("id", "nunique"), "Revenue ($)": ("total_amt", "sum")}
     with section_card(
         "📈 Annual comparison",
         f"{current_year} vs. each prior year, by calendar month — {current_year} is bold, "
-        "past years are muted for reference. Respects the sidebar filters above.",
+        "past years are muted for reference. Respects the sidebar filters above. "
+        "Click a point for a customer breakdown.",
     ):
         ac1, ac2 = st.columns(2)
         with ac1:
             st.caption("Revenue")
             fig_rev_yoy = yoy_annual_chart(f_inv, "effective_date", "total_amt", "sum", "Revenue ($)", palette, current_year)
             if fig_rev_yoy is not None:
-                st.plotly_chart(style(fig_rev_yoy, palette, height=320), use_container_width=True, key="chart_overview_revenue_yoy")
+                yoy_drilldown(
+                    fig_rev_yoy, "chart_overview_revenue_yoy", f_inv, "effective_date",
+                    yoy_breakdown_dims, yoy_agg_spec, palette, height=320,
+                )
             else:
                 st.caption("Not enough dated invoices in the current filter.")
         with ac2:
             st.caption("Invoices")
             fig_inv_yoy = yoy_annual_chart(f_inv, "effective_date", "id", "nunique", "Invoices", palette, current_year)
             if fig_inv_yoy is not None:
-                st.plotly_chart(style(fig_inv_yoy, palette, height=320), use_container_width=True, key="chart_overview_orders_yoy")
+                yoy_drilldown(
+                    fig_inv_yoy, "chart_overview_orders_yoy", f_inv, "effective_date",
+                    yoy_breakdown_dims, yoy_agg_spec, palette, height=320,
+                )
             else:
                 st.caption("Not enough dated invoices in the current filter.")
 
