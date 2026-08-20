@@ -36,6 +36,47 @@ def render(ctx) -> None:
         "🔗 Match & Review first — this report only reflects confirmed links.",
     )
 
+    with section_card(
+        "🆚 Compare customers' fulfillment",
+        "Pick two or more customers to compare requested vs. delivered amounts and fulfillment rate.",
+    ):
+        po_ids_all = f_po["id"].tolist()
+        matched_all = load_matched_line_items()
+        fulfillment_detail = matched_all[
+            matched_all["po_id"].isin(po_ids_all) & (~matched_all["product_name"].isin(ctx.hidden_products))
+        ]
+        cust_options = sorted(fulfillment_detail["customer_name"].dropna().unique().tolist())
+        picked = st.multiselect("Compare customers", cust_options, default=[], key="cmp_fulfillment_pick")
+        if len(picked) < 2:
+            st.caption("Pick 2 or more customers above to compare.")
+        else:
+            subset = fulfillment_detail[fulfillment_detail["customer_name"].isin(picked)]
+            summary = subset.groupby("customer_name", as_index=False).agg(
+                requested_amount=("requested_amount", "sum"), delivered_amount=("delivered_amount", "sum"),
+            )
+            summary["Fulfillment %"] = summary.apply(
+                lambda r: round(r["delivered_amount"] / r["requested_amount"] * 100, 1) if r["requested_amount"] else None,
+                axis=1,
+            )
+            display = summary.rename(columns={
+                "customer_name": "Customer", "requested_amount": "Requested ($)", "delivered_amount": "Delivered ($)",
+            })
+            data_table(display, column_config={
+                "Fulfillment %": st.column_config.ProgressColumn("Fulfillment %", format="%.1f%%", min_value=0, max_value=100),
+            })
+
+            chart_long = summary.melt(
+                id_vars=["customer_name"], value_vars=["requested_amount", "delivered_amount"],
+                var_name="Type", value_name="Amount",
+            )
+            chart_long["Type"] = chart_long["Type"].map({"requested_amount": "Requested", "delivered_amount": "Delivered"})
+            fig_cmp = px.bar(
+                chart_long, x="customer_name", y="Amount", color="Type", barmode="group",
+                color_discrete_map={"Requested": palette["categorical"][0], "Delivered": palette["categorical"][1]},
+                labels={"customer_name": "", "Amount": "$"},
+            )
+            st.plotly_chart(style(fig_cmp, palette, height=340), use_container_width=True, key="chart_cmp_fulfillment")
+
     with section_card("Detailed breakdown", "Complete detail — slice by time period, customer, product, and size, in any combination."):
         bc1, bc2 = st.columns(2)
         period_choice = bc1.segmented_control(

@@ -4,7 +4,7 @@ import plotly.express as px
 import streamlit as st
 
 from data import color_map_for, month_over_month_movers, style
-from ui_kit import data_table, empty_state, page_header, period_drilldown, section_card
+from ui_kit import data_table, empty_state, entity_comparison, page_header, period_drilldown, section_card
 
 
 def render(ctx) -> None:
@@ -25,6 +25,14 @@ def render(ctx) -> None:
         )
         fig.update_traces(marker_color=palette["sequential_blue"][4])
         st.plotly_chart(style(fig, palette, height=380), use_container_width=True, key="chart_top_customers")
+
+    with section_card("🆚 Compare customers", "Pick two or more customers to compare revenue and invoice volume side by side."):
+        cust_options_all = sorted(by_customer_inv["customer_name"].dropna().unique().tolist())
+        entity_comparison(
+            f_inv, "customer_name", "Customer", cust_options_all, "effective_date",
+            [("Revenue ($)", "total_amt", "sum"), ("Invoices", "id", "nunique")],
+            palette, key="cmp_customers",
+        )
 
     cust_month = f_inv.dropna(subset=["effective_date"]).copy()
     cust_month["month"] = cust_month["effective_date"].dt.to_period("M").dt.to_timestamp()

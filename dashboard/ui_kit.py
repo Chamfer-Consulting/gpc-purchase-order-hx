@@ -6,9 +6,10 @@ dashboard/data.py's palette/style()/color_map_for() etc.; does not replace them.
 """
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
-from data import style
+from data import color_map_for, style
 
 # Maps this app's validated status semantics (see dashboard/data.py's LIGHT/DARK
 # palette["status"]) onto st.badge's fixed color enum.
@@ -198,3 +199,44 @@ def yoy_drilldown(
     mask = (dates.dt.year == year) & (dates.dt.month == moy)
     label = pd.Timestamp(year=year, month=moy, day=1).strftime("%B %Y")
     _breakdown_table(detail_df, mask, breakdown_dims, agg_spec, label)
+
+
+def entity_comparison(
+    detail_df: pd.DataFrame, entity_col: str, entity_label: str, options: list[str],
+    date_col: str, metrics: list[tuple[str, str, str]], palette: dict, key: str,
+) -> None:
+    """Lets the user pick 2+ entities (customers, products, ...) from `options` and
+    compares them: a summary table (one row per entity, one column per metric) plus
+    one overlaid monthly trend line chart per metric.
+
+    metrics: [(display_label, source_col, agg_fn), ...] — e.g.
+    [("Revenue ($)", "total_amt", "sum"), ("Invoices", "id", "nunique")].
+    detail_df must carry entity_col, date_col, and every metric's source_col.
+    """
+    picked = st.multiselect(f"Compare {entity_label}s", options, default=[], key=f"{key}_pick")
+    if len(picked) < 2:
+        st.caption(f"Pick 2 or more {entity_label.lower()}s above to compare.")
+        return
+
+    subset = detail_df[detail_df[entity_col].isin(picked)]
+    if subset.empty:
+        st.caption("No data for the selected picks in the current filter.")
+        return
+
+    summary = subset.groupby(entity_col, as_index=False).agg(**{label: (col, agg) for label, col, agg in metrics})
+    summary = summary.rename(columns={entity_col: entity_label})
+    data_table(summary)
+
+    dated = subset.dropna(subset=[date_col]).copy()
+    if dated.empty:
+        st.caption("No dated detail to chart.")
+        return
+    dated["month"] = dated[date_col].dt.to_period("M").dt.to_timestamp()
+    colors = color_map_for(picked, palette)
+    for label, col, agg in metrics:
+        monthly = dated.groupby(["month", entity_col], as_index=False)[col].agg(agg)
+        fig = px.line(
+            monthly, x="month", y=col, color=entity_col, markers=True,
+            color_discrete_map=colors, labels={"month": "", col: label, entity_col: entity_label},
+        )
+        st.plotly_chart(style(fig, palette, height=320), use_container_width=True, key=f"{key}_chart_{label}")

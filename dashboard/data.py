@@ -110,6 +110,27 @@ def month_over_month_movers(df: pd.DataFrame, date_col: str, group_col: str, val
     return merged, curr_m, prev_m
 
 
+def compare_periods_by_group(
+    df: pd.DataFrame, date_col: str, group_col: str, value_col: str,
+    range_a: tuple, range_b: tuple, top_n: int = 10,
+) -> pd.DataFrame | None:
+    """Like month_over_month_movers, but for two arbitrary custom date ranges instead
+    of the two most recent calendar months — range_a/range_b are (start_ts, end_ts)
+    tuples. Returns a DataFrame with columns [group_col, "A", "B", "delta"], the
+    top_n rows by |delta|, or None if there's no data in either range."""
+    a_start, a_end = range_a
+    b_start, b_end = range_b
+    d = df.dropna(subset=[date_col, group_col])
+    a = d[(d[date_col] >= a_start) & (d[date_col] <= a_end)].groupby(group_col)[value_col].sum()
+    b = d[(d[date_col] >= b_start) & (d[date_col] <= b_end)].groupby(group_col)[value_col].sum()
+    if a.empty and b.empty:
+        return None
+    merged = pd.DataFrame({"A": a, "B": b}).fillna(0.0)
+    merged["delta"] = merged["B"] - merged["A"]
+    merged = merged.reindex(merged["delta"].abs().sort_values(ascending=False).index).head(top_n)
+    return merged.reset_index().rename(columns={"index": group_col})
+
+
 def top_entity_per_period(detail_df: pd.DataFrame, period_col: str, entity_col: str, value_col: str, agg: str = "sum") -> pd.Series:
     """Returns a Series indexed by period value -> "entity (value)" string for whichever
     entity_col value is largest in that period — used to enrich a chart's hover tooltip

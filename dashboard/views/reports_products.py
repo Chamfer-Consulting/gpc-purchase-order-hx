@@ -8,7 +8,7 @@ import plotly.express as px
 import streamlit as st
 
 from data import load_hidden_products, month_over_month_movers, set_product_hidden, style
-from ui_kit import data_table, empty_state, page_header, period_drilldown, section_card
+from ui_kit import data_table, empty_state, entity_comparison, page_header, period_drilldown, section_card
 
 
 def _manage_products(ctx) -> None:
@@ -67,6 +67,14 @@ def render(ctx) -> None:
             by_product_inv.rename(columns={"product_name": "Product", "revenue": "Revenue ($)", "quantity": "Quantity"})
             .to_csv(index=False).encode("utf-8"),
             file_name="revenue_by_product.csv", mime="text/csv", key="dl_products",
+        )
+
+    with section_card("🆚 Compare products", "Pick two or more products to compare quantity and revenue side by side."):
+        product_options_all = sorted(by_product_inv["product_name"].dropna().unique().tolist())
+        entity_comparison(
+            f_inv_items, "product_name", "Product", product_options_all, "effective_date",
+            [("Quantity", "quantity", "sum"), ("Revenue ($)", "line_total", "sum")],
+            palette, key="cmp_products",
         )
 
     with section_card("Product mix over time (quantity)", "Click a bar for a product/customer breakdown."):
