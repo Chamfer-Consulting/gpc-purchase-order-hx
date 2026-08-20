@@ -30,6 +30,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from itertools import permutations
 from pathlib import Path
 
 import pdfplumber
@@ -170,6 +171,67 @@ def _item_key(item):
     return (item.get("product_name", "UNKNOWN"), item.get("container_size", ""))
 
 
+_DIFF_FIELDS = (
+    ("quantity", "Qty", "{}"),
+    ("unit_price", "Price", "${}"),
+    ("additional_cost", "Adtl", "${}"),
+    ("line_total", "Total", "${}"),
+)
+
+
+def _field_changes(p, c):
+    """List of 'Label: old → new' strings for each tracked field that differs
+    between two items of the same (product, size) key. Also doubles as the cost
+    function _best_pairing uses (via len()) to score candidate correspondences."""
+    changes = []
+    for field, label, fmt in _DIFF_FIELDS:
+        pv, cv = p.get(field), c.get(field)
+        if pv != cv and not (pv is None and cv is None):
+            changes.append(f"{label}: {fmt.format(pv)} → {fmt.format(cv)}")
+    return changes
+
+
+_MAX_EXHAUSTIVE_PAIRING = 6  # same-key duplicate groups (e.g. two "Rainbow Mix 1oz"
+# lines at different prices) are matched by minimal total field-difference cost, not
+# list position — positional pairing would flag a spurious "Changed" on both lines if
+# the model simply listed them in a different order between revisions. Duplicate
+# same-product+size lines are rare and almost always just 2, so an exhaustive
+# permutation search is cheap; groups larger than this cap fall back to positional
+# pairing to avoid factorial blowup on pathological input.
+
+
+def _best_pairing(prev_items, curr_items):
+    """Returns [(prev_item_or_None, curr_item_or_None), ...] for one (product,
+    size) group, matching items by minimal total change cost (see _field_changes)
+    rather than by list position — see _MAX_EXHAUSTIVE_PAIRING for the size cap
+    and rationale."""
+    n, m = len(prev_items), len(curr_items)
+    if n == 0 or m == 0 or max(n, m) > _MAX_EXHAUSTIVE_PAIRING:
+        return [
+            (prev_items[i] if i < n else None, curr_items[i] if i < m else None)
+            for i in range(max(n, m))
+        ]
+
+    # Search permutations of the shorter side's items into the longer side's slots
+    # (only ever a handful of permutations at this group size).
+    if n <= m:
+        short, long_ = prev_items, curr_items
+    else:
+        short, long_ = curr_items, prev_items
+
+    best_cost, best_assignment = None, None
+    for perm in permutations(range(len(long_)), len(short)):
+        cost = sum(len(_field_changes(short[i], long_[perm[i]])) for i in range(len(short)))
+        if best_cost is None or cost < best_cost:
+            best_cost, best_assignment = cost, perm
+
+    matched = set(best_assignment)
+    paired = [(short[i], long_[best_assignment[i]]) for i in range(len(short))]
+    leftover = [(None, long_[j]) for j in range(len(long_)) if j not in matched]
+    pairs = paired + leftover
+    return pairs if n <= m else [(p, c) for c, p in pairs]
+
+
 def _diff_items(prev_items, curr_items):
     """
     Compare two lists of line items. Returns (annotated, removed):
@@ -178,17 +240,19 @@ def _diff_items(prev_items, curr_items):
     - removed: list of synthetic 'Removed' ghost entries for items dropped
       from prev_items.
 
-    Items are matched by (product_name, container_size), but since two real
-    line items can legitimately share that key (e.g. the same product/size at
-    two different prices on one PO), same-key items are paired positionally
-    (1st with 1st, 2nd with 2nd, ...) instead of collapsing to a single entry
-    per key — otherwise one pair's quantity/price would be diffed and the
-    result applied to both.
+    Items are matched by (product_name, container_size); since two real line
+    items can legitimately share that key (e.g. the same product/size at two
+    different prices on one PO), same-key items are matched via _best_pairing
+    rather than collapsed to a single entry per key.
 
     Ghost 'Removed' rows injected by a previous diff (item.get('_removed'))
     are excluded from prev_items's grouping: they aren't real state from the
     previous version and must not be diffed again or they'd be re-flagged
     'Removed' and re-appended on every later revision.
+
+    Keys are iterated in sorted order so the 'Removed' ghost rows this returns
+    are in a deterministic order run-to-run (a plain set union's iteration
+    order depends on Python's per-process string hash randomization).
     """
     prev_by_key = defaultdict(list)
     for i in prev_items:
@@ -203,12 +267,10 @@ def _diff_items(prev_items, curr_items):
     annotated = {}
     removed = []
 
-    for key in set(prev_by_key) | set(curr_by_key):
+    for key in sorted(set(prev_by_key) | set(curr_by_key)):
         p_list = prev_by_key.get(key, [])
         c_list = curr_by_key.get(key, [])
-        for idx in range(max(len(p_list), len(c_list))):
-            p = p_list[idx] if idx < len(p_list) else None
-            c = c_list[idx] if idx < len(c_list) else None
+        for p, c in _best_pairing(p_list, c_list):
             if c is None:
                 removed_item = dict(p)
                 removed_item["_removed"] = True
@@ -218,19 +280,7 @@ def _diff_items(prev_items, curr_items):
             elif p is None:
                 annotated[id(c)] = ("Added", "Added")
             else:
-                changes = []
-                pq, cq = p.get("quantity"), c.get("quantity")
-                if pq != cq and not (pq is None and cq is None):
-                    changes.append(f"Qty: {pq} → {cq}")
-                pp, cp = p.get("unit_price"), c.get("unit_price")
-                if pp != cp and not (pp is None and cp is None):
-                    changes.append(f"Price: ${pp} → ${cp}")
-                pa, ca = p.get("additional_cost"), c.get("additional_cost")
-                if pa != ca and not (pa is None and ca is None):
-                    changes.append(f"Adtl: ${pa} → ${ca}")
-                pt, ct = p.get("line_total"), c.get("line_total")
-                if pt != ct and not (pt is None and ct is None):
-                    changes.append(f"Total: ${pt} → ${ct}")
+                changes = _field_changes(p, c)
                 if changes:
                     annotated[id(c)] = ("Changed", ", ".join(changes))
                 else:
