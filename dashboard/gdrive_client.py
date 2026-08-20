@@ -34,7 +34,7 @@ def find_file_id(access_token: str, folder_id: str, filename: str) -> str | None
     """Searches the given folder for a file with this exact name. Multiple matches
     (duplicate filenames) -> the most recently modified one — filenames are confirmed to
     match exactly in the normal case, so true duplicates are the rare edge, not the rule."""
-    escaped = filename.replace("'", "\\'")
+    escaped = filename.replace("\\", "\\\\").replace("'", "\\'")
     resp = requests.get(
         DRIVE_API,
         headers={"Authorization": f"Bearer {access_token}"},

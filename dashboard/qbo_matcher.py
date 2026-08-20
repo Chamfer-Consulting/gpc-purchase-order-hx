@@ -582,7 +582,10 @@ def get_po_full_detail(conn, po_id: int) -> dict:
             (po_id,),
         )
         cols = [d[0] for d in cur.description]
-        detail = dict(zip(cols, cur.fetchone()))
+        row = cur.fetchone()
+        if row is None:
+            raise ValueError(f"No purchase order with id={po_id}")
+        detail = dict(zip(cols, row))
     po_items, _ = get_line_items_for_review(conn, [po_id], [])
     detail["items"] = po_items.get(po_id, [])
     return detail
@@ -597,7 +600,10 @@ def get_invoice_full_detail(conn, invoice_id: int) -> dict:
             (invoice_id,),
         )
         cols = [d[0] for d in cur.description]
-        detail = dict(zip(cols, cur.fetchone()))
+        row = cur.fetchone()
+        if row is None:
+            raise ValueError(f"No QuickBooks invoice with id={invoice_id}")
+        detail = dict(zip(cols, row))
     _, inv_items = get_line_items_for_review(conn, [], [invoice_id])
     detail["items"] = inv_items.get(invoice_id, [])
     return detail

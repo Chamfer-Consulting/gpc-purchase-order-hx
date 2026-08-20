@@ -2,7 +2,7 @@
 """
 Re-run math validation against already-extracted data, without calling the API.
 
-Use this after changing validate_math()'s logic in extract_pos.py — all the
+Use this after changing validate_math()'s logic in math_check.py — all the
 fields it needs (subtotal, tax, total, line items) are already stored locally,
 so past extractions can be re-checked for free.
 
@@ -13,7 +13,7 @@ Usage:
 import argparse
 
 import db
-from extract_pos import validate_math
+from math_check import validate_math
 
 
 def recompute(sqlite_path: str) -> tuple[int, int]:

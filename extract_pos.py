@@ -27,6 +27,7 @@ import os
 import sys
 import threading
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -71,7 +72,7 @@ def configure_logging(log_path: str) -> None:
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 # The only valid products sold. Used for normalization after extraction.
-VALID_PRODUCTS = ["Rainbow Mix", "Arugula", "Cilantro", "Bulls Blood Beets", "Genovese Basil"]
+VALID_PRODUCTS = ["Rainbow Mix", "Arugula", "Cilantro", "Bulls Blood Beets", "Genovese Basil", "Broccoli"]
 
 # Valid container sizes in oz
 VALID_SIZES = [1, 2, 3, 4, 8, 20]
@@ -148,6 +149,10 @@ EXTRACTION_TOOL = {
 MODEL = "claude-opus-4-6"
 MAX_RETRIES = 5          # was 3 — more attempts for transient rate limits
 RETRY_DELAY = 10         # seconds base delay (exponential backoff from here)
+MAX_TEXT_CHARS = 15000   # extracted PDF text longer than this is truncated before the API
+                         # call (long multi-page POs); truncation is logged and flagged in
+                         # the result's notes so a dropped trailing line item is visible
+                         # instead of silent.
 
 
 # ── Revision Detection & Diff Engine ──────────────────────────────────────────
@@ -167,49 +172,71 @@ def _item_key(item):
 
 def _diff_items(prev_items, curr_items):
     """
-    Compare two lists of line items. Returns a dict keyed by item_key with
-    a 'revision_status' and 'changes' string for each item in curr_items,
-    plus synthetic 'Removed' entries for items dropped from prev_items.
+    Compare two lists of line items. Returns (annotated, removed):
+    - annotated: dict keyed by id(item) (for each item in curr_items) with a
+      'revision_status' and 'changes' string.
+    - removed: list of synthetic 'Removed' ghost entries for items dropped
+      from prev_items.
+
+    Items are matched by (product_name, container_size), but since two real
+    line items can legitimately share that key (e.g. the same product/size at
+    two different prices on one PO), same-key items are paired positionally
+    (1st with 1st, 2nd with 2nd, ...) instead of collapsing to a single entry
+    per key — otherwise one pair's quantity/price would be diffed and the
+    result applied to both.
+
+    Ghost 'Removed' rows injected by a previous diff (item.get('_removed'))
+    are excluded from prev_items's grouping: they aren't real state from the
+    previous version and must not be diffed again or they'd be re-flagged
+    'Removed' and re-appended on every later revision.
     """
-    prev = {_item_key(i): i for i in prev_items}
-    curr = {_item_key(i): i for i in curr_items}
+    prev_by_key = defaultdict(list)
+    for i in prev_items:
+        if i.get("_removed"):
+            continue
+        prev_by_key[_item_key(i)].append(i)
+
+    curr_by_key = defaultdict(list)
+    for i in curr_items:
+        curr_by_key[_item_key(i)].append(i)
 
     annotated = {}
+    removed = []
 
-    # Check each item in current version
-    for key, item in curr.items():
-        if key not in prev:
-            annotated[key] = ("Added", "Added")
-        else:
-            p = prev[key]
-            changes = []
-            pq, cq = p.get("quantity"), item.get("quantity")
-            if pq != cq and not (pq is None and cq is None):
-                changes.append(f"Qty: {pq} → {cq}")
-            pp, cp = p.get("unit_price"), item.get("unit_price")
-            if pp != cp and not (pp is None and cp is None):
-                changes.append(f"Price: ${pp} → ${cp}")
-            pa, ca = p.get("additional_cost"), item.get("additional_cost")
-            if pa != ca and not (pa is None and ca is None):
-                changes.append(f"Adtl: ${pa} → ${ca}")
-            pt, ct = p.get("line_total"), item.get("line_total")
-            if pt != ct and not (pt is None and ct is None):
-                changes.append(f"Total: ${pt} → ${ct}")
-            if changes:
-                annotated[key] = ("Changed", ", ".join(changes))
+    for key in set(prev_by_key) | set(curr_by_key):
+        p_list = prev_by_key.get(key, [])
+        c_list = curr_by_key.get(key, [])
+        for idx in range(max(len(p_list), len(c_list))):
+            p = p_list[idx] if idx < len(p_list) else None
+            c = c_list[idx] if idx < len(c_list) else None
+            if c is None:
+                removed_item = dict(p)
+                removed_item["_removed"] = True
+                removed_item["revision_status"] = "Removed"
+                removed_item["changes"] = "Removed"
+                removed.append(removed_item)
+            elif p is None:
+                annotated[id(c)] = ("Added", "Added")
             else:
-                annotated[key] = ("Unchanged", "")
+                changes = []
+                pq, cq = p.get("quantity"), c.get("quantity")
+                if pq != cq and not (pq is None and cq is None):
+                    changes.append(f"Qty: {pq} → {cq}")
+                pp, cp = p.get("unit_price"), c.get("unit_price")
+                if pp != cp and not (pp is None and cp is None):
+                    changes.append(f"Price: ${pp} → ${cp}")
+                pa, ca = p.get("additional_cost"), c.get("additional_cost")
+                if pa != ca and not (pa is None and ca is None):
+                    changes.append(f"Adtl: ${pa} → ${ca}")
+                pt, ct = p.get("line_total"), c.get("line_total")
+                if pt != ct and not (pt is None and ct is None):
+                    changes.append(f"Total: ${pt} → ${ct}")
+                if changes:
+                    annotated[id(c)] = ("Changed", ", ".join(changes))
+                else:
+                    annotated[id(c)] = ("Unchanged", "")
 
-    # Items in prev but not in curr → removed
-    for key in prev:
-        if key not in curr:
-            removed_item = dict(prev[key])
-            removed_item["_removed"] = True
-            removed_item["revision_status"] = "Removed"
-            removed_item["changes"] = "Removed"
-            annotated[key] = ("Removed", removed_item)
-
-    return annotated
+    return annotated, removed
 
 
 def annotate_revisions(all_results):
@@ -218,7 +245,6 @@ def annotate_revisions(all_results):
     and diffs each version against its predecessor.
     Mutates each result and its line items in-place.
     """
-    from collections import defaultdict
     groups = defaultdict(list)
 
     for r in all_results:
@@ -250,20 +276,17 @@ def annotate_revisions(all_results):
                 result["_is_revision"] = True
 
                 prev_items = versions[v_idx - 1].get("line_items") or []
-                diff = _diff_items(prev_items, items)
+                diff, removed_ghosts = _diff_items(prev_items, items)
 
                 annotated_items = []
                 for item in items:
-                    key = _item_key(item)
-                    status, changes = diff.get(key, ("Unchanged", ""))
+                    status, changes = diff.get(id(item), ("Unchanged", ""))
                     item["revision_status"] = status
                     item["changes"] = changes if isinstance(changes, str) else ""
                     annotated_items.append(item)
 
                 # Inject removed items as ghost rows
-                for key, (status, payload) in diff.items():
-                    if status == "Removed" and isinstance(payload, dict):
-                        annotated_items.append(payload)
+                annotated_items.extend(removed_ghosts)
 
                 result["line_items"] = annotated_items
 
@@ -320,6 +343,12 @@ def extract_po_data(
     """
     filename = os.path.basename(pdf_path)
     text = extract_pdf_text(pdf_path)
+    text_truncated = bool(text) and len(text) > MAX_TEXT_CHARS
+    if text_truncated:
+        logger.warning(
+            f"{filename}: extracted text is {len(text)} chars, truncating to "
+            f"{MAX_TEXT_CHARS} before sending to the model — trailing content may be lost"
+        )
     last_error = "Unknown error"
     start_time = time.monotonic()
 
@@ -331,7 +360,7 @@ def extract_po_data(
                 messages = [
                     {
                         "role": "user",
-                        "content": f"Document text:\n{text[:15000]}"
+                        "content": f"Document text:\n{text[:MAX_TEXT_CHARS]}"
                     }
                 ]
             else:
@@ -392,6 +421,13 @@ def extract_po_data(
                     flag_price_anomaly(item, data.get("customer_name"), reference_prices)
 
             validate_math(data)
+
+            if text_truncated:
+                warning = (
+                    f"⚠️ Source text was {len(text)} chars, truncated to {MAX_TEXT_CHARS} "
+                    "before extraction — trailing content (e.g. line items) may be missing."
+                )
+                data["notes"] = f"{data['notes']}\n{warning}" if data.get("notes") else warning
 
             elapsed = time.monotonic() - start_time
             logger.info(

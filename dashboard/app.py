@@ -192,7 +192,7 @@ def check_password() -> bool:
         submitted = st.form_submit_button("Log in")
     if submitted:
         expected = st.secrets.get("dashboard_password", "")
-        if expected and pw == expected:
+        if expected and secrets.compare_digest(pw, expected):
             st.session_state["authed"] = True
             st.rerun()
         else:
