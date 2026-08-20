@@ -55,7 +55,10 @@ def render(ctx) -> None:
         period_drilldown(fig, "chart_orders_per_month", monthly, "month", breakdown_dims, agg_spec, palette)
 
     with section_card("Revenue per month", "Click a point for a customer breakdown."):
-        fig2 = px.line(by_month, x="month", y="revenue", hover_data={"Top customer": True}, labels={"month": "", "revenue": "Revenue ($)"})
+        fig2 = px.line(
+            by_month, x="month", y="revenue", markers=True,
+            hover_data={"Top customer": True}, labels={"month": "", "revenue": "Revenue ($)"},
+        )
         fig2.update_traces(line_color=palette["categorical"][0], line_width=2)
         period_drilldown(fig2, "chart_revenue_per_month", monthly, "month", breakdown_dims, agg_spec, palette)
 

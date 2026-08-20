@@ -126,6 +126,19 @@ def data_table(df, column_config=None, hide_index: bool = True, height=None, **k
     )
 
 
+def _nearest_period(values, target: pd.Timestamp):
+    """Snaps a chart click's x-coordinate to whichever period value actually present
+    in the data is closest to it. Needed because Plotly's click event for a bar trace
+    on a continuous date axis reports the pixel-interpolated date under the cursor —
+    wherever within the bar's rendered width the click physically landed — not the
+    bar's exact category value, so a click a few pixels off-center comes back a few
+    days off from the bar's real period start. Returns None if `values` is empty."""
+    uniq = pd.to_datetime(pd.Series(values).dropna().unique())
+    if len(uniq) == 0:
+        return None
+    return uniq[abs(uniq - target).argmin()]
+
+
 def _breakdown_table(detail_df: pd.DataFrame, mask, breakdown_dims: list[tuple[str, str]], agg_spec: dict, period_label: str) -> None:
     matched = detail_df[mask]
     if matched.empty:
@@ -164,7 +177,11 @@ def period_drilldown(
     if not points:
         st.caption("💡 Click a bar/point above to see its breakdown. Click it again to clear.")
         return
-    clicked = pd.to_datetime(points[0]["x"])
+    clicked_raw = pd.to_datetime(points[0]["x"])
+    clicked = _nearest_period(detail_df[period_col], clicked_raw)
+    if clicked is None:
+        st.caption("No detail rows to show.")
+        return
     mask = pd.to_datetime(detail_df[period_col]) == clicked
     _breakdown_table(detail_df, mask, breakdown_dims, agg_spec, clicked.strftime("%b %d, %Y"))
 
@@ -191,10 +208,13 @@ def yoy_drilldown(
         st.caption("Couldn't determine which year was clicked.")
         return
     try:
-        year, moy = int(fig.data[curve_number].name), int(point["x"])
+        # round(), not int(), for the same reason period_drilldown snaps to the
+        # nearest period: a bar/marker click can report a slightly off-center x.
+        year, moy = int(fig.data[curve_number].name), round(float(point["x"]))
     except (TypeError, ValueError):
         st.caption("Couldn't determine which year was clicked.")
         return
+    moy = min(12, max(1, moy))
     dates = pd.to_datetime(detail_df[date_col], errors="coerce")
     mask = (dates.dt.year == year) & (dates.dt.month == moy)
     label = pd.Timestamp(year=year, month=moy, day=1).strftime("%B %Y")
