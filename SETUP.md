@@ -63,6 +63,13 @@ export DATABASE_URL="postgresql://...neon.tech/neondb?sslmode=require"
 3. App Settings → Secrets → paste the same `dashboard_password` / `database_url` from your local `.streamlit/secrets.toml`.
 4. Set the app to **private**, restrict viewers to your email, for a second layer of access control beyond the password.
 
+## 4. Cloud extraction pipeline (Gmail-sourced, automatic + manual)
+
+See [GMAIL_SETUP.md](GMAIL_SETUP.md) for the one-time Google Cloud + OAuth setup
+this needs (enabling the Gmail API, creating an OAuth client, consent screen
+choices). The ingestion script, GitHub Actions workflow, and in-dashboard connect
+flow are separate, in-progress work — this doc only covers getting credentials.
+
 ## Notes
 
 - `po_data.db` (SQLite) is the source of truth for the local pipeline; Neon Postgres is a published copy for the dashboard. Re-run `sync_dashboard.py` any time you want the dashboard to reflect new local extractions.

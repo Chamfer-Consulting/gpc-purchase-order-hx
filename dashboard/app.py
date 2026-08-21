@@ -23,7 +23,8 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import qbo_client  # noqa: E402 — needs the sys.path insert above
+import gmail_client  # noqa: E402 — needs the sys.path insert above
+import qbo_client  # noqa: E402
 from data import (  # noqa: E402
     DARK,
     LIGHT,
@@ -39,6 +40,7 @@ from data import (  # noqa: E402
 from views import (  # noqa: E402
     datamgmt_edit,
     datamgmt_raw,
+    email_ingestion,
     fulfillment_dataquality,
     fulfillment_match,
     fulfillment_rvd,
@@ -76,6 +78,23 @@ if "code" in _qp and "realmId" in _qp:
         # below instead of leaving the user stuck on a dead error screen.
         st.query_params.clear()
         st.error(f"QuickBooks connection failed: {e}\n\nYou can try **Connect to QuickBooks** again from the 🔗 QuickBooks pages.")
+elif "code" in _qp and _qp.get("state", "").startswith("gmail_connect"):
+    # Google's callback never carries realmId, so this can't collide with the QBO
+    # branch above — see email_ingestion.py's state prefixing.
+    try:
+        _conn = psycopg2.connect(get_database_url())
+        try:
+            gmail_client.exchange_code_for_tokens(
+                _conn, st.secrets["gmail_client_id"], st.secrets["gmail_client_secret"],
+                st.secrets["gmail_redirect_uri"], _qp["code"],
+            )
+        finally:
+            _conn.close()
+        st.query_params.clear()
+        st.rerun()
+    except Exception as e:
+        st.query_params.clear()
+        st.error(f"Gmail connection failed: {e}\n\nYou can try **Connect Gmail** again from the ✉️ Email Ingestion page.")
 
 # ── Auth ────────────────────────────────────────────────────────────────────────
 
@@ -335,6 +354,9 @@ page_qbo_connection = st.Page(
     lambda: quickbooks_connection.render(ctx), title="Connection & Sync", url_path="qbo_connection"
 )
 page_qbo_invoices = st.Page(lambda: quickbooks_invoices.render(ctx), title="Invoice Explorer", url_path="qbo_invoices")
+page_email_ingestion = st.Page(
+    lambda: email_ingestion.render(ctx), title="Connection", icon="✉️", url_path="email_ingestion"
+)
 
 pages = {
     "": [page_home],
@@ -342,6 +364,7 @@ pages = {
     "📦 Fulfillment": [page_match_review, page_rvd, page_data_quality],
     "🗂️ Data Management": [page_raw_data, page_edit_po],
     "🔗 QuickBooks": [page_qbo_connection, page_qbo_invoices],
+    "✉️ Email Ingestion": [page_email_ingestion],
 }
 
 # Subset of pages dashboard/attention.py's AttentionItem.page values reference —
