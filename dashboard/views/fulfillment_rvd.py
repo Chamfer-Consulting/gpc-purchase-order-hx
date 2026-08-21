@@ -12,7 +12,7 @@ import psycopg2
 import streamlit as st
 
 from data import color_map_for, get_database_url, load_matched_line_items, style
-from ui_kit import data_table, empty_state, page_header, period_drilldown, section_card
+from ui_kit import data_table, empty_state, kpi_row, page_header, period_drilldown, section_card
 
 
 def _variance_styler(palette):
@@ -123,9 +123,11 @@ def render(ctx) -> None:
                     if r["requested_amount"] else None,
                     axis=1,
                 )
-                grouped = grouped.sort_values(
-                    ["Period"] + [c for c in group_cols if c != "Period"] if "Period" in group_cols else "$ Variance"
-                )
+                # Biggest shortages first, always — regardless of period grouping. This is
+                # the whole point of the report (surfacing customers we've shorted), so it
+                # shouldn't take switching "Time period" to "All time" to see it; a chronological
+                # view is one click away via the CSV export or the trend chart below.
+                grouped = grouped.sort_values("$ Variance")
 
                 display_df = grouped.rename(columns={
                     "customer_name": "Customer", "product_name": "Product", "container_size": "Size",
@@ -135,6 +137,13 @@ def render(ctx) -> None:
                 })
                 if "All" in display_df.columns:
                     display_df = display_df.drop(columns=["All"])
+
+                shorted = grouped[grouped["$ Variance"] < 0]
+                kpi_row([
+                    {"label": "🔻 Total shortfall", "value": f"${shorted['$ Variance'].sum():,.0f}" if not shorted.empty else "$0"},
+                    {"label": "Rows shorted", "value": f"{len(shorted):,} of {len(grouped):,}"},
+                    {"label": "Worst single shortage", "value": f"${shorted['$ Variance'].min():,.0f}" if not shorted.empty else "—"},
+                ])
 
                 styled = display_df.style.map(_variance_styler(palette), subset=["Qty Variance", "$ Variance"])
                 data_table(
