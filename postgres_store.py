@@ -99,13 +99,19 @@ def find_latest_po(conn, po_number: str, customer_name: str | None = None) -> di
     Gmail label the message was found under — more reliable than trying to extract
     customer identity from a terse delta email). Picks the latest by po_date, then id,
     as a reasonable proxy without re-running the full _sort_key/annotate_revisions
-    machinery just for a single lookup."""
+    machinery just for a single lookup.
+
+    Matches on po_number with leading zeros stripped from both sides — real po_number
+    values in this dataset are inconsistently zero-padded (e.g. '417721' alongside
+    '00507042'), and a candidate sniffed from free-text email content won't reliably
+    carry the same padding as whatever was originally extracted from a PDF."""
     if not po_number:
         return None
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         query = (
             f"SELECT id, {', '.join(_HEADER_COLUMNS)} FROM purchase_orders "
-            "WHERE po_number = %(po_number)s AND error IS NULL"
+            "WHERE LTRIM(po_number, '0') = LTRIM(%(po_number)s, '0') "
+            "AND po_number != '' AND error IS NULL"
         )
         params = {"po_number": po_number}
         if customer_name:
@@ -125,6 +131,19 @@ def find_latest_po(conn, po_number: str, customer_name: str | None = None) -> di
         line_rows = cur.fetchall()
 
     return _row_to_result(header, line_rows)
+
+
+def is_known(conn, source_file: str, file_hash: str) -> bool:
+    """True if this exact (source_file, file_hash) has already been extracted and
+    stored — mirrors db.get_cached_result()'s cache-hit check for the local
+    pipeline, so re-scanning a Gmail message already processed in a prior
+    incremental run doesn't re-call the Claude API for it."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM purchase_orders WHERE source_file = %s AND file_hash = %s LIMIT 1",
+            (source_file, file_hash),
+        )
+        return cur.fetchone() is not None
 
 
 def get_reference_prices(conn) -> dict:

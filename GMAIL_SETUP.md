@@ -90,14 +90,51 @@ keys will also need to go into GitHub Actions repo secrets later, alongside
 `ANTHROPIC_API_KEY` and `DATABASE_URL`, for the scheduled/manual extraction job —
 that wiring comes in a later step, not part of this guide.)
 
-## 5. Note your label names
+## 5. Configured labels (GMAIL_LABELS)
 
-The extraction pipeline reads Gmail by label (one per customer, per your setup).
-Write down the *exact* label name(s) as they appear in Gmail — including any
-parent/child nesting (e.g. `PO/Get Fresh`) — you'll need these for the
-`GMAIL_LABELS` configuration when the ingestion script is wired up. Gmail label
-names are case-sensitive in the API even though the UI isn't picky about it, so
-copy them from Gmail's own label settings rather than retyping from memory.
+Pulled directly via the Gmail API (through the dashboard's ✉️ Email Ingestion page,
+after connecting) rather than hand-typed, so nested names with apostrophes/parens
+are byte-exact. This is the current `GMAIL_LABELS` value — a comma-separated list
+of exact label names, one per customer:
+
+```
+1. Customers/Anthony Marano's (AMC),1. Customers/Get Fresh Produce,1. Customers/Hillside Food Pantry,1. Customers/Inspiration Corporation,1. Customers/Local Foods,1. Customers/Marillac House (Tramaine & Holly),1. Customers/Midwest Foods,1. Customers/Post Marketplace,1. Customers/Restaurants,1. Customers/Skoufis Foodservice,1. Customers/Testa Produce,1. Customers/The Original Pancake House,1. Customers/The Urban Canopy,1. Customers/UChicago,1. Customers/Village Farm Stand,1. Customers/West Suburban Community Pantry
+```
+
+`1. Customers/Restaurants` is a catch-all for small one-off/few-time sales (pre-2023) —
+not a single customer. Its messages are still included, but `run_cloud_extraction.py`
+never treats *that particular* label's name as a customer-identity hint the way it
+implicitly could for the others (relevant only to its delta-revision context lookup —
+see the `_process_message` docstring).
+
+Adding a new customer later: add their label to this list, update the
+`GMAIL_LABELS` GitHub Actions secret (see below), and run a manual
+`workflow_dispatch` with **Full backlog scan** checked to pull their history —
+otherwise the incremental cursor would only pick up messages from that point
+forward.
+
+## 6. GitHub Actions secrets (automatic + manual runs)
+
+The extraction script itself (`run_cloud_extraction.py`) runs via
+`.github/workflows/extract_pos.yml` — a scheduled job (daily, edit the `cron:` line
+to change cadence) plus a manual `workflow_dispatch` trigger (repo's **Actions**
+tab → the workflow → **Run workflow**, with a **Full backlog scan** checkbox; or
+`gh workflow run extract_pos.yml -f full_backlog=true` from a terminal). It reads
+plain environment variables, not Streamlit secrets, so these need to be added as
+**repo secrets** (Settings → Secrets and variables → Actions → New repository
+secret) separately from everything in `.streamlit/secrets.toml`:
+
+| Secret name | Value |
+|---|---|
+| `ANTHROPIC_API_KEY` | Your Anthropic API key — **only** needed here, the dashboard never calls Claude |
+| `DATABASE_URL` | Same Neon connection string as the `database_url` Streamlit secret |
+| `GMAIL_CLIENT_ID` | Same value as the `gmail_client_id` Streamlit secret |
+| `GMAIL_CLIENT_SECRET` | Same value as the `gmail_client_secret` Streamlit secret |
+| `GMAIL_LABELS` | The comma-separated value from step 5 above |
+
+Note there's no `GMAIL_REDIRECT_URI` here — the Action only refreshes an
+already-issued token (via `gmail_client.get_valid_access_token`), it never does the
+interactive authorize-redirect step, which only the dashboard's Connect flow needs.
 
 ## Troubleshooting
 

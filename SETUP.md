@@ -65,10 +65,27 @@ export DATABASE_URL="postgresql://...neon.tech/neondb?sslmode=require"
 
 ## 4. Cloud extraction pipeline (Gmail-sourced, automatic + manual)
 
-See [GMAIL_SETUP.md](GMAIL_SETUP.md) for the one-time Google Cloud + OAuth setup
-this needs (enabling the Gmail API, creating an OAuth client, consent screen
-choices). The ingestion script, GitHub Actions workflow, and in-dashboard connect
-flow are separate, in-progress work — this doc only covers getting credentials.
+Runs independently of the local pipeline above — reads labeled PO emails
+(attachments and body text) straight from Gmail and writes straight to Postgres,
+via `run_cloud_extraction.py`, on a GitHub Actions schedule or manual dispatch
+(`.github/workflows/extract_pos.yml`).
+
+See [GMAIL_SETUP.md](GMAIL_SETUP.md) for full setup: enabling the Gmail API,
+creating an OAuth client, the one-time "Connect Gmail" flow (dashboard's ✉️ Email
+Ingestion page), the `GMAIL_LABELS` value, and the GitHub Actions repo secrets.
+
+Manual local run (own `ANTHROPIC_API_KEY`, same idempotency-by-content-hash model
+as the local pipeline — already-processed messages are skipped automatically):
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+export DATABASE_URL="postgresql://...neon.tech/neondb?sslmode=require"
+export GMAIL_CLIENT_ID="..."       # same value as the gmail_client_id Streamlit secret
+export GMAIL_CLIENT_SECRET="..."   # same value as the gmail_client_secret Streamlit secret
+export GMAIL_LABELS="..."          # see GMAIL_SETUP.md
+.venv312/bin/python run_cloud_extraction.py            # incremental
+.venv312/bin/python run_cloud_extraction.py --full-backlog   # ignore the cursor, scan everything
+```
 
 ## Notes
 
