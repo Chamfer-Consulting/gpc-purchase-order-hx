@@ -22,8 +22,10 @@ Requirements:
 
 import argparse
 import base64
+import io
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -88,6 +90,14 @@ Rules:
 - Preserve the full original product description in product_raw exactly as written
 - sent_date: look for labels like 'Sent', 'Issued', 'Created', 'Date Sent', 'Transmitted'
 - revision_number/revision_label: look for 'Rev', 'Revision', 'Revised', 'Amendment', 'Version', 'Ver'
+- document_printed_at: some vendors print an UNLABELED date+time stamp in the page
+  header (often top-right, near a 'Page X of Y' marker and/or the preparer's initials),
+  e.g. '04/11/26 8:52p' — distinct from Issue Date / PO Date, which are day-only with
+  no time. This is the exact moment this specific copy of the document was generated,
+  and is often the ONLY signal (finer than any other date on the page) that
+  distinguishes an updated reprint of the same PO number from the original — extract
+  it exactly as printed (include the time) whenever present, even without an explicit
+  label. Leave null if no such timestamp appears anywhere on the page.
 - Some documents show a separate additional per-line charge on top of the main unit
   price — e.g. a column labeled 'Adtl. Cost', 'Additional Cost', 'Surcharge', or
   'Freight' that is added into that line's printed total. If a line has one, extract
@@ -119,6 +129,11 @@ EXTRACTION_TOOL = {
             "po_date": {"type": ["string", "null"]},
             "sent_date": {"type": ["string", "null"]},
             "delivery_date": {"type": ["string", "null"]},
+            "document_printed_at": {
+                "type": ["string", "null"],
+                "description": "Unlabeled date+time page-header stamp exactly as printed "
+                                "(e.g. '04/11/26 8:52p'), if present — see the rules above.",
+            },
             "revision_number": {"type": ["string", "null"]},
             "revision_label": {"type": ["string", "null"]},
             "customer_name": {"type": ["string", "null"]},
@@ -158,10 +173,47 @@ MAX_TEXT_CHARS = 15000   # extracted PDF text longer than this is truncated befo
 
 # ── Revision Detection & Diff Engine ──────────────────────────────────────────
 
+_PRINTED_AT_PATTERN = re.compile(
+    r"^\s*(\d{1,2})/(\d{1,2})/(\d{2,4})\s+(\d{1,2}):(\d{2})\s*([ap])m?\s*$", re.IGNORECASE
+)
+
+
+def _parse_printed_at(value):
+    """Best-effort parse of document_printed_at (e.g. '04/11/26 8:52p') into a
+    zero-padded 'YYYY-MM-DD HH:MM' string that sorts correctly alongside sent_date/
+    po_date's YYYY-MM-DD format. Falls back to the raw value (still a usable, if not
+    perfectly chronological, tiebreaker) if the format doesn't match what vendors
+    have been observed to print."""
+    if not value:
+        return None
+    m = _PRINTED_AT_PATTERN.match(value)
+    if not m:
+        return value
+    month, day, year, hour, minute, ampm = m.groups()
+    year = int(year)
+    if year < 100:
+        year += 2000
+    hour = int(hour) % 12
+    if ampm.lower() == "p":
+        hour += 12
+    try:
+        return f"{year:04d}-{int(month):02d}-{int(day):02d} {hour:02d}:{minute}"
+    except ValueError:
+        return value
+
+
 def _sort_key(result):
-    """Sort key for ordering versions of the same PO: sent_date > po_date > filename."""
+    """Sort key for ordering versions of the same PO: document_printed_at (the exact
+    moment this copy was generated — the finest-grained and most reliable signal for
+    same-day reprints/revisions, especially for customers who don't send an explicit
+    revision confirmation) > source_received_at (the Gmail message's own timestamp,
+    for POs/revisions ingested straight from email with no printed stamp of their
+    own — already a zero-padded 'YYYY-MM-DD HH:MM:SS' string, no parsing needed) >
+    sent_date > po_date > filename."""
+    printed_at = _parse_printed_at(result.get("document_printed_at"))
     return (
-        result.get("sent_date") or result.get("po_date") or "9999",
+        printed_at or result.get("source_received_at")
+        or result.get("sent_date") or result.get("po_date") or "9999",
         result.get("_source_file") or ""
     )
 
@@ -343,10 +395,13 @@ def annotate_revisions(all_results):
 
 # ── PDF Text Extraction ────────────────────────────────────────────────────────
 
-def extract_pdf_text(pdf_path: str) -> str | None:
-    """Extract text from a PDF. Returns None if extraction fails or yields no text."""
+def extract_pdf_text(pdf_source: str | bytes) -> str | None:
+    """Extract text from a PDF, given a file path or raw PDF bytes (e.g. a Gmail
+    attachment fetched straight into memory, never touching disk). Returns None if
+    extraction fails or yields no text."""
     try:
-        with pdfplumber.open(pdf_path) as pdf:
+        source = io.BytesIO(pdf_source) if isinstance(pdf_source, bytes) else pdf_source
+        with pdfplumber.open(source) as pdf:
             pages = []
             for page in pdf.pages:
                 text = page.extract_text()
@@ -358,9 +413,12 @@ def extract_pdf_text(pdf_path: str) -> str | None:
         return None
 
 
-def pdf_to_base64(pdf_path: str) -> str:
-    """Convert PDF file to base64 string for API vision fallback."""
-    with open(pdf_path, "rb") as f:
+def pdf_to_base64(pdf_source: str | bytes) -> str:
+    """Convert a PDF (file path or raw bytes) to a base64 string for the API vision
+    fallback."""
+    if isinstance(pdf_source, bytes):
+        return base64.standard_b64encode(pdf_source).decode("utf-8")
+    with open(pdf_source, "rb") as f:
         return base64.standard_b64encode(f.read()).decode("utf-8")
 
 
@@ -373,30 +431,35 @@ def _is_out_of_credits(e: anthropic.PermissionDeniedError) -> bool:
     return "credit balance" in str(e).lower()
 
 
-def extract_po_data(
+def _extract_from_source(
     client: anthropic.Anthropic,
-    pdf_path: str,
+    source_label: str,
     stop_event: threading.Event | None = None,
     reference_prices: dict | None = None,
+    *,
+    text: str | None = None,
+    pdf_b64: str | None = None,
+    extraction_method: str = "text",
 ) -> dict | None:
     """
-    Extract PO data from a single PDF. Uses text extraction first, falls back to vision.
+    Core Claude-calling extraction logic, decoupled from where the document content
+    came from — a local PDF file (see extract_po_data, below) or content pulled
+    straight from Gmail (attachment bytes or an email body's own text, never touching
+    disk). Exactly one of text/pdf_b64 should be given; extraction_method records
+    which, for logging and the extracted _extraction_method field.
 
     Returns None (instead of an error dict) if stop_event is already set when this
     call starts — used to fast-drain queued work after an out-of-credits pause without
     making further API calls or writing spurious error rows for files never attempted.
 
     reference_prices, if given, is a read-only {(customer, product, size): price} dict
-    (computed once per run via db.refresh_reference_prices/get_reference_prices) used to
-    flag line items whose price looks anomalous — safe to share across worker threads
-    since it's never mutated after being built.
+    used to flag line items whose price looks anomalous — safe to share across worker
+    threads since it's never mutated after being built.
     """
-    filename = os.path.basename(pdf_path)
-    text = extract_pdf_text(pdf_path)
     text_truncated = bool(text) and len(text) > MAX_TEXT_CHARS
     if text_truncated:
         logger.warning(
-            f"{filename}: extracted text is {len(text)} chars, truncating to "
+            f"{source_label}: extracted text is {len(text)} chars, truncating to "
             f"{MAX_TEXT_CHARS} before sending to the model — trailing content may be lost"
         )
     last_error = "Unknown error"
@@ -414,7 +477,6 @@ def extract_po_data(
                     }
                 ]
             else:
-                b64 = pdf_to_base64(pdf_path)
                 messages = [
                     {
                         "role": "user",
@@ -424,7 +486,7 @@ def extract_po_data(
                                 "source": {
                                     "type": "base64",
                                     "media_type": "application/pdf",
-                                    "data": b64
+                                    "data": pdf_b64
                                 }
                             },
                             {"type": "text", "text": "Extract the purchase order data from this document."}
@@ -447,13 +509,13 @@ def extract_po_data(
 
             data = dict(tool_block.input)
             is_po = data.pop("is_po", True)
-            data["_source_file"] = filename
-            data["_extraction_method"] = "text" if text else "vision"
+            data["_source_file"] = source_label
+            data["_extraction_method"] = extraction_method
 
             if not is_po:
                 return {
-                    "_source_file": filename,
-                    "_extraction_method": "text" if text else "vision",
+                    "_source_file": source_label,
+                    "_extraction_method": extraction_method,
                     "error": "not a purchase order"
                 }
 
@@ -481,14 +543,14 @@ def extract_po_data(
 
             elapsed = time.monotonic() - start_time
             logger.info(
-                f"{filename}: extracted via {data['_extraction_method']} in {elapsed:.1f}s "
+                f"{source_label}: extracted via {extraction_method} in {elapsed:.1f}s "
                 f"(attempt {attempt + 1}/{MAX_RETRIES})"
             )
             return data
 
         except (ValueError, KeyError, TypeError) as e:
             last_error = f"Malformed tool response (attempt {attempt + 1}/{MAX_RETRIES}): {e}"
-            logger.warning(f"{filename}: {last_error}")
+            logger.warning(f"{source_label}: {last_error}")
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY)
             continue
@@ -497,30 +559,30 @@ def extract_po_data(
             if _is_out_of_credits(e):
                 if stop_event is not None:
                     stop_event.set()
-                logger.error(f"{filename}: out of API credits — {e}")
+                logger.error(f"{source_label}: out of API credits — {e}")
                 return {
-                    "_source_file": filename,
-                    "_extraction_method": "text" if text else "vision",
+                    "_source_file": source_label,
+                    "_extraction_method": extraction_method,
                     "error": "insufficient API credits — add credits and rerun to resume"
                 }
             # Other 403s (e.g. no access to this model) won't resolve by retrying.
-            logger.warning(f"{filename}: permission error — {e}")
+            logger.warning(f"{source_label}: permission error — {e}")
             return {
-                "_source_file": filename,
-                "_extraction_method": "text" if text else "vision",
+                "_source_file": source_label,
+                "_extraction_method": extraction_method,
                 "error": f"Permission error: {e}"
             }
 
         except anthropic.RateLimitError as e:
             wait = RETRY_DELAY * (2 ** attempt)  # exponential: 5s, 10s, 20s
             last_error = f"Rate limit (attempt {attempt + 1}/{MAX_RETRIES}): {e} — retrying in {wait}s"
-            logger.warning(f"{filename}: rate limit hit, waiting {wait}s...")
+            logger.warning(f"{source_label}: rate limit hit, waiting {wait}s...")
             time.sleep(wait)
             continue
 
         except anthropic.APIStatusError as e:
             last_error = f"API error {e.status_code} (attempt {attempt + 1}/{MAX_RETRIES}): {e.message}"
-            logger.warning(f"{filename}: {last_error}")
+            logger.warning(f"{source_label}: {last_error}")
             if attempt < MAX_RETRIES - 1:
                 wait = RETRY_DELAY * (attempt + 1)
                 time.sleep(wait)
@@ -528,24 +590,45 @@ def extract_po_data(
 
         except anthropic.APIConnectionError as e:
             last_error = f"Connection error (attempt {attempt + 1}/{MAX_RETRIES}): {e}"
-            logger.warning(f"{filename}: {last_error}")
+            logger.warning(f"{source_label}: {last_error}")
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY)
             continue
 
         except Exception as e:
             last_error = f"{type(e).__name__} (attempt {attempt + 1}/{MAX_RETRIES}): {e}"
-            logger.warning(f"{filename}: {last_error}")
+            logger.warning(f"{source_label}: {last_error}")
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY)
             continue
 
-    logger.error(f"{filename}: max retries exceeded — {last_error}")
+    logger.error(f"{source_label}: max retries exceeded — {last_error}")
     return {
-        "_source_file": filename,
-        "_extraction_method": "text" if text else "vision",
+        "_source_file": source_label,
+        "_extraction_method": extraction_method,
         "error": f"Max retries exceeded — last error: {last_error}"
     }
+
+
+def extract_po_data(
+    client: anthropic.Anthropic,
+    pdf_path: str,
+    stop_event: threading.Event | None = None,
+    reference_prices: dict | None = None,
+) -> dict | None:
+    """
+    Extract PO data from a single local PDF file. Uses text extraction first, falls
+    back to vision. Thin wrapper around _extract_from_source() that acquires content
+    from a filesystem path — see that function for the shared Claude-calling logic
+    (also used for Gmail-sourced content that never touches disk).
+    """
+    filename = os.path.basename(pdf_path)
+    text = extract_pdf_text(pdf_path)
+    pdf_b64 = None if text else pdf_to_base64(pdf_path)
+    return _extract_from_source(
+        client, filename, stop_event, reference_prices,
+        text=text, pdf_b64=pdf_b64, extraction_method="text" if text else "vision",
+    )
 
 
 # ── Excel Output ───────────────────────────────────────────────────────────────

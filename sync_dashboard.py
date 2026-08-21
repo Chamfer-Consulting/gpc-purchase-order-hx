@@ -79,6 +79,7 @@ def _publish_to_postgres(results: list, database_url: str) -> list:
         header_rows.append((
             r.get("_source_file"), r.get("_file_hash"), r.get("_extraction_method"), r.get("error"),
             r.get("po_number"), po_date, r.get("sent_date"), delivery_date,
+            r.get("document_printed_at"), r.get("source_received_at"),
             r.get("revision_number"), r.get("revision_label"),
             bool(r.get("_is_revision", False)), r.get("_version_label"),
             r.get("customer_name"), r.get("customer_id"),
@@ -96,37 +97,39 @@ def _publish_to_postgres(results: list, database_url: str) -> list:
                 """
                 INSERT INTO purchase_orders (
                     source_file, file_hash, extraction_method, error,
-                    po_number, po_date, sent_date, delivery_date,
+                    po_number, po_date, sent_date, delivery_date, document_printed_at, source_received_at,
                     revision_number, revision_label, is_revision, version_label,
                     customer_name, customer_id,
                     subtotal, tax, total, notes,
                     math_check_failed, math_check_detail, extracted_at
                 ) VALUES %s
                 ON CONFLICT (source_file, file_hash) DO UPDATE SET
-                    extraction_method = EXCLUDED.extraction_method,
-                    error             = EXCLUDED.error,
-                    po_number         = EXCLUDED.po_number,
-                    po_date           = EXCLUDED.po_date,
-                    sent_date         = EXCLUDED.sent_date,
-                    delivery_date     = EXCLUDED.delivery_date,
-                    revision_number   = EXCLUDED.revision_number,
-                    revision_label    = EXCLUDED.revision_label,
-                    is_revision       = EXCLUDED.is_revision,
-                    version_label     = EXCLUDED.version_label,
-                    customer_name     = EXCLUDED.customer_name,
-                    customer_id       = EXCLUDED.customer_id,
-                    subtotal          = EXCLUDED.subtotal,
-                    tax               = EXCLUDED.tax,
-                    total             = EXCLUDED.total,
-                    notes             = EXCLUDED.notes,
-                    math_check_failed = EXCLUDED.math_check_failed,
-                    math_check_detail = EXCLUDED.math_check_detail,
-                    extracted_at      = now()
+                    extraction_method   = EXCLUDED.extraction_method,
+                    error               = EXCLUDED.error,
+                    po_number           = EXCLUDED.po_number,
+                    po_date             = EXCLUDED.po_date,
+                    sent_date           = EXCLUDED.sent_date,
+                    delivery_date       = EXCLUDED.delivery_date,
+                    document_printed_at = EXCLUDED.document_printed_at,
+                    source_received_at  = EXCLUDED.source_received_at,
+                    revision_number     = EXCLUDED.revision_number,
+                    revision_label      = EXCLUDED.revision_label,
+                    is_revision         = EXCLUDED.is_revision,
+                    version_label       = EXCLUDED.version_label,
+                    customer_name       = EXCLUDED.customer_name,
+                    customer_id         = EXCLUDED.customer_id,
+                    subtotal            = EXCLUDED.subtotal,
+                    tax                 = EXCLUDED.tax,
+                    total               = EXCLUDED.total,
+                    notes               = EXCLUDED.notes,
+                    math_check_failed   = EXCLUDED.math_check_failed,
+                    math_check_detail   = EXCLUDED.math_check_detail,
+                    extracted_at        = now()
                 WHERE purchase_orders.edited = FALSE
                 RETURNING source_file, file_hash, id
                 """,
                 header_rows,
-                template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())",
+                template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())",
                 page_size=200,
                 fetch=True,
             )

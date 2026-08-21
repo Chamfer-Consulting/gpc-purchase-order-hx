@@ -86,6 +86,17 @@ ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS drive_file_id TEXT;
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS drive_synced_at TIMESTAMPTZ;
 
+-- Unlabeled date+time page-header stamp (e.g. Get Fresh's top-right print timestamp),
+-- captured as the finest-grained signal for ordering same-po_number revisions/reprints
+-- when no explicit revision confirmation exists — see extract_pos.py's _sort_key().
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS document_printed_at TEXT;
+
+-- The Gmail message's own timestamp, for POs/revisions ingested straight from email
+-- (attachment or body text) rather than scanned from a local PDF — the cloud-ingestion
+-- equivalent of document_printed_at's "when this exact copy was produced" signal, used
+-- as the next fallback in _sort_key() when a document has no printed stamp of its own.
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS source_received_at TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_line_items_po_id ON line_items(po_id);
 CREATE INDEX IF NOT EXISTS idx_po_po_number ON purchase_orders(po_number);
 CREATE INDEX IF NOT EXISTS idx_po_po_date ON purchase_orders(po_date);
@@ -181,4 +192,19 @@ CREATE INDEX IF NOT EXISTS idx_po_invoice_links_invoice_id ON po_invoice_links(i
 CREATE TABLE IF NOT EXISTS hidden_products (
     product_name TEXT PRIMARY KEY,
     hidden_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Gmail OAuth connection for the cloud extraction pipeline (run_cloud_extraction.py,
+-- run manually or via a scheduled GitHub Action) — same shape as qbo_connection above,
+-- minus a realm_id since Gmail has no equivalent concept. last_synced_at is the
+-- incremental-scan cursor; NULL means "never synced, or forced full backlog scan".
+CREATE TABLE IF NOT EXISTS gmail_connection (
+    id                       SERIAL PRIMARY KEY,
+    email_address            TEXT NOT NULL,
+    access_token             TEXT NOT NULL,
+    refresh_token            TEXT NOT NULL,
+    access_token_expires_at  TIMESTAMPTZ NOT NULL,
+    connected_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_synced_at           TIMESTAMPTZ
 );

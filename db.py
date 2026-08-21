@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     po_date            TEXT,
     sent_date          TEXT,
     delivery_date      TEXT,
+    document_printed_at TEXT,
+    source_received_at TEXT,
     revision_number    TEXT,
     revision_label     TEXT,
     customer_name      TEXT,
@@ -88,6 +90,11 @@ def init_db(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE line_items ADD COLUMN additional_cost REAL")
     if "price_anomaly" not in cols:
         conn.execute("ALTER TABLE line_items ADD COLUMN price_anomaly TEXT")
+    po_cols = {row[1] for row in conn.execute("PRAGMA table_info(purchase_orders)")}
+    if "document_printed_at" not in po_cols:
+        conn.execute("ALTER TABLE purchase_orders ADD COLUMN document_printed_at TEXT")
+    if "source_received_at" not in po_cols:
+        conn.execute("ALTER TABLE purchase_orders ADD COLUMN source_received_at TEXT")
     conn.commit()
 
 
@@ -108,6 +115,8 @@ def _row_to_result(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "po_date": row["po_date"],
         "sent_date": row["sent_date"],
         "delivery_date": row["delivery_date"],
+        "document_printed_at": row["document_printed_at"],
+        "source_received_at": row["source_received_at"],
         "revision_number": row["revision_number"],
         "revision_label": row["revision_label"],
         "customer_name": row["customer_name"],
@@ -170,15 +179,16 @@ def save_result(conn: sqlite3.Connection, file_hash: str, result: dict) -> None:
         """
         INSERT OR REPLACE INTO purchase_orders (
             source_file, file_hash, extraction_method, error,
-            po_number, po_date, sent_date, delivery_date,
+            po_number, po_date, sent_date, delivery_date, document_printed_at, source_received_at,
             revision_number, revision_label, customer_name, customer_id,
             subtotal, tax, total, notes,
             math_check_failed, math_check_detail, extracted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             result.get("_source_file"), file_hash, result.get("_extraction_method"), result.get("error"),
             result.get("po_number"), result.get("po_date"), result.get("sent_date"), result.get("delivery_date"),
+            result.get("document_printed_at"), result.get("source_received_at"),
             result.get("revision_number"), result.get("revision_label"),
             result.get("customer_name"), result.get("customer_id"),
             result.get("subtotal"), result.get("tax"), result.get("total"), result.get("notes"),
