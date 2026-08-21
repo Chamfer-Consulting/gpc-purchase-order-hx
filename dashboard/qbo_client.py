@@ -343,6 +343,15 @@ def sync_invoices(conn, full_resync: bool = False) -> int:
                     if catalog_entry is not None:
                         category, product_name, size = catalog_entry
                         is_sample = category == "sample"
+                        if not size:
+                            # The catalog's size comes only from the item's own QBO
+                            # name (see sync_items()), which for older/generically-named
+                            # items (e.g. "Samples & Trials:Rainbow Mix (deleted)") often
+                            # doesn't encode a size at all — but each invoice line's own
+                            # Description usually does ("4 oz."). Recover it from there
+                            # instead of leaving requested-vs-delivered comparisons unable
+                            # to match this line against its PO counterpart by size.
+                            _, size, _, _ = normalize_product(f"{item_ref} {description}", unit_price=unit_price)
                     else:
                         product_name, size, is_sample, _ = normalize_product(
                             f"{item_ref} {description}", unit_price=unit_price,
