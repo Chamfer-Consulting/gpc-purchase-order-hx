@@ -47,7 +47,18 @@ from sync_dashboard import _publish_to_postgres  # noqa — same cross-module pr
 
 logger = logging.getLogger("run_cloud_extraction")
 
-MAX_SEARCH_RESULTS = 1000  # per label, per run — generous upper bound; --limit trims further for testing
+MAX_SEARCH_RESULTS = 3000  # per label, per run — customer labels are general
+# correspondence (every email exchanged with that customer, not just POs), and
+# real per-label volume has been observed as high as ~2,470 for one customer.
+# Deliberately no subject-keyword filter: different customers use wildly different,
+# idiosyncratic subject conventions for their real orders (e.g. one customer's
+# genuine recurring orders are titled "LUCSA <date>", with no mention of
+# "purchase"/"order"/"po" at all) — a generic keyword filter would silently drop
+# real POs for some customers while barely reducing volume for others. Every
+# message under a configured label gets processed; Claude's own is_po
+# classification (see _extract_from_source) is what actually screens out non-PO
+# correspondence, at the cost of a wasted call per non-PO message rather than the
+# risk of a missed real one.
 
 # Matches a PO number referenced in free text, e.g. "PO #417721", "P.O. 00507042",
 # "order 434416" — used to detect a shorthand/delta revision email (one that
