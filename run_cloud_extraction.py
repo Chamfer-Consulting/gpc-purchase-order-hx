@@ -83,6 +83,27 @@ def configure_logging(log_path: str) -> None:
     )
 
 
+def _ensure_connection(pg_conn, database_url: str):
+    """Returns a working Postgres connection — the same one if it's still alive, or
+    a fresh one if it's been dropped. A single run can span many minutes of mostly
+    Gmail/Claude API calls with the DB connection sitting idle in between; confirmed
+    live that a connection held that way can die mid-run ("SSL connection has been
+    closed unexpectedly") — most likely Neon's serverless compute autosuspending
+    after an idle gap, which no client-side keepalive setting prevents. Called
+    before each significant DB touch point rather than once, so a mid-run drop
+    costs at most one cheap reconnect, not the whole run."""
+    try:
+        with pg_conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        return pg_conn
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        try:
+            pg_conn.close()
+        except Exception:
+            pass
+        return psycopg2.connect(database_url)
+
+
 def _require_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -305,6 +326,7 @@ def main():
         print(f"📧 {len(thread_ids)} thread(s) to process across {len(labels)} label(s)")
 
         if not thread_ids:
+            pg_conn = _ensure_connection(pg_conn, database_url)
             gmail_client.mark_synced(pg_conn, sync_started_at)
             print("Nothing new — cursor updated, exiting.")
             return
@@ -320,6 +342,7 @@ def main():
             if stop_event.is_set():
                 break
             try:
+                pg_conn = _ensure_connection(pg_conn, database_url)
                 access_token = gmail_client.get_valid_access_token(pg_conn, gmail_client_id, gmail_client_secret)
                 results = _process_thread(client, access_token, thread_id, reference_prices, pg_conn, stop_event)
             except Exception as e:
@@ -354,6 +377,8 @@ def main():
         if len(deduped) < len(new_results):
             print(f"ℹ️  Dropped {len(new_results) - len(deduped)} duplicate (source_file, file_hash) result(s) this run")
         new_results = deduped
+        errors = sum(1 for r in new_results if "error" in r)  # recomputed post-dedup —
+        # the running count above included the dropped duplicate(s) too
 
         # A skipped thread's messages are necessarily before sync_started_at (it
         # was already found by this run's "after: <old cursor>" search) — advancing
@@ -372,6 +397,7 @@ def main():
 
         if not new_results:
             if cursor_safe_to_advance:
+                pg_conn = _ensure_connection(pg_conn, database_url)
                 gmail_client.mark_synced(pg_conn, sync_started_at)
                 print("No new extractable content found — cursor updated, exiting.")
             else:
@@ -381,6 +407,7 @@ def main():
         print(f"📈 {len(new_results) - errors} extracted successfully, {errors} error(s)")
 
         print("🔄 Re-annotating revisions across the full dataset...")
+        pg_conn = _ensure_connection(pg_conn, database_url)
         combined = postgres_store.get_full_dataset(pg_conn) + new_results
         combined.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
         annotate_revisions(combined)
@@ -393,6 +420,7 @@ def main():
                 print(f"   {source_file}: {field} = '{value}'")
 
         if cursor_safe_to_advance:
+            pg_conn = _ensure_connection(pg_conn, database_url)
             gmail_client.mark_synced(pg_conn, sync_started_at)
             print(f"✅ Done — {len(new_results)} new/updated result(s) published.")
         else:
