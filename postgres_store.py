@@ -32,6 +32,18 @@ _LINE_ITEM_COLUMNS = (
 )
 
 
+def _to_float(v):
+    """Postgres NUMERIC columns come back from psycopg2 as decimal.Decimal, not
+    float — SQLite's REAL columns (db.py's equivalent reader) come back as plain
+    float, and code downstream (price_check.flag_price_anomaly, math_check, the
+    dashboard) does arithmetic assuming that. Mixing Decimal and float in the same
+    expression raises TypeError (seen live: 'unsupported operand type(s) for -:
+    float and decimal.Decimal', when a freshly-extracted float unit_price met a
+    Decimal reference price read back from here) rather than silently coercing, so
+    every NUMERIC-sourced value gets normalized to float right here at the source."""
+    return float(v) if v is not None else None
+
+
 def _row_to_result(header_row: dict, line_rows: list) -> dict:
     result = {
         "_source_file": header_row["source_file"],
@@ -47,9 +59,9 @@ def _row_to_result(header_row: dict, line_rows: list) -> dict:
         "revision_label": header_row["revision_label"],
         "customer_name": header_row["customer_name"],
         "customer_id": header_row["customer_id"],
-        "subtotal": header_row["subtotal"],
-        "tax": header_row["tax"],
-        "total": header_row["total"],
+        "subtotal": _to_float(header_row["subtotal"]),
+        "tax": _to_float(header_row["tax"]),
+        "total": _to_float(header_row["total"]),
         "notes": header_row["notes"],
         "math_check_failed": bool(header_row["math_check_failed"]),
         "math_check_detail": header_row["math_check_detail"],
@@ -62,6 +74,8 @@ def _row_to_result(header_row: dict, line_rows: list) -> dict:
         item = {col: it[col] for col in _LINE_ITEM_COLUMNS}
         item["is_sample"] = bool(item["is_sample"])
         item["needs_review"] = bool(item["needs_review"])
+        for field in ("quantity", "unit_price", "additional_cost", "line_total"):
+            item[field] = _to_float(item[field])
         result["line_items"].append(item)
 
     return result
@@ -154,4 +168,4 @@ def get_reference_prices(conn) -> dict:
     with conn.cursor() as cur:
         cur.execute("SELECT customer_name, product_name, container_size, price FROM reference_prices")
         rows = cur.fetchall()
-    return {(r[0], r[1], r[2]): r[3] for r in rows}
+    return {(r[0], r[1], r[2]): _to_float(r[3]) for r in rows}
