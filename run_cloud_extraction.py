@@ -228,6 +228,11 @@ def main():
             print("❌ Not connected to Gmail — connect via the dashboard's ✉️ Email Ingestion page first.", file=sys.stderr)
             sys.exit(1)
 
+        # Refreshed again before each message below rather than held for the whole
+        # run — a run over thousands of messages can easily outlast a single access
+        # token's ~1hr lifetime (get_valid_access_token() only actually calls
+        # Google's refresh endpoint when within 5 minutes of expiry, so calling it
+        # repeatedly is cheap/safe, not a real extra round trip most of the time).
         access_token = gmail_client.get_valid_access_token(pg_conn, gmail_client_id, gmail_client_secret)
 
         since_epoch = None
@@ -261,21 +266,37 @@ def main():
 
         new_results = []
         errors = 0
+        skipped = 0
         for message_id in tqdm(message_ids, unit="msg", ncols=80):
             if stop_event.is_set():
                 break
             try:
+                access_token = gmail_client.get_valid_access_token(pg_conn, gmail_client_id, gmail_client_secret)
                 results = _process_message(client, access_token, message_id, reference_prices, pg_conn, stop_event)
             except Exception as e:
+                # Nothing stable to key a Postgres row on here (the failure may have
+                # happened before any content — and therefore any file_hash — was
+                # ever fetched, e.g. an expired token or a transient network error)
+                # — log and skip rather than inventing a hash, so this message is
+                # retried fresh next run instead of the whole publish step failing
+                # on a NOT NULL file_hash violation.
                 logger.error(f"{message_id}: unexpected error — {e}")
-                results = [{
-                    "_source_file": f"gmail:{message_id}", "_extraction_method": "unknown",
-                    "error": f"{type(e).__name__}: {e}",
-                }]
+                skipped += 1
+                continue
             for r in results:
                 if "error" in r:
                     errors += 1
                 new_results.append(r)
+
+        # A skipped message's timestamp is necessarily before sync_started_at (it
+        # was already found by this run's "after: <old cursor>" search) — advancing
+        # the cursor to sync_started_at anyway would permanently drop it from every
+        # future incremental search. Only advance when nothing was skipped; a
+        # persistently-failing message just means the same (cheap-to-re-search)
+        # window gets rescanned next run too, which is safe, not silent data loss.
+        cursor_safe_to_advance = skipped == 0
+        if skipped:
+            print(f"⚠️  {skipped} message(s) failed before extraction (see log) — cursor NOT advanced, will retry next run")
 
         if stop_event.is_set():
             print(f"\n⏸️  Paused: ran out of API credits after {len(new_results)} result(s) this run.")
@@ -283,8 +304,11 @@ def main():
             sys.exit(3)
 
         if not new_results:
-            gmail_client.mark_synced(pg_conn, sync_started_at)
-            print("No new extractable content found — cursor updated, exiting.")
+            if cursor_safe_to_advance:
+                gmail_client.mark_synced(pg_conn, sync_started_at)
+                print("No new extractable content found — cursor updated, exiting.")
+            else:
+                print("No successful extractions this run — cursor left as-is, exiting.")
             return
 
         print(f"📈 {len(new_results) - errors} extracted successfully, {errors} error(s)")
@@ -301,8 +325,11 @@ def main():
             for source_file, field, value in bad_dates:
                 print(f"   {source_file}: {field} = '{value}'")
 
-        gmail_client.mark_synced(pg_conn, sync_started_at)
-        print(f"✅ Done — {len(new_results)} new/updated result(s) published.")
+        if cursor_safe_to_advance:
+            gmail_client.mark_synced(pg_conn, sync_started_at)
+            print(f"✅ Done — {len(new_results)} new/updated result(s) published.")
+        else:
+            print(f"✅ Done — {len(new_results)} new/updated result(s) published, but cursor left as-is ({skipped} message(s) to retry next run).")
     finally:
         pg_conn.close()
 
