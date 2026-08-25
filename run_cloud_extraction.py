@@ -186,12 +186,23 @@ def _process_thread(
     results = []
 
     if attachments_by_message:
+        seen_in_thread = set()  # (source_label, file_hash) — a reply that quotes/
+        # re-includes an earlier message's attachment (or a customer literally
+        # resending the same file) means the identical PDF can appear on more than
+        # one message in one thread; without this, both would get extracted
+        # independently and produce two identical (source_file, file_hash) rows,
+        # which crash the batch publish (Postgres: "ON CONFLICT DO UPDATE command
+        # cannot affect row a second time") — confirmed live in a real run.
         for m, att in attachments_by_message:
             if stop_event.is_set():
                 break
             pdf_bytes = gmail_client.get_attachment(access_token, m["id"], att["attachment_id"])
             file_hash = hashlib.sha256(pdf_bytes).hexdigest()
             source_label = att["filename"]
+
+            if (source_label, file_hash) in seen_in_thread:
+                continue
+            seen_in_thread.add((source_label, file_hash))
 
             if postgres_store.is_known(pg_conn, source_label, file_hash):
                 logger.info(f"{source_label}: unchanged since last run — skipping")
@@ -325,6 +336,24 @@ def main():
                 if "error" in r:
                     errors += 1
                 new_results.append(r)
+
+        # Defensive: dedupe by (source_file, file_hash) across the whole run, not
+        # just within one thread's own attachment loop — the identical attachment
+        # could in principle appear on two separate threads (e.g. a customer
+        # resending the same file in a new conversation). Two rows sharing a
+        # (source_file, file_hash) crash the batch publish's single ON CONFLICT
+        # statement (confirmed live), and since a hash match means identical
+        # content, dropping the extra copy loses nothing.
+        deduped, seen_keys = [], set()
+        for r in new_results:
+            key = (r.get("_source_file"), r.get("_file_hash"))
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            deduped.append(r)
+        if len(deduped) < len(new_results):
+            print(f"ℹ️  Dropped {len(new_results) - len(deduped)} duplicate (source_file, file_hash) result(s) this run")
+        new_results = deduped
 
         # A skipped thread's messages are necessarily before sync_started_at (it
         # was already found by this run's "after: <old cursor>" search) — advancing
