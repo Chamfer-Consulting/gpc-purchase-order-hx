@@ -107,20 +107,21 @@ def render(ctx) -> None:
                     # apostrophe or ampersand. See gmail_client.search_messages.
                     label_id = gmail_client.resolve_label_id(access_token, label)
                     if label_id is None:
-                        message_ids = None
+                        matches = None
                     else:
-                        message_ids = gmail_client.search_messages(access_token, label_id, extra_query or None, max_results=25)
+                        matches = gmail_client.search_messages(access_token, label_id, extra_query or None, max_results=25)
                 except Exception as e:
                     st.error(f"Search failed: {e}")
                 else:
-                    if message_ids is None:
+                    if matches is None:
                         st.warning(f"No label found with that exact name: `{label}`")
-                    elif not message_ids:
+                    elif not matches:
                         st.info(f"No messages found for label `{label}`" + (f" with query `{extra_query}`" if extra_query else ""))
                     else:
-                        st.write(f"{len(message_ids)} message(s) found for label `{label}`:")
+                        thread_count = len({tid for _, tid in matches})
+                        st.write(f"{len(matches)} message(s) found for label `{label}` (across {thread_count} thread(s)):")
                         rows = []
-                        for mid in message_ids:
+                        for mid, tid in matches:
                             msg = gmail_client.get_message(access_token, mid)
                             headers = gmail_client.message_headers(msg)
                             body_text, attachments = gmail_client.extract_body_and_attachments(msg)
@@ -128,6 +129,7 @@ def render(ctx) -> None:
                                 "Subject": headers.get("subject") or "(no subject)",
                                 "From": headers.get("from") or "",
                                 "Date": headers.get("date") or "",
+                                "Thread": tid,
                                 "Has PDF attachment": "Yes" if attachments else "No",
                                 "Attachment(s)": ", ".join(a["filename"] for a in attachments),
                                 "Body preview": (body_text[:80] + "…") if len(body_text) > 80 else body_text,

@@ -106,47 +106,6 @@ def get_full_dataset(conn) -> list:
     return [_row_to_result(h, items_by_po.get(h["id"], [])) for h in headers]
 
 
-def find_latest_po(conn, po_number: str, customer_name: str | None = None) -> dict | None:
-    """Returns the most recently known full state of a PO, for injecting as reference
-    context when extracting a shorthand/delta revision email that doesn't restate the
-    full order. Scoped to customer_name when given (the customer inferred from which
-    Gmail label the message was found under — more reliable than trying to extract
-    customer identity from a terse delta email). Picks the latest by po_date, then id,
-    as a reasonable proxy without re-running the full _sort_key/annotate_revisions
-    machinery just for a single lookup.
-
-    Matches on po_number with leading zeros stripped from both sides — real po_number
-    values in this dataset are inconsistently zero-padded (e.g. '417721' alongside
-    '00507042'), and a candidate sniffed from free-text email content won't reliably
-    carry the same padding as whatever was originally extracted from a PDF."""
-    if not po_number:
-        return None
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        query = (
-            f"SELECT id, {', '.join(_HEADER_COLUMNS)} FROM purchase_orders "
-            "WHERE LTRIM(po_number, '0') = LTRIM(%(po_number)s, '0') "
-            "AND po_number != '' AND error IS NULL"
-        )
-        params = {"po_number": po_number}
-        if customer_name:
-            query += " AND customer_name = %(customer_name)s"
-            params["customer_name"] = customer_name
-        query += " ORDER BY po_date DESC NULLS LAST, id DESC LIMIT 1"
-        cur.execute(query, params)
-        header = cur.fetchone()
-        if header is None:
-            return None
-
-        cur.execute(
-            f"SELECT po_id, {', '.join(_LINE_ITEM_COLUMNS)} FROM line_items "
-            "WHERE po_id = %(po_id)s AND is_removed = FALSE",
-            {"po_id": header["id"]},
-        )
-        line_rows = cur.fetchall()
-
-    return _row_to_result(header, line_rows)
-
-
 def is_known(conn, source_file: str, file_hash: str) -> bool:
     """True if this exact (source_file, file_hash) has already been extracted and
     stored — mirrors db.get_cached_result()'s cache-hit check for the local

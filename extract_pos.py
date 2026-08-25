@@ -105,18 +105,19 @@ Rules:
   not the per-unit rate itself). If a line has no such charge, leave additional_cost
   null. line_total is always the full total exactly as printed, including any such
   charge — never subtract it out.
-- Some inputs are an email that only describes a change to a previously placed order
-  (e.g. "please revise PO #1234, change Arugula 8oz to 50 units") rather than
-  restating the full order. When the input includes a block starting "Reference — the
-  most recently known version of the PO this email appears to reference" followed by
-  that prior order's full line-item detail, and then a line "--- New email content
-  follows ---": extract the COMPLETE resulting order after applying whatever change
-  the new content describes to that reference, not just the new content in isolation
-  and not the reference unchanged if the email doesn't actually alter it. Only items
-  the new email explicitly changes should differ from the reference; leave everything
-  else as it was. If it's unclear whether the new content is a delta against that
-  reference or an unrelated new order, prefer treating it as a delta only when it
-  explicitly references the same PO number.
+- Some inputs are a full email thread rather than a single document: each message is
+  labeled by sender — "GARFIELD PRODUCE / US (email@address)" or "CUSTOMER
+  (email@address)" — with its date, in chronological order, separated by "---".
+  This represents a live negotiation, not a static document: quantities/items are
+  often adjusted over the course of the conversation (e.g. due to availability), and
+  a later message supersedes an earlier one for anything it changes. Read the WHOLE
+  thread and extract the FINAL agreed order, not just the first message's ask. Only
+  count what the CUSTOMER actually requested or confirmed as order content — a
+  statement from GARFIELD PRODUCE / US (e.g. "we have Cilantro available today") is
+  not itself a confirmed order line unless the customer accepts it. If the thread
+  never actually results in a concrete order — e.g. it's pricing, logistics, or
+  relationship correspondence with no items+quantities ever agreed — set is_po to
+  false.
 - Set is_po to false if the document is not a purchase order, and leave the other fields empty
 """
 

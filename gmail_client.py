@@ -200,23 +200,29 @@ def resolve_label_id(access_token: str, label_name: str) -> str | None:
     return None
 
 
-def search_messages(access_token: str, label_id: str, extra_query: str | None = None, max_results: int = 50) -> list[str]:
-    """Returns message IDs carrying the given label (by ID, via the structured
-    labelIds parameter — NOT Gmail's q=label:"..." search syntax, which was found
-    live to silently return zero results for label names containing an apostrophe
-    or ampersand, e.g. "Anthony Marano's (AMC)" and "Marillac House (Tramaine &
-    Holly)" — hundreds of real messages under those two labels were completely
-    invisible to every q=label: search despite returning no error at all). Use
-    resolve_label_id() to turn a display name into the ID this expects.
+def search_messages(
+    access_token: str, label_id: str, extra_query: str | None = None, max_results: int = 50
+) -> list[tuple[str, str]]:
+    """Returns (message_id, thread_id) pairs carrying the given label (by ID, via
+    the structured labelIds parameter — NOT Gmail's q=label:"..." search syntax,
+    which was found live to silently return zero results for label names containing
+    an apostrophe or ampersand, e.g. "Anthony Marano's (AMC)" and "Marillac House
+    (Tramaine & Holly)" — hundreds of real messages under those two labels were
+    completely invisible to every q=label: search despite returning no error at
+    all). Use resolve_label_id() to turn a display name into the ID this expects.
+
+    thread_id (Gmail's messages.list response already includes it per entry, no
+    extra API call) lets a caller dedupe/group matched messages by thread — see
+    get_thread() for fetching a thread's full content once grouped.
 
     extra_query, if given, is ANDed in via Gmail's q parameter (e.g. 'after:169...')
     — safe to combine with labelIds since it never needs to contain the label name
     itself. Paginates via nextPageToken up to max_results."""
-    message_ids = []
+    results = []
     page_token = None
     headers = {"Authorization": f"Bearer {access_token}"}
-    while len(message_ids) < max_results:
-        params = {"labelIds": label_id, "maxResults": min(100, max_results - len(message_ids))}
+    while len(results) < max_results:
+        params = {"labelIds": label_id, "maxResults": min(100, max_results - len(results))}
         if extra_query:
             params["q"] = extra_query
         if page_token:
@@ -225,11 +231,27 @@ def search_messages(access_token: str, label_id: str, extra_query: str | None = 
         if not resp.ok:
             raise RuntimeError(f"Gmail API error {resp.status_code}: {resp.text}")
         body = resp.json()
-        message_ids.extend(m["id"] for m in body.get("messages", []))
+        results.extend((m["id"], m["threadId"]) for m in body.get("messages", []))
         page_token = body.get("nextPageToken")
         if not page_token:
             break
-    return message_ids
+    return results
+
+
+def get_thread(access_token: str, thread_id: str) -> dict:
+    """Full thread detail (format=full) — {'id', 'historyId', 'messages': [...]},
+    each message in the exact same shape get_message() returns (message_headers()/
+    extract_body_and_attachments() work unmodified on each one), already in
+    chronological order. One API call for the whole conversation instead of one per
+    message — used to extract a text-only thread (no PDF attachment anywhere in it)
+    as a single unit reflecting the full back-and-forth, not just one message."""
+    resp = requests.get(
+        f"{GMAIL_API}/threads/{thread_id}", headers={"Authorization": f"Bearer {access_token}"},
+        params={"format": "full"}, timeout=30,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"Gmail API error {resp.status_code}: {resp.text}")
+    return resp.json()
 
 
 def get_message(access_token: str, message_id: str) -> dict:
