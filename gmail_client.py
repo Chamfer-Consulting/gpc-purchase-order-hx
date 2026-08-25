@@ -190,15 +190,35 @@ def list_labels(access_token: str) -> list[dict]:
     return resp.json().get("labels", [])
 
 
-def search_messages(access_token: str, query: str, max_results: int = 50) -> list[str]:
-    """Returns message IDs matching a Gmail search query (same syntax as the Gmail
-    search box, e.g. 'label:"PO/Get Fresh" after:2026/01/01'). Paginates via
-    nextPageToken up to max_results."""
+def resolve_label_id(access_token: str, label_name: str) -> str | None:
+    """Looks up a label's stable ID by its exact display name (via list_labels), or
+    None if no label with that name exists. Needed because search_messages()
+    filters by ID, not name — see its docstring."""
+    for label in list_labels(access_token):
+        if label.get("name") == label_name:
+            return label["id"]
+    return None
+
+
+def search_messages(access_token: str, label_id: str, extra_query: str | None = None, max_results: int = 50) -> list[str]:
+    """Returns message IDs carrying the given label (by ID, via the structured
+    labelIds parameter — NOT Gmail's q=label:"..." search syntax, which was found
+    live to silently return zero results for label names containing an apostrophe
+    or ampersand, e.g. "Anthony Marano's (AMC)" and "Marillac House (Tramaine &
+    Holly)" — hundreds of real messages under those two labels were completely
+    invisible to every q=label: search despite returning no error at all). Use
+    resolve_label_id() to turn a display name into the ID this expects.
+
+    extra_query, if given, is ANDed in via Gmail's q parameter (e.g. 'after:169...')
+    — safe to combine with labelIds since it never needs to contain the label name
+    itself. Paginates via nextPageToken up to max_results."""
     message_ids = []
     page_token = None
     headers = {"Authorization": f"Bearer {access_token}"}
     while len(message_ids) < max_results:
-        params = {"q": query, "maxResults": min(100, max_results - len(message_ids))}
+        params = {"labelIds": label_id, "maxResults": min(100, max_results - len(message_ids))}
+        if extra_query:
+            params["q"] = extra_query
         if page_token:
             params["pageToken"] = page_token
         resp = requests.get(f"{GMAIL_API}/messages", headers=headers, params=params, timeout=30)

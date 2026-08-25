@@ -241,10 +241,20 @@ def main():
 
         sync_started_at = datetime.now(timezone.utc)
 
+        # Resolved once, by ID — NOT via a q=label:"..." string, which was found
+        # live to silently return zero results for label names containing an
+        # apostrophe or ampersand (see gmail_client.search_messages's docstring).
+        all_labels = gmail_client.list_labels(access_token)
+        label_id_by_name = {l["name"]: l["id"] for l in all_labels}
+
         message_ids, seen = [], set()
         for label in labels:
-            query = f'label:"{label}"' + (f" after:{since_epoch}" if since_epoch is not None else "")
-            ids = gmail_client.search_messages(access_token, query, max_results=MAX_SEARCH_RESULTS)
+            label_id = label_id_by_name.get(label)
+            if label_id is None:
+                print(f"⚠️  Label not found in this Gmail account, skipping: {label!r}")
+                continue
+            extra_query = f"after:{since_epoch}" if since_epoch is not None else None
+            ids = gmail_client.search_messages(access_token, label_id, extra_query, max_results=MAX_SEARCH_RESULTS)
             new_ids = [mid for mid in ids if mid not in seen]
             seen.update(new_ids)
             message_ids.extend(new_ids)

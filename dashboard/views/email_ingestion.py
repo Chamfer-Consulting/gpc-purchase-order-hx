@@ -90,26 +90,35 @@ def render(ctx) -> None:
         "Search by label (plus optional Gmail query syntax) to confirm matching works, without extracting anything yet.",
     ):
         label = st.text_input('Label name (exact, e.g. "PO/Get Fresh")', key="gmail_test_label")
-        extra_query = st.text_input("Additional query (optional, Gmail search syntax)", key="gmail_test_query")
+        extra_query = st.text_input("Additional query (optional, Gmail search syntax, e.g. after:2026/01/01)", key="gmail_test_query")
         if st.button("Search"):
             if not label:
                 st.warning("Enter a label name first.")
             else:
-                query = f'label:"{label}"' + (f" {extra_query}" if extra_query else "")
                 token_conn = psycopg2.connect(get_database_url())
                 try:
                     access_token = gmail_client.get_valid_access_token(token_conn, client_id, client_secret)
                 finally:
                     token_conn.close()
                 try:
-                    message_ids = gmail_client.search_messages(access_token, query, max_results=25)
+                    # By label ID (via the structured labelIds param), not a
+                    # q=label:"..." query string — that syntax was found to
+                    # silently return zero results for label names containing an
+                    # apostrophe or ampersand. See gmail_client.search_messages.
+                    label_id = gmail_client.resolve_label_id(access_token, label)
+                    if label_id is None:
+                        message_ids = None
+                    else:
+                        message_ids = gmail_client.search_messages(access_token, label_id, extra_query or None, max_results=25)
                 except Exception as e:
                     st.error(f"Search failed: {e}")
                 else:
-                    if not message_ids:
-                        st.info(f"No messages found for: `{query}`")
+                    if message_ids is None:
+                        st.warning(f"No label found with that exact name: `{label}`")
+                    elif not message_ids:
+                        st.info(f"No messages found for label `{label}`" + (f" with query `{extra_query}`" if extra_query else ""))
                     else:
-                        st.write(f"{len(message_ids)} message(s) found for `{query}`:")
+                        st.write(f"{len(message_ids)} message(s) found for label `{label}`:")
                         rows = []
                         for mid in message_ids:
                             msg = gmail_client.get_message(access_token, mid)
