@@ -3,10 +3,12 @@ name: Extract POs from Gmail
 # "Automatic" = the schedule trigger below (incremental — only messages since the
 # last successful run, via gmail_connection's stored cursor). "Manual" = the
 # workflow_dispatch trigger, from this tab's "Run workflow" button or
-# `gh workflow run extract_pos.yml [-f full_backlog=true]` — check the "Full
-# backlog scan" box (or pass -f full_backlog=true) to ignore the cursor and scan
-# every configured label's entire history instead, e.g. when onboarding a newly
-# added customer label. See run_cloud_extraction.py / GMAIL_SETUP.md.
+# `gh workflow run extract_pos.yml [-f full_backlog=true] [-f limit=10]` — check
+# the "Full backlog scan" box (or pass -f full_backlog=true) to ignore the cursor
+# and scan every configured label's entire history instead, e.g. when onboarding a
+# newly added customer label. Set "Limit" to cap how many threads get processed
+# this run — e.g. a small real test before trusting a full (paid) run. See
+# run_cloud_extraction.py / GMAIL_SETUP.md.
 
 on:
   schedule:
@@ -17,6 +19,10 @@ on:
         description: "Full backlog scan (ignore the incremental cursor)"
         type: boolean
         default: false
+      limit:
+        description: "Limit (max threads to process this run — leave blank for no limit)"
+        type: string
+        default: ""
 
 jobs:
   extract:
@@ -40,11 +46,14 @@ jobs:
           GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
           GMAIL_LABELS: ${{ secrets.GMAIL_LABELS }}
         run: |
+          args=""
           if [ "${{ github.event.inputs.full_backlog }}" = "true" ]; then
-            python run_cloud_extraction.py --full-backlog
-          else
-            python run_cloud_extraction.py
+            args="$args --full-backlog"
           fi
+          if [ -n "${{ github.event.inputs.limit }}" ]; then
+            args="$args --limit ${{ github.event.inputs.limit }}"
+          fi
+          python run_cloud_extraction.py $args
 
       # Exit code 3 (extract_pos.py's/run_cloud_extraction.py's "paused: out of API
       # credits" convention) surfaces as a normal job failure like any other
