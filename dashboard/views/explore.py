@@ -12,7 +12,16 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from data import color_map_for, compare_periods_by_group, fmt_delta, style, yoy_annual_chart
+from data import (
+    color_map_for,
+    compare_periods_by_group,
+    delete_view,
+    fmt_delta,
+    load_saved_views,
+    save_view,
+    style,
+    yoy_annual_chart,
+)
 from ui_kit import (
     data_grid,
     empty_state,
@@ -25,6 +34,38 @@ from ui_kit import (
 )
 
 _GRAIN_FREQ = {"Day": "D", "Week": "W", "Month": "M", "Quarter": "Q", "Year": "Y"}
+_VIEW_KEYS = {"xp_measure": "measure", "xp_grain": "grain", "xp_dims": "dims", "xp_chart": "chart"}
+
+
+def _saved_views_bar() -> None:
+    """Load / save / delete named Explore configurations (spec decision #5). Must
+    render before the control widgets so a load can set their session_state."""
+    views = load_saved_views("explore")
+    with st.container(horizontal=True):
+        for v in views:
+            if st.button(v["name"], key=f"xp_load_{v['name']}"):
+                for skey, ckey in _VIEW_KEYS.items():
+                    if ckey in (v["config"] or {}):
+                        st.session_state[skey] = v["config"][ckey]
+                st.rerun()
+        with st.popover("＋ Save view"):
+            name = st.text_input("Name for this view", key="xp_save_name")
+            if st.button("Save", key="xp_save_btn") and name.strip():
+                save_view("explore", name.strip(), {
+                    "measure": st.session_state.get("xp_measure", "Revenue"),
+                    "grain": st.session_state.get("xp_grain", "Month"),
+                    "dims": st.session_state.get("xp_dims", ["Customer"]),
+                    "chart": st.session_state.get("xp_chart", "Line"),
+                })
+                load_saved_views.clear()
+                st.rerun()
+        if views:
+            with st.popover("Manage"):
+                target = st.selectbox("Delete a saved view", [v["name"] for v in views], key="xp_del_pick")
+                if st.button("Delete", key="xp_del_btn"):
+                    delete_view(target)
+                    load_saved_views.clear()
+                    st.rerun()
 _DIM_COL = {"Customer": "customer_name", "Product": "product_name", "Size": "container_size"}
 _MEASURE = {
     "Revenue": ("line_total", "sum", "Revenue ($)"),
@@ -46,6 +87,8 @@ def render(ctx) -> None:
     if f_inv_items.empty:
         empty_state("No line items in the current scope.")
         return
+
+    _saved_views_bar()
 
     # ── controls ─────────────────────────────────────────────────────────────
     c1, c2, c3 = st.columns([1.4, 2, 2])

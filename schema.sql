@@ -259,3 +259,13 @@ CREATE TABLE IF NOT EXISTS gmail_thread_state (
     was_po          BOOLEAN NOT NULL,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Named, reusable dashboard configurations (redesign Phase F). `kind` scopes a
+-- view to a page (e.g. "explore"); `config` is that page's control state. Created
+-- lazily by dashboard/data.py:save_view() too, so it exists even before a sync.
+CREATE TABLE IF NOT EXISTS dashboard_saved_views (
+    name        TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL,
+    config      JSONB NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

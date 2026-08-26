@@ -8,6 +8,7 @@ and cached loaders without duplicating them. Logic here is unchanged from the
 original app.py — this is a mechanical extraction, not a rewrite.
 """
 
+import json
 import os
 from dataclasses import dataclass, field
 
@@ -470,6 +471,55 @@ def set_product_hidden(product_name: str, hidden: bool) -> None:
                 )
             else:
                 cur.execute("DELETE FROM hidden_products WHERE product_name = %s", (product_name,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+_SAVED_VIEWS_DDL = """
+CREATE TABLE IF NOT EXISTS dashboard_saved_views (
+    name TEXT PRIMARY KEY, kind TEXT NOT NULL, config JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def load_saved_views(kind: str) -> list[dict]:
+    """[{name, config}] for a page's saved views, oldest first. Returns [] if the
+    table doesn't exist yet (it's created lazily by save_view / a schema apply)."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT name, config FROM dashboard_saved_views WHERE kind = %s ORDER BY created_at", (kind,))
+            return [{"name": n, "config": c} for n, c in cur.fetchall()]
+    except psycopg2.Error:
+        conn.rollback()
+        return []
+    finally:
+        conn.close()
+
+
+def save_view(kind: str, name: str, config: dict) -> None:
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn.cursor() as cur:
+            cur.execute(_SAVED_VIEWS_DDL)
+            cur.execute(
+                "INSERT INTO dashboard_saved_views (name, kind, config) VALUES (%s, %s, %s) "
+                "ON CONFLICT (name) DO UPDATE SET kind = EXCLUDED.kind, config = EXCLUDED.config, created_at = now()",
+                (name, kind, json.dumps(config)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_view(name: str) -> None:
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM dashboard_saved_views WHERE name = %s", (name,))
         conn.commit()
     finally:
         conn.close()

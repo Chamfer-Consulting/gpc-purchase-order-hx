@@ -50,9 +50,16 @@ _RULES = """
 .gpc-chip.is-crit::before{background:var(--gpc-status-critical)}
 .gpc-purpose{color:var(--gpc-ink-muted);font-size:.92rem;margin:-.35rem 0 .5rem}
 
-/* north-star KPI tile: ui_kit.kpi_strip prefixes its label with "★ ". The
-   accent-underline treatment is a Phase F polish item (needs a per-strip hook
-   that doesn't collide when a page renders more than one strip). */
+/* north-star KPI tile — the first bordered column inside kpi_strip()'s keyed
+   container (ui_kit wraps the starred strip in st.container(key="gpc_kpi_ns")).
+   If Streamlit ever drops the .st-key-* class the rule just stops applying and
+   the "★ " label marker still carries the meaning. */
+[class*="st-key-gpc_kpi_ns"] [data-testid="stColumn"]:first-child{
+  border-bottom:3px solid var(--gpc-status-good) !important;
+}
+[class*="st-key-gpc_kpi_ns"] [data-testid="stColumn"]:first-child [data-testid="stMetricValue"]{
+  font-weight:600;
+}
 
 /* quiet polish on stable testids ----------------------------------------------
    kept minimal + defensive: only spacing / weight, no layout takeovers */

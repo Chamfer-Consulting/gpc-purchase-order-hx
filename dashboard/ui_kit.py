@@ -57,13 +57,14 @@ def kpi_row(items: list[dict]) -> None:
         col.metric(item["label"], item["value"], delta=item.get("delta"), **kwargs)
 
 
-def section_card(title: str | None = None, caption: str | None = None):
+def section_card(title: str | None = None, caption: str | None = None, help: str | None = None):
     """Returns a bordered st.container to `with` around one logical section (a chart,
     a table, a form) — every section gets a visible boundary instead of floating on
-    bare page background. Renders the optional title/caption inside the card."""
+    bare page background. Renders the optional title/caption inside the card; `help`
+    adds a hover tooltip on the title (pass ui_kit.metric_help("Term"))."""
     card = st.container(border=True)
     if title:
-        card.subheader(title)
+        card.subheader(title, help=help)
     if caption:
         card.caption(caption)
     return card
@@ -262,6 +263,8 @@ def entity_comparison(
 
 CHART_HEIGHTS = {"compact": 240, "std": 320, "tall": 400}
 
+_NS_SEQ = 0  # monotonic suffix for kpi_strip's north-star container key
+
 _DRILL_HINT = "💡 Click a bar or point to break it down for that period. Click again to clear."
 
 _STATE_CHIP = {
@@ -336,7 +339,16 @@ def kpi_strip(items: list[dict], north_star: int | None = 0) -> None:
     if not items:
         return
     items = items[:6]
-    with st.container():
+    # Keyed container so theme.py can accent the north-star strip's first tile.
+    # A monotonic suffix keeps the key unique even if a page (or a test harness)
+    # renders several starred strips; theme.py matches on the class prefix.
+    if north_star is not None:
+        global _NS_SEQ
+        _NS_SEQ += 1
+        box = st.container(key=f"gpc_kpi_ns_{_NS_SEQ}")
+    else:
+        box = st.container()
+    with box:
         cols = st.columns(len(items), border=True)
         for i, (col, item) in enumerate(zip(cols, items)):
             kwargs = {}

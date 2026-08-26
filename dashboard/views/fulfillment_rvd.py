@@ -159,7 +159,7 @@ def detailed_sections(ctx) -> None:
                     {"label": "🔻 Total shortfall", "value": f"${shorted['$ Variance'].sum():,.0f}" if not shorted.empty else "$0"},
                     {"label": "Rows shorted", "value": f"{len(shorted):,} of {len(grouped):,}"},
                     {"label": "Worst single shortage", "value": f"${shorted['$ Variance'].min():,.0f}" if not shorted.empty else "—"},
-                ], north_star=0)
+                ], north_star=None)
 
                 styled = display_df.style.map(_variance_styler(palette), subset=["Qty Variance", "$ Variance"])
                 data_table(
