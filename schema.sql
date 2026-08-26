@@ -208,3 +208,21 @@ CREATE TABLE IF NOT EXISTS gmail_connection (
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_synced_at           TIMESTAMPTZ
 );
+
+-- Per-thread extraction memory for the cloud pipeline's text-only (no-PDF) path.
+-- purchase_orders keys on (source_file, file_hash), and a text thread's file_hash
+-- is a hash of the WHOLE thread's combined text — so a thread gaining even one
+-- chit-chat reply produces a brand-new hash and a full, whole-thread re-extraction
+-- next run. This table lets run_cloud_extraction skip that: a thread previously
+-- classified NOT a purchase order that has only grown by more non-order messages
+-- gets its new messages alone cheaply re-checked, and its state row bumped, with
+-- no full re-extraction. last_file_hash is the combined-text hash as of the last
+-- time this thread was fully processed; message_count is how many messages that
+-- was based on; was_po records whether that extraction produced a real order.
+CREATE TABLE IF NOT EXISTS gmail_thread_state (
+    thread_id       TEXT PRIMARY KEY,
+    message_count   INTEGER NOT NULL,
+    last_file_hash  TEXT NOT NULL,
+    was_po          BOOLEAN NOT NULL,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);

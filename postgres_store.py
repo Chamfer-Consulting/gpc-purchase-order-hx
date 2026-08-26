@@ -119,6 +119,42 @@ def is_known(conn, source_file: str, file_hash: str) -> bool:
         return cur.fetchone() is not None
 
 
+def get_thread_state(conn, thread_id: str) -> dict | None:
+    """The gmail_thread_state row for this thread, or None if it's never been fully
+    processed. Keys: message_count, last_file_hash, was_po — see the table comment
+    in schema.sql and run_cloud_extraction._process_thread for how it's used to
+    skip re-extracting a non-PO thread that only gained more non-order chatter."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT message_count, last_file_hash, was_po FROM gmail_thread_state WHERE thread_id = %s",
+            (thread_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def upsert_thread_state(conn, thread_id: str, message_count: int, last_file_hash: str, was_po: bool) -> None:
+    """Record where this thread stands after processing it this run — so next run
+    can tell whether it has changed at all (last_file_hash) and, if it grew, how
+    many messages are new (message_count) and whether it was ever an order (was_po).
+    Committed immediately: a mid-run crash after this point should still leave the
+    thread correctly marked as handled."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO gmail_thread_state (thread_id, message_count, last_file_hash, was_po, updated_at)
+            VALUES (%s, %s, %s, %s, now())
+            ON CONFLICT (thread_id) DO UPDATE SET
+                message_count  = EXCLUDED.message_count,
+                last_file_hash = EXCLUDED.last_file_hash,
+                was_po         = EXCLUDED.was_po,
+                updated_at     = now()
+            """,
+            (thread_id, message_count, last_file_hash, was_po),
+        )
+    conn.commit()
+
+
 def get_reference_prices(conn) -> dict:
     """Postgres-side equivalent of db.get_reference_prices() — {(customer_name,
     product_name, container_size): price}, read from the already-synced

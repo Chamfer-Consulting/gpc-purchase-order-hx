@@ -453,6 +453,7 @@ def _extract_from_source(
     text: str | None = None,
     pdf_b64: str | None = None,
     extraction_method: str = "text",
+    model: str = MODEL,
 ) -> dict | None:
     """
     Core Claude-calling extraction logic, decoupled from where the document content
@@ -460,6 +461,11 @@ def _extract_from_source(
     straight from Gmail (attachment bytes or an email body's own text, never touching
     disk). Exactly one of text/pdf_b64 should be given; extraction_method records
     which, for logging and the extracted _extraction_method field.
+
+    model defaults to MODEL (the local PDF pipeline's choice); the cloud Gmail
+    pipeline passes its own — a whole email thread rendered to plain text is a much
+    lighter extraction task than a scanned multi-page PO, and doesn't need the
+    top-tier model the vision path benefits from.
 
     Returns None (instead of an error dict) if stop_event is already set when this
     call starts — used to fast-drain queued work after an out-of-credits pause without
@@ -508,7 +514,7 @@ def _extract_from_source(
                 ]
 
             response = client.messages.create(
-                model=MODEL,
+                model=model,
                 max_tokens=2000,
                 system=SYSTEM_BLOCK,
                 messages=messages,

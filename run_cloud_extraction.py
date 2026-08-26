@@ -53,10 +53,19 @@ from tqdm import tqdm
 import gmail_client
 import postgres_store
 from extract_pos import _extract_from_source, annotate_revisions, extract_pdf_text, pdf_to_base64
-from sync_dashboard import _publish_to_postgres  # noqa — same cross-module private-import
-# pattern sync_dashboard.py itself already uses for extract_pos.annotate_revisions.
+from sync_dashboard import _publish_to_postgres, apply_schema  # noqa — same cross-module
+# private-import pattern sync_dashboard.py itself already uses for
+# extract_pos.annotate_revisions.
 
 logger = logging.getLogger("run_cloud_extraction")
+
+# A whole email thread rendered to plain text is a far lighter extraction task
+# than a scanned multi-page PO PDF — Sonnet handles it well at a fraction of the
+# per-call cost, so the cloud pipeline overrides extract_pos.MODEL (which the
+# local PDF/vision pipeline still uses) for every thread it sends to the model,
+# both the full-thread extraction and the cheap "did these new messages turn this
+# into an order?" re-check.
+CLOUD_EXTRACTION_MODEL = "claude-sonnet-5"
 
 MAX_SEARCH_RESULTS = 3000  # per label, per run — customer labels are general
 # correspondence (every email exchanged with that customer, not just POs), and
@@ -173,6 +182,40 @@ def _build_thread_text(messages: list) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
+def _looks_like_new_order(client: anthropic.Anthropic, source_label: str, new_text: str) -> bool:
+    """Cheap yes/no gate used only for a thread already classified NOT a purchase
+    order that has since gained messages: do the NEW messages alone contain a
+    customer placing or confirming a concrete order (specific products AND
+    quantities)? Deliberately biased toward True — a False here skips the full
+    whole-thread re-extraction, so a wrong False means a missed PO, while a wrong
+    True just costs the one full extraction we'd have done unconditionally before.
+    One tiny call (max_tokens=5, a few hundred input tokens) in place of resending
+    the whole thread to the model every time it gets a reply."""
+    try:
+        resp = client.messages.create(
+            model=CLOUD_EXTRACTION_MODEL,
+            max_tokens=5,
+            system="You answer with exactly one word: YES or NO.",
+            messages=[{
+                "role": "user",
+                "content": (
+                    "The earlier part of an email thread was already determined NOT to be a "
+                    "purchase order. Below are ONLY the new messages added to it since then.\n\n"
+                    f"{new_text[:4000]}\n\n"
+                    "Do these new messages contain a customer placing or confirming a concrete "
+                    "order — specific product(s) AND quantities? Answer YES or NO. If you are "
+                    "unsure, answer YES."
+                ),
+            }],
+        )
+    except anthropic.APIError as e:
+        # Don't let the cheap gate swallow a thread — fall back to a full extraction.
+        logger.warning(f"{source_label}: new-message gate call failed ({e}) — doing full re-extraction")
+        return True
+    answer = "".join(b.text for b in resp.content if b.type == "text").strip().upper()
+    return not answer.startswith("NO")
+
+
 def _process_thread(
     client: anthropic.Anthropic,
     access_token: str,
@@ -247,18 +290,41 @@ def _process_thread(
 
     source_label = f"gmail-thread:{thread_id}"
     file_hash = hashlib.sha256(combined_text.encode("utf-8")).hexdigest()
+    message_count = len(messages)
 
-    if postgres_store.is_known(pg_conn, source_label, file_hash):
+    state = postgres_store.get_thread_state(pg_conn, thread_id)
+    if postgres_store.is_known(pg_conn, source_label, file_hash) or (
+        state is not None and state["last_file_hash"] == file_hash
+    ):
         logger.info(f"{source_label}: unchanged since last run — skipping")
         return []
 
+    # Cheap path for a thread already fully processed as NOT a purchase order that
+    # has since only grown: re-check just the new messages instead of resending the
+    # whole thread to the model. (The unchanged case is handled above; a thread
+    # that shrank or whose earlier text was edited has message_count <= the stored
+    # count and falls through to a full re-extraction.)
+    if state is not None and not state["was_po"] and message_count > state["message_count"]:
+        new_text = _build_thread_text(messages[state["message_count"]:])
+        if new_text.strip() and not _looks_like_new_order(client, source_label, new_text):
+            logger.info(
+                f"{source_label}: {message_count - state['message_count']} new message(s), "
+                "still not an order — skipping full re-extraction"
+            )
+            postgres_store.upsert_thread_state(pg_conn, thread_id, message_count, file_hash, was_po=False)
+            return []
+
     result = _extract_from_source(
-        client, source_label, stop_event, reference_prices, text=combined_text, extraction_method="text",
+        client, source_label, stop_event, reference_prices,
+        text=combined_text, extraction_method="text", model=CLOUD_EXTRACTION_MODEL,
     )
     if result is not None:
         result["_file_hash"] = file_hash
         result["source_received_at"] = _thread_received_at(messages)
         results.append(result)
+        postgres_store.upsert_thread_state(
+            pg_conn, thread_id, message_count, file_hash, was_po=("error" not in result),
+        )
 
     return results
 
@@ -280,6 +346,11 @@ def main():
 
     pg_conn = psycopg2.connect(database_url)
     try:
+        # Normally _publish_to_postgres() applies schema.sql at the end of a run,
+        # but the per-thread state table (gmail_thread_state) is read during the
+        # thread loop, before that — ensure it exists up front. Idempotent.
+        apply_schema(pg_conn)
+
         connection = gmail_client.get_connection(pg_conn)
         if connection is None:
             print("❌ Not connected to Gmail — connect via the dashboard's ✉️ Email Ingestion page first.", file=sys.stderr)
@@ -314,9 +385,17 @@ def main():
             matches = gmail_client.search_messages(access_token, label_id, extra_query, max_results=MAX_SEARCH_RESULTS)
             # Dedupe by thread, not message — multiple matched messages from the
             # same thread collapse into one unit of work (_process_thread fetches
-            # the whole thread anyway).
-            new_thread_ids = [tid for _, tid in matches if tid not in seen]
-            seen.update(new_thread_ids)
+            # the whole thread anyway). Must update `seen` as we go: a single
+            # label's own match list already contains one entry per labeled
+            # message, so an N-message thread appears N times in `matches` — a
+            # comprehension that only checks the pre-loop `seen` would let every
+            # one of those copies through and extract the same thread N times.
+            new_thread_ids = []
+            for _, tid in matches:
+                if tid in seen:
+                    continue
+                seen.add(tid)
+                new_thread_ids.append(tid)
             thread_ids.extend(new_thread_ids)
             print(f"🔎 {label}: {len(matches)} message(s) across {len(new_thread_ids)} new thread(s)")
 
@@ -324,6 +403,7 @@ def main():
             thread_ids = thread_ids[: args.limit]
 
         print(f"📧 {len(thread_ids)} thread(s) to process across {len(labels)} label(s)")
+        print(f"🤖 Text-thread extraction model: {CLOUD_EXTRACTION_MODEL}")
 
         if not thread_ids:
             pg_conn = _ensure_connection(pg_conn, database_url)
