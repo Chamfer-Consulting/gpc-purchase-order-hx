@@ -40,12 +40,12 @@ from data import (  # noqa: E402
     prepare_invoices,
 )
 from views import (  # noqa: E402
+    customer_360,
     explore,
     fulfillment_dataquality,
     fulfillment_rvd,
     home,
     match_reconcile,
-    reports_customers,
     reports_products,
     settings,
 )
@@ -321,7 +321,7 @@ ctx = AppContext(
 # Home's "Needs attention" deep links.
 
 page_overview = st.Page(lambda: home.render(ctx), title="Overview", icon="🏠", url_path="home", default=True)
-page_customers = st.Page(lambda: reports_customers.render(ctx), title="Customers", icon="👥", url_path="customers")
+page_customers = st.Page(lambda: customer_360.render(ctx), title="Customer 360", icon="👥", url_path="customers")
 page_products = st.Page(lambda: reports_products.render(ctx), title="Products & Sizes", icon="🥬", url_path="products")
 page_explore = st.Page(lambda: explore.render(ctx), title="Explore", icon="🔎", url_path="explore")
 page_lifecycle = st.Page(

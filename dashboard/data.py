@@ -500,6 +500,75 @@ def prepare(po_df: pd.DataFrame, items_df: pd.DataFrame):
     return valid_po, latest_po, items, latest_items
 
 
+# ── Customer 360 helpers (redesign Phase D) ───────────────────────────────────
+
+def customer_order_lifecycle(customer: str, valid_po: pd.DataFrame, matched_items: pd.DataFrame) -> pd.DataFrame:
+    """One row per purchase order this customer placed, with its value at each
+    stage: requested (first version's header total), revised (latest version's
+    total), shipped (sum of matched invoice line items). fulfillment_pct = shipped
+    / revised. Empty frame if the customer has no PO-documented orders."""
+    vp = valid_po[valid_po["customer_name"] == customer]
+    if vp.empty:
+        return pd.DataFrame(columns=[
+            "po_key", "po_number", "source_file", "effective_date", "requested_amount",
+            "revised_amount", "shipped_amount", "fulfillment_pct", "po_id",
+        ])
+    rows = []
+    for po_key, grp in vp.sort_values(["po_key", "effective_date", "id"]).groupby("po_key"):
+        first, last = grp.iloc[0], grp.iloc[-1]
+        rows.append({
+            "po_key": po_key, "po_number": last.get("po_number"),
+            "source_file": last.get("source_file"), "effective_date": last["effective_date"],
+            "requested_amount": first.get("total"), "revised_amount": last.get("total"),
+            "po_id": last["id"],
+        })
+    df = pd.DataFrame(rows)
+    if matched_items is not None and not matched_items.empty:
+        ship = (
+            matched_items[matched_items["customer_name"] == customer]
+            .groupby("po_id", as_index=False).agg(shipped_amount=("delivered_amount", "sum"))
+        )
+        df = df.merge(ship, on="po_id", how="left")
+    if "shipped_amount" not in df.columns:
+        df["shipped_amount"] = pd.NA
+    rev = pd.to_numeric(df["revised_amount"], errors="coerce")
+    shp = pd.to_numeric(df["shipped_amount"], errors="coerce")
+    df["fulfillment_pct"] = (shp / rev * 100).where(rev > 0).round(1)
+    return df.sort_values("effective_date", ascending=False)
+
+
+def typical_sizes(customer: str, inv_items: pd.DataFrame) -> pd.DataFrame:
+    """For each product this customer buys: the quantity-weighted most common
+    container size overall, plus the most common size in the earlier vs. the more
+    recent half of their history and whether it changed."""
+    d = inv_items[
+        (inv_items["customer_name"] == customer)
+        & (inv_items["category"] == "product")
+        & inv_items["container_size"].notna()
+    ].dropna(subset=["effective_date"])
+    if d.empty:
+        return pd.DataFrame(columns=["product_name", "usual_size", "early_size", "recent_size", "shifted"])
+
+    midpoint = d["effective_date"].median()
+
+    def _mode_size(sub: pd.DataFrame):
+        if sub.empty:
+            return None
+        w = sub.groupby("container_size")["quantity"].sum()
+        return w.idxmax() if not w.empty else None
+
+    out = []
+    for prod, sub in d.groupby("product_name"):
+        early = _mode_size(sub[sub["effective_date"] <= midpoint])
+        recent = _mode_size(sub[sub["effective_date"] > midpoint])
+        out.append({
+            "product_name": prod, "usual_size": _mode_size(sub),
+            "early_size": early, "recent_size": recent,
+            "shifted": bool(early and recent and early != recent),
+        })
+    return pd.DataFrame(out).sort_values("product_name")
+
+
 @dataclass
 class AppContext:
     """Per-rerun bundle of theme, filter state, and filtered/unfiltered dataframes
