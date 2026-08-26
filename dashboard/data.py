@@ -21,6 +21,7 @@ import psycopg2
 import streamlit as st
 
 from math_check import validate_math
+from qbo_matcher import customers_match
 
 # ── Palette (validated colorblind-safe set — see dataviz skill / schema.sql sibling) ──
 # Both Light and Dark are selected palettes from the same reference instance, not an
@@ -713,10 +714,29 @@ def _lifecycle_rows(vp: pd.DataFrame, matched_items: pd.DataFrame) -> pd.DataFra
     return df.sort_values("effective_date", ascending=False)
 
 
-def customer_order_lifecycle(customer: str, valid_po: pd.DataFrame, matched_items: pd.DataFrame) -> pd.DataFrame:
-    """`_lifecycle_rows` scoped to one customer (used by Customer 360)."""
-    vp = valid_po[valid_po["customer_name"] == customer]
-    m = matched_items[matched_items["customer_name"] == customer] if matched_items is not None and not matched_items.empty else matched_items
+def customer_order_lifecycle(
+    customer: str, valid_po: pd.DataFrame, matched_items: pd.DataFrame, keep_po_keys=None
+) -> pd.DataFrame:
+    """`_lifecycle_rows` scoped to one customer (used by Customer 360). Pass
+    `keep_po_keys` (the filtered f_po's po_key column) to also honour the page's
+    date filter, so the lifecycle KPI/waterfall/table don't silently show all-time
+    history while the rest of the page is date-scoped.
+
+    Customer match is containment-based (qbo_matcher.customers_match), not exact:
+    the PO table stores short names ("Get Fresh", "Testa Produce") while the picker
+    is populated from QBO invoice names ("Get Fresh Produce, Inc.", "Testa Produce
+    Inc."), so an exact `==` left this section blank for every PO customer except
+    the one whose spelling happened to match on both sides."""
+    def _match(series):
+        return series.apply(lambda c: customers_match(c, customer))
+
+    vp = valid_po[_match(valid_po["customer_name"])]
+    if keep_po_keys is not None:
+        vp = vp[vp["po_key"].isin(set(keep_po_keys))]
+    if matched_items is not None and not matched_items.empty:
+        m = matched_items[_match(matched_items["customer_name"])]
+    else:
+        m = matched_items
     return _lifecycle_rows(vp, m)
 
 
