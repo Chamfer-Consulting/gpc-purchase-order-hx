@@ -7,7 +7,7 @@ hidden_products table and schema.sql)."""
 import plotly.express as px
 import streamlit as st
 
-from data import load_hidden_products, month_over_month_movers, set_product_hidden, style
+from data import PLOTLY_CONFIG, load_hidden_products, month_over_month_movers, set_product_hidden, style
 from ui_kit import (
     data_table,
     empty_state,
@@ -70,7 +70,7 @@ def render(ctx) -> None:
             labels={"revenue": "Revenue ($)", "product_name": ""},
         )
         fig.update_layout(showlegend=False)
-        st.plotly_chart(style(fig, palette, height=380), use_container_width=True, key="chart_revenue_by_product")
+        st.plotly_chart(style(fig, palette, height=380), use_container_width=True, config=PLOTLY_CONFIG, key="chart_revenue_by_product")
         st.download_button(
             "Download product revenue (CSV)",
             by_product_inv.rename(columns={"product_name": "Product", "revenue": "Revenue ($)", "quantity": "Quantity"})

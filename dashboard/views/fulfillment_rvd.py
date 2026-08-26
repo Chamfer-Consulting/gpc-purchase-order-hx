@@ -11,7 +11,7 @@ import plotly.express as px
 import psycopg2
 import streamlit as st
 
-from data import color_map_for, get_database_url, load_matched_line_items, style
+from data import PLOTLY_CONFIG, color_map_for, get_database_url, load_matched_line_items, style
 from ui_kit import (
     data_table,
     empty_state,
@@ -91,7 +91,7 @@ def detailed_sections(ctx) -> None:
                 color_discrete_map={"Requested": palette["categorical"][0], "Delivered": palette["categorical"][1]},
                 labels={"customer_name": "", "Amount": "$"},
             )
-            st.plotly_chart(style(fig_cmp, palette, height=340), use_container_width=True, key="chart_cmp_fulfillment")
+            st.plotly_chart(style(fig_cmp, palette, height=340), use_container_width=True, config=PLOTLY_CONFIG, key="chart_cmp_fulfillment")
 
     with section_card("Detailed breakdown", "Complete detail — slice by time period, customer, product, and size, in any combination."):
         bc1, bc2 = st.columns(2)

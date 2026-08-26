@@ -8,7 +8,7 @@ and the Reference Prices save-diff-against-snapshot logic are unchanged from Pha
 import plotly.express as px
 import streamlit as st
 
-from data import color_map_for, load_reference_prices, save_reference_prices, style
+from data import PLOTLY_CONFIG, color_map_for, load_reference_prices, save_reference_prices, style
 from ui_kit import data_table, page_scaffold, scope_bar
 
 
@@ -77,7 +77,7 @@ def _render_price_history(ctx) -> None:
         x="2024-06-01", y=1, yref="paper", showarrow=False, yanchor="bottom",
         text="Pricing standardized", font=dict(color=palette["ink_muted"], size=10),
     )
-    st.plotly_chart(style(fig_price, palette, height=360), use_container_width=True, key="chart_pricing_history")
+    st.plotly_chart(style(fig_price, palette, height=360), use_container_width=True, config=PLOTLY_CONFIG, key="chart_pricing_history")
 
     ref_prices_df = load_reference_prices()
     ref_for_selection = ref_prices_df[

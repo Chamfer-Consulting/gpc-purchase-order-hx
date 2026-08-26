@@ -3,7 +3,7 @@
 import plotly.express as px
 import streamlit as st
 
-from data import color_map_for, month_over_month_movers, style
+from data import PLOTLY_CONFIG, color_map_for, month_over_month_movers, style
 from ui_kit import (
     data_table,
     empty_state,
@@ -33,7 +33,7 @@ def render(ctx) -> None:
             labels={"revenue": "Revenue ($)", "customer_name": ""},
         )
         fig.update_traces(marker_color=palette["sequential_blue"][4])
-        st.plotly_chart(style(fig, palette, height=380), use_container_width=True, key="chart_top_customers")
+        st.plotly_chart(style(fig, palette, height=380), use_container_width=True, config=PLOTLY_CONFIG, key="chart_top_customers")
 
     with section_card("Compare customers", "Pick two or more customers to compare revenue and invoice volume side by side."):
         cust_options_all = sorted(by_customer_inv["customer_name"].dropna().unique().tolist())
@@ -91,7 +91,7 @@ def render(ctx) -> None:
                     color_discrete_map=product_colors,
                     labels={"month": "", "quantity": "Quantity", "product_name": "Product"},
                 )
-                st.plotly_chart(style(fig_cust_mix, palette, height=340), use_container_width=True, key="chart_customer_product_mix_time")
+                st.plotly_chart(style(fig_cust_mix, palette, height=340), use_container_width=True, config=PLOTLY_CONFIG, key="chart_customer_product_mix_time")
 
     with section_card("Customer summary"):
         customer_table = by_customer_inv.sort_values("revenue", ascending=False).rename(columns={

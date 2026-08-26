@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from data import color_map_for, style
+from data import PLOTLY_CONFIG, color_map_for, style
 from labels import COLUMN_KIND, GLOSSARY
 from labels import label as col_label
 
@@ -164,7 +164,7 @@ def period_drilldown(
     column the chart was built from, not raw per-row dates.
     """
     event = st.plotly_chart(
-        style(fig, palette, height=height), use_container_width=True, key=key,
+        style(fig, palette, height=height), use_container_width=True, config=PLOTLY_CONFIG, key=key,
         on_select="rerun", selection_mode="points",
     )
     points = (event.get("selection") or {}).get("points") or []
@@ -189,7 +189,7 @@ def yoy_drilldown(
     trace — the clicked point's trace name (the "year" value px.line's color=
     param assigns) disambiguates which year's month was actually clicked."""
     event = st.plotly_chart(
-        style(fig, palette, height=height), use_container_width=True, key=key,
+        style(fig, palette, height=height), use_container_width=True, config=PLOTLY_CONFIG, key=key,
         on_select="rerun", selection_mode="points",
     )
     points = (event.get("selection") or {}).get("points") or []
@@ -253,7 +253,7 @@ def entity_comparison(
             monthly, x="month", y=col, color=entity_col, markers=True,
             color_discrete_map=colors, labels={"month": "", col: label, entity_col: entity_label},
         )
-        st.plotly_chart(style(fig, palette, height=320), use_container_width=True, key=f"{key}_chart_{label}")
+        st.plotly_chart(style(fig, palette, height=320), use_container_width=True, config=PLOTLY_CONFIG, key=f"{key}_chart_{label}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -374,7 +374,7 @@ def chart_frame(fig, *, palette: dict, key: str, title: str | None = None,
         st.markdown(f"**{title}**")
     st.plotly_chart(
         style(fig, palette, height=CHART_HEIGHTS.get(size, 320)),
-        use_container_width=True, key=key,
+        use_container_width=True, config=PLOTLY_CONFIG, key=key,
     )
     if hint:
         st.caption(hint)

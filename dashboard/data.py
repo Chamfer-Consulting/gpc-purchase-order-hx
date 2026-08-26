@@ -48,18 +48,76 @@ DARK = {
 
 FONT_FAMILY = "system-ui, -apple-system, 'Segoe UI', sans-serif"
 
+# Passed to every st.plotly_chart(): no Plotly wordmark, and a trimmed hover-only
+# toolbar (Streamlit already shows it on hover, not permanently).
+PLOTLY_CONFIG = {
+    "displaylogo": False,
+    "modeBarButtonsToRemove": [
+        "lasso2d", "select2d", "zoomIn2d", "zoomOut2d", "autoScale2d",
+        "toggleSpikelines", "hoverClosestCartesian", "hoverCompareCartesian",
+    ],
+}
+
 
 def style(fig: go.Figure, palette: dict, height: int | None = None) -> go.Figure:
+    """The single house style for every chart. Borderless surface, one light
+    horizontal gridline set, no tick marks or axis spines, legend as a top strip,
+    unified hover, brand colourway. Orientation-aware: a horizontal bar chart gets
+    the value grid on x and the category axis clean on y."""
+    horizontal = any(getattr(t, "orientation", None) == "h" for t in fig.data)
+    # Respect an explicit fig.update_layout(showlegend=...) from the caller; only
+    # auto-decide (hide it for a lone series) when they left it on the default.
+    if fig.layout.showlegend is None:
+        n_series = len({(getattr(t, "legendgroup", None) or getattr(t, "name", None) or i)
+                        for i, t in enumerate(fig.data)})
+        show_legend = n_series > 1
+    else:
+        show_legend = fig.layout.showlegend
+    single = not show_legend
+
+    axis_base = dict(
+        showline=False, zeroline=False, ticks="", ticklen=0, automargin=True,
+        tickfont=dict(size=11, color=palette["ink_muted"]),
+        title_font=dict(size=11, color=palette["ink_muted"]),
+    )
+    clean_axis = {**axis_base, "showgrid": False}
+    value_axis = {**axis_base, "showgrid": True, "gridcolor": palette["grid"], "gridwidth": 1}
+
     fig.update_layout(
         paper_bgcolor=palette["surface"],
         plot_bgcolor=palette["surface"],
-        font=dict(color=palette["ink_primary"], family=FONT_FAMILY),
-        xaxis=dict(gridcolor=palette["grid"], linecolor=palette["ink_muted"], zeroline=False),
-        yaxis=dict(gridcolor=palette["grid"], linecolor=palette["ink_muted"], zeroline=False),
-        legend=dict(bgcolor="rgba(0,0,0,0)"),
-        margin=dict(l=10, r=10, t=40, b=10),
-        hoverlabel=dict(bgcolor=palette["surface"], font_family=FONT_FAMILY),
+        colorway=palette["categorical"],
+        font=dict(color=palette["ink_primary"], family=FONT_FAMILY, size=12),
+        margin=dict(l=8, r=16, t=36 if not single else 14, b=8),
+        hovermode="y unified" if horizontal else "x unified",
+        hoverlabel=dict(
+            bgcolor=palette["surface"], bordercolor=palette["grid"],
+            font=dict(family=FONT_FAMILY, size=12, color=palette["ink_primary"]),
+        ),
+        bargap=0.28, bargroupgap=0.12,
+        showlegend=show_legend,
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+            bgcolor="rgba(0,0,0,0)", title_text="", font=dict(size=11),
+        ),
+        title=dict(font=dict(size=13, color=palette["ink_muted"]), x=0, xanchor="left"),
     )
+    fig.update_xaxes(**(value_axis if horizontal else clean_axis))
+    fig.update_yaxes(**(clean_axis if horizontal else value_axis))
+    if not horizontal:
+        fig.update_xaxes(
+            showspikes=True, spikecolor=palette["ink_muted"], spikethickness=1,
+            spikedash="dot", spikemode="across", spikesnap="cursor",
+        )
+
+    for tr in fig.data:
+        if tr.type == "bar":
+            tr.update(marker_line_width=0)
+        elif tr.type == "scatter" and tr.mode and "lines" in tr.mode:
+            tr.update(line=dict(width=2))
+            if "markers" in tr.mode:
+                tr.update(marker=dict(size=6, line=dict(width=0)))
+
     if height is not None:
         fig.update_layout(height=height)
     return fig
