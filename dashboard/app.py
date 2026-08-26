@@ -23,8 +23,10 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import gmail_client  # noqa: E402 — needs the sys.path insert above
+import filters  # noqa: E402 — dashboard-local, needs the sys.path insert above
+import gmail_client  # noqa: E402
 import qbo_client  # noqa: E402
+import theme  # noqa: E402
 from data import (  # noqa: E402
     DARK,
     LIGHT,
@@ -140,68 +142,43 @@ invoices, inv_items_all = prepare_invoices(inv_df, inv_items_df)
 # static spec, it can't inherit Streamlit's CSS) pick the matching validated palette.
 theme_type = (st.context.theme.type if st.context.theme else None) or "light"
 palette = DARK if theme_type == "dark" else LIGHT
+theme.inject(theme_type)
 st.sidebar.caption("🌗 Switch Light/Dark/system theme via the ⋮ menu (top right) → Settings.")
-st.sidebar.divider()
 
-# ── Sidebar: filters ─────────────────────────────────────────────────────────────
+# ── Filters: comprehensive top bar (replaces the former sidebar block) ─────────────
+# Redesign spec §03 / decision #2. filters.render_filter_bar() draws the sticky bar
+# in the main area (above every page's body) and returns a FilterState; the mapping
+# below feeds AppContext exactly where the old sidebar code did. selected_sizes,
+# compare_mode/prev_* and line_types are new — carried on ctx for the pages that
+# will consume them in later phases; the invoice-category filter still matches the
+# old ["product","sample"] behaviour until the views are ready for it (Phase C).
 
-st.sidebar.header("Filters")
+st.title("🌱 Garfield Produce — Purchase Order Dashboard")
 
 min_date = invoices["effective_date"].min()
 max_date = invoices["effective_date"].max()
-has_dates = pd.notna(min_date) and pd.notna(max_date)
-
-DATE_PRESETS = ["Last 30 days", "Last 90 days", "Year to date", "Year", "All time", "Custom"]
-preset = st.sidebar.selectbox("Date range", DATE_PRESETS, index=4, key="date_preset")
-
-if has_dates:
-    today = pd.Timestamp(max_date.date())
-    if preset == "Last 30 days":
-        start_ts, end_ts = today - pd.Timedelta(days=29), today
-    elif preset == "Last 90 days":
-        start_ts, end_ts = today - pd.Timedelta(days=89), today
-    elif preset == "Year to date":
-        start_ts, end_ts = pd.Timestamp(year=today.year, month=1, day=1), today
-    elif preset == "Year":
-        year_options = sorted(invoices["effective_date"].dt.year.dropna().unique().astype(int).tolist(), reverse=True)
-        picked_year = st.sidebar.selectbox("Year", year_options, key="filter_year")
-        start_ts = pd.Timestamp(year=picked_year, month=1, day=1)
-        end_ts = pd.Timestamp(year=picked_year, month=12, day=31)
-    elif preset == "All time":
-        start_ts, end_ts = min_date, max_date
-    else:  # Custom
-        custom_range = st.sidebar.date_input(
-            "Custom range", value=(min_date.date(), max_date.date()), key="custom_range",
-        )
-        if isinstance(custom_range, tuple) and len(custom_range) == 2:
-            start_ts, end_ts = pd.Timestamp(custom_range[0]), pd.Timestamp(custom_range[1])
-        else:
-            start_ts, end_ts = min_date, max_date
-else:
-    start_ts, end_ts = None, None
-
-customers = sorted(invoices["customer_name"].dropna().unique().tolist())
-selected_customers = st.sidebar.multiselect("Customer", customers, default=[], key="filter_customers")
 
 hidden_products = load_hidden_products()
-
+customers = sorted(invoices["customer_name"].dropna().unique().tolist())
 products = sorted(
     set(inv_items_all.loc[inv_items_all["category"] == "product", "product_name"].dropna().unique().tolist())
     - hidden_products
 )
-selected_products = st.sidebar.multiselect("Product", products, default=[], key="filter_products")
+sizes = sorted(
+    inv_items_all.loc[inv_items_all["category"] == "product", "container_size"].dropna().unique().tolist()
+)
+
+fs = filters.render_filter_bar(min_date, max_date, customers, products, sizes)
+start_ts, end_ts = fs.start_ts, fs.end_ts
+selected_customers = fs.selected_customers
+selected_products = fs.selected_products
+selected_sizes = fs.selected_sizes
+include_samples = fs.include_samples
+
 if hidden_products:
     st.sidebar.caption(f"🙈 {len(hidden_products)} product(s) hidden — manage on the Products report page.")
-
-include_samples = st.sidebar.checkbox("Include samples", value=False, key="include_samples")
-
-fc1, fc2 = st.sidebar.columns(2)
-if fc1.button("🔄 Refresh data"):
+if st.sidebar.button("🔄 Refresh data"):
     load_data.clear()
-    st.rerun()
-if fc2.button("✖️ Clear filters"):
-    for key in ("filter_customers", "filter_products", "date_preset", "filter_year", "custom_range", "include_samples"):
-        st.session_state.pop(key, None)
     st.rerun()
 
 # Apply filters
@@ -218,6 +195,9 @@ if selected_customers:
 
 if selected_products:
     f_items = f_items[f_items["product_name"].isin(selected_products)]
+
+if selected_sizes:
+    f_items = f_items[f_items["container_size"].isin(selected_sizes)]
 
 if hidden_products:
     f_items = f_items[~f_items["product_name"].isin(hidden_products)]
@@ -242,6 +222,9 @@ if selected_customers:
 
 if selected_products:
     f_inv_items = f_inv_items[f_inv_items["product_name"].isin(selected_products)]
+
+if selected_sizes:
+    f_inv_items = f_inv_items[f_inv_items["container_size"].isin(selected_sizes)]
 
 if hidden_products:
     f_inv_items = f_inv_items[~f_inv_items["product_name"].isin(hidden_products)]
@@ -303,6 +286,12 @@ ctx = AppContext(
     selected_customers=selected_customers,
     selected_products=selected_products,
     include_samples=include_samples,
+    fs=fs,
+    selected_sizes=selected_sizes,
+    compare_mode=fs.compare_mode,
+    prev_start=fs.prev_start,
+    prev_end=fs.prev_end,
+    line_types=fs.line_types,
     po_df=po_df,
     valid_po=valid_po,
     latest_po=latest_po,
@@ -375,6 +364,5 @@ ctx.pages = {
     "requested_vs_delivered": page_rvd,
 }
 
-st.title("🌱 Garfield Produce — Purchase Order Dashboard")
 nav = st.navigation(pages)
 nav.run()

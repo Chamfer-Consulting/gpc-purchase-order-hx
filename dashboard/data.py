@@ -519,12 +519,23 @@ class AppContext:
     palette: dict
     theme_type: str
 
-    # Filter state (mirrors the sidebar widgets in app.py)
+    # Filter state (mirrors the top filter bar — see dashboard/filters.py)
     start_ts: pd.Timestamp | None
     end_ts: pd.Timestamp | None
     selected_customers: list = field(default_factory=list)
     selected_products: list = field(default_factory=list)
     include_samples: bool = False
+
+    # Added with the redesign's top filter bar (Phase A). `fs` is the full
+    # filters.FilterState; the rest are convenience mirrors. selected_sizes is
+    # already applied to f_items / f_inv_items; compare_* and line_types are
+    # carried for the pages that consume them in later phases.
+    fs: object = None
+    selected_sizes: list = field(default_factory=list)
+    compare_mode: str = "none"          # "none" | "prev" | "yoy"
+    prev_start: pd.Timestamp | None = None
+    prev_end: pd.Timestamp | None = None
+    line_types: list = field(default_factory=list)
 
     # Unfiltered / lightly-derived data
     po_df: pd.DataFrame = None
