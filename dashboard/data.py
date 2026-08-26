@@ -1,11 +1,14 @@
 """
 Shared palette, chart/format helpers, and Postgres data access for the dashboard.
 
-Extracted from the former monolithic app.py (Phase 1 of the navigation/UI overhaul —
-see /Users/jcaternolo/.claude/plans/golden-soaring-robin.md) so both app.py (the
-composition root) and every dashboard/views/*.py page can import the same helpers
-and cached loaders without duplicating them. Logic here is unchanged from the
-original app.py — this is a mechanical extraction, not a rewrite.
+Extracted from the former monolithic app.py so both app.py (the composition root)
+and every dashboard/views/*.py page can import the same helpers and cached loaders
+without duplicating them.
+
+Redesign (Phases A–F) additions live further down: load_saved_views / save_view /
+delete_view, _lifecycle_rows / customer_order_lifecycle / order_lifecycle,
+typical_sizes, and the AppContext fields fs / f_inv_lines / selected_sizes /
+compare_mode / prev_start / prev_end / line_types.
 """
 
 import json
