@@ -40,20 +40,14 @@ from data import (  # noqa: E402
     prepare_invoices,
 )
 from views import (  # noqa: E402
-    datamgmt_edit,
-    datamgmt_raw,
-    email_ingestion,
+    explore,
     fulfillment_dataquality,
-    fulfillment_match,
     fulfillment_rvd,
     home,
-    quickbooks_connection,
-    quickbooks_invoices,
-    reports_breakdown,
+    match_reconcile,
     reports_customers,
-    reports_pricing,
     reports_products,
-    reports_trends,
+    settings,
 )
 
 st.set_page_config(page_title="Garfield Produce — PO Dashboard", layout="wide", page_icon="🌱")
@@ -229,14 +223,18 @@ if selected_sizes:
 if hidden_products:
     f_inv_items = f_inv_items[~f_inv_items["product_name"].isin(hidden_products)]
 
-# Delivery/donation/service/other aren't produce at all — always excluded from
-# product-facing invoice reports. "product" and "sample" are separate categories
-# (see classify_qbo_item); keep both here so the "Include samples" toggle below still
-# has something to act on, matching the existing PO-side behavior.
+# f_inv_lines keeps EVERY line-type the filter bar's "line type" control has
+# checked (Sales=product, Donations, Shipping=delivery, …) — used by Overview to
+# split revenue from donations/shipping (redesign decision #1) and by Customer 360
+# later. f_inv_items stays product(+sample) only, so the existing product/customer
+# analytical pages are unchanged.
+f_inv_lines = f_inv_items[f_inv_items["category"].isin(fs.categories)] if fs.categories else f_inv_items.iloc[0:0]
+
 f_inv_items = f_inv_items[f_inv_items["category"].isin(["product", "sample"])]
 
 if not include_samples:
     f_inv_items = f_inv_items[~f_inv_items["is_sample"]]
+    f_inv_lines = f_inv_lines[~f_inv_lines["is_sample"]]
 
 product_colors = color_map_for(
     set(inv_items_all.loc[inv_items_all["category"] == "product", "product_name"].dropna().unique().tolist())
@@ -302,6 +300,7 @@ ctx = AppContext(
     f_items=f_items,
     f_inv=f_inv,
     f_inv_items=f_inv_items,
+    f_inv_lines=f_inv_lines,
     hidden_products=hidden_products,
     by_product=by_product,
     by_customer=by_customer,
@@ -311,57 +310,40 @@ ctx = AppContext(
 )
 
 # ── Navigation ────────────────────────────────────────────────────────────────────
-# A flat st.navigation sidebar replaces the former double-nested st.tabs — only the
-# active page's render(ctx) call below executes per rerun (vs. every sub-tab body
-# executing on every rerun under the old st.tabs structure).
+# Redesign spec §03: 8 destinations in two tiers — "Analyse" (read the business) and
+# "Operate" (fix and configure). Explore folds in the former Trends + Breakdown +
+# Compare-periods; Settings and Match & Reconcile lazily host the former Data
+# Management / QuickBooks / Email pages behind a segmented control. url_path values
+# are kept where a page carried one so old bookmarks still resolve.
 #
-# Each st.Page callable is a lambda closing over `ctx` by name, not by value — Python
-# resolves that reference only when the lambda actually runs (i.e. when the page is
-# navigated to), by which point `ctx.pages` below has already been populated. That's
-# what makes the apparent circularity here safe: page objects need `ctx` to render,
-# and `ctx.pages` needs the page objects for Home's "Needs attention" deep links —
-# neither is actually evaluated until well after both exist.
+# Each st.Page callable is a lambda closing over `ctx` by name (resolved only when
+# the page runs), so ctx.pages below — populated right after — is available for
+# Home's "Needs attention" deep links.
 
-page_home = st.Page(lambda: home.render(ctx), title="Home", icon="🏠", url_path="home", default=True)
-page_trends = st.Page(lambda: reports_trends.render(ctx), title="Trends", url_path="trends")
-page_products = st.Page(lambda: reports_products.render(ctx), title="Products", url_path="products")
-page_customers = st.Page(lambda: reports_customers.render(ctx), title="Customers", url_path="customers")
-page_breakdown = st.Page(lambda: reports_breakdown.render(ctx), title="Breakdown", url_path="breakdown")
-page_pricing = st.Page(
-    lambda: reports_pricing.render(ctx), title="Pricing & Reference Prices", icon="🏷️", url_path="pricing"
-)
-page_match_review = st.Page(lambda: fulfillment_match.render(ctx), title="Match & Review", icon="🔗", url_path="match_review")
-page_rvd = st.Page(
-    lambda: fulfillment_rvd.render(ctx), title="Requested vs Delivered", url_path="requested_vs_delivered"
+page_overview = st.Page(lambda: home.render(ctx), title="Overview", icon="🏠", url_path="home", default=True)
+page_customers = st.Page(lambda: reports_customers.render(ctx), title="Customers", icon="👥", url_path="customers")
+page_products = st.Page(lambda: reports_products.render(ctx), title="Products & Sizes", icon="🥬", url_path="products")
+page_explore = st.Page(lambda: explore.render(ctx), title="Explore", icon="🔎", url_path="explore")
+page_lifecycle = st.Page(
+    lambda: fulfillment_rvd.render(ctx), title="Order Lifecycle", icon="🔄", url_path="requested_vs_delivered"
 )
 page_data_quality = st.Page(
     lambda: fulfillment_dataquality.render(ctx), title="Data Quality", icon="⚠️", url_path="data_quality"
 )
-page_raw_data = st.Page(lambda: datamgmt_raw.render(ctx), title="Raw Data", url_path="raw_data")
-page_edit_po = st.Page(lambda: datamgmt_edit.render(ctx), title="Edit PO", icon="✏️", url_path="edit_po")
-page_qbo_connection = st.Page(
-    lambda: quickbooks_connection.render(ctx), title="Connection & Sync", url_path="qbo_connection"
-)
-page_qbo_invoices = st.Page(lambda: quickbooks_invoices.render(ctx), title="Invoice Explorer", url_path="qbo_invoices")
-page_email_ingestion = st.Page(
-    lambda: email_ingestion.render(ctx), title="Connection", icon="✉️", url_path="email_ingestion"
-)
+page_match = st.Page(lambda: match_reconcile.render(ctx), title="Match & Reconcile", icon="🔗", url_path="match_review")
+page_settings = st.Page(lambda: settings.render(ctx), title="Settings & Connections", icon="⚙️", url_path="settings")
 
 pages = {
-    "": [page_home],
-    "📊 Reports": [page_trends, page_products, page_customers, page_breakdown, page_pricing],
-    "📦 Fulfillment": [page_match_review, page_rvd, page_data_quality],
-    "🗂️ Data Management": [page_raw_data, page_edit_po],
-    "🔗 QuickBooks": [page_qbo_connection, page_qbo_invoices],
-    "✉️ Email Ingestion": [page_email_ingestion],
+    "Analyse": [page_overview, page_customers, page_products, page_explore, page_lifecycle],
+    "Operate": [page_data_quality, page_match, page_settings],
 }
 
-# Subset of pages dashboard/attention.py's AttentionItem.page values reference —
-# keyed the same as those strings so Home's digest can st.page_link(ctx.pages[...]).
+# Keys match dashboard/attention.py's AttentionItem.page values so Home's digest can
+# st.page_link(ctx.pages[...]). "requested_vs_delivered" now points at Order Lifecycle.
 ctx.pages = {
     "data_quality": page_data_quality,
-    "match_review": page_match_review,
-    "requested_vs_delivered": page_rvd,
+    "match_review": page_match,
+    "requested_vs_delivered": page_lifecycle,
 }
 
 nav = st.navigation(pages)

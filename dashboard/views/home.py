@@ -49,6 +49,7 @@ def render(ctx) -> None:
     start_ts, end_ts = ctx.start_ts, ctx.end_ts
     selected_customers = ctx.selected_customers
     invoices = ctx.invoices
+    inv_items_all = ctx.inv_items_all
     by_product_inv, by_customer_inv = ctx.by_product_inv, ctx.by_customer_inv
 
     page_scaffold("Overview", "Revenue, orders, and what needs attention for the current scope.")
@@ -56,7 +57,14 @@ def render(ctx) -> None:
     total_invoices = f_inv["id"].nunique()
     scope_bar(ctx.fs, order_count=total_invoices)
 
-    total_revenue = f_inv["total_amt"].sum()
+    # "Revenue" = product sales only (redesign decision #1). Gross invoiced, donations
+    # and shipping are broken out in the caption below so the headline stays clean.
+    lines = ctx.f_inv_lines if ctx.f_inv_lines is not None else f_inv_items
+    sales_revenue = lines.loc[lines["category"] == "product", "line_total"].sum()
+    donations = lines.loc[lines["category"] == "donation", "line_total"].sum()
+    shipping = lines.loc[lines["category"] == "delivery", "line_total"].sum()
+    gross_invoiced = f_inv["total_amt"].sum()
+    total_revenue = sales_revenue
     unique_customers = f_inv["customer_name"].nunique()
     distinct_products = f_inv_items.loc[f_inv_items["category"] == "product", "product_name"].nunique()
     avg_invoice_value = f_inv["total_amt"].mean() if total_invoices else 0
@@ -71,8 +79,15 @@ def render(ctx) -> None:
             prev_inv = prev_inv[prev_inv["customer_name"].isin(selected_customers)]
         prev_count = prev_inv["id"].nunique()
         if prev_count:
+            prev_lines = inv_items_all[
+                (inv_items_all["effective_date"] >= prev_start)
+                & (inv_items_all["effective_date"] <= prev_end)
+                & (inv_items_all["category"] == "product")
+            ]
+            if selected_customers:
+                prev_lines = prev_lines[prev_lines["customer_name"].isin(selected_customers)]
             delta_invoices = total_invoices - prev_count
-            delta_revenue = total_revenue - prev_inv["total_amt"].sum()
+            delta_revenue = sales_revenue - prev_lines["line_total"].sum()
             delta_aiv = avg_invoice_value - prev_inv["total_amt"].mean()
 
     kpi_strip([
@@ -92,8 +107,12 @@ def render(ctx) -> None:
             "delta": fmt_delta(delta_aiv, prefix="$", decimals=2),
         },
     ], north_star=0)
-    if start_ts is not None and end_ts is not None:
-        st.caption("Deltas compare the selected date range to the immediately preceding period of equal length.")
+    st.caption(
+        f"Gross invoiced **${gross_invoiced:,.0f}** — product sales ${sales_revenue:,.0f} · "
+        f"donations ${donations:,.0f} · shipping ${shipping:,.0f}. "
+        + ("Deltas compare the selected date range to the immediately preceding period of equal length."
+           if start_ts is not None and end_ts is not None else "")
+    )
 
     with section_card("🔔 Needs attention", "Ranked across the whole business — biggest issues first."):
         _conn = psycopg2.connect(get_database_url())

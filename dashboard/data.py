@@ -551,7 +551,8 @@ class AppContext:
 
     # Filtered (per sidebar filters) — invoice-scoped (the primary source for Reports)
     f_inv: pd.DataFrame = None
-    f_inv_items: pd.DataFrame = None
+    f_inv_items: pd.DataFrame = None          # product(+sample) lines only
+    f_inv_lines: pd.DataFrame = None          # every line-type the filter bar has checked
 
     # Precomputed aggregates (shared across multiple pages)
     by_product: pd.DataFrame = None
