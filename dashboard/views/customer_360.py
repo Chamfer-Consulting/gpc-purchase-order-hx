@@ -157,7 +157,7 @@ def render(ctx) -> None:
             data_grid(ts_show, list(ts_show.columns), key="c360_sizes")
             shifted = ts[ts["shifted"]]
             if not shifted.empty:
-                st.caption("↕ Shifted: " + ", ".join(
+                st.caption("Shifted: " + ", ".join(
                     f"{r.product_name} ({r.early_size} → {r.recent_size})" for r in shifted.itertuples()
                 ))
 

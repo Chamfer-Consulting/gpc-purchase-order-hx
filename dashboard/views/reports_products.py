@@ -1,4 +1,4 @@
-"""📊 Reports → Products. Phase 2: page_header/section_card/empty_state polish.
+"""Reports → Products. Phase 2: page_header/section_card/empty_state polish.
 Also hosts "Manage products" — the persistent, dashboard-wide product visibility
 toggle (a hidden product is excluded from every reporting surface app-wide, but
 Edit PO and the QuickBooks pages are unaffected; see dashboard/data.py's
@@ -52,7 +52,7 @@ def render(ctx) -> None:
     scope_bar(ctx.fs, order_count=int(ctx.f_inv["id"].nunique()))
 
     with section_card(
-        "⚙️ Manage products",
+        "Manage products",
         "Hide a product to exclude it from every report, chart, filter, and export "
         "app-wide — persists for everyone until turned back on. Edit PO and the "
         "QuickBooks pages are unaffected.",
@@ -72,13 +72,13 @@ def render(ctx) -> None:
         fig.update_layout(showlegend=False)
         st.plotly_chart(style(fig, palette, height=380), use_container_width=True, key="chart_revenue_by_product")
         st.download_button(
-            "⬇️ Download product revenue (CSV)",
+            "Download product revenue (CSV)",
             by_product_inv.rename(columns={"product_name": "Product", "revenue": "Revenue ($)", "quantity": "Quantity"})
             .to_csv(index=False).encode("utf-8"),
             file_name="revenue_by_product.csv", mime="text/csv", key="dl_products",
         )
 
-    with section_card("🆚 Compare products", "Pick two or more products to compare quantity and revenue side by side."):
+    with section_card("Compare products", "Pick two or more products to compare quantity and revenue side by side."):
         product_options_all = sorted(by_product_inv["product_name"].dropna().unique().tolist())
         entity_comparison(
             f_inv_items, "product_name", "Product", product_options_all, "effective_date",

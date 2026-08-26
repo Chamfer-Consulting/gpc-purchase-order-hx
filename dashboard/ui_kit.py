@@ -24,11 +24,11 @@ _SEVERITY_TO_BADGE_COLOR = {
 }
 
 _SEVERITY_ICON = {
-    "critical": "🔴",
-    "serious": "🟠",
-    "warning": "🟡",
-    "good": "🟢",
-    "info": "🔵",
+    "critical": ":material/error:",
+    "serious": ":material/warning:",
+    "warning": ":material/warning:",
+    "good": ":material/check_circle:",
+    "info": ":material/info:",
 }
 
 
@@ -75,7 +75,7 @@ def severity_badge(level: str, label: str | None = None) -> None:
     (critical/serious/warning/good/info), using the icon+color convention shared
     with the Home 'Needs attention' digest and the Data Quality page."""
     color = _SEVERITY_TO_BADGE_COLOR.get(level, "gray")
-    icon = _SEVERITY_ICON.get(level, "⚪")
+    icon = _SEVERITY_ICON.get(level, ":material/circle:")
     st.badge(label or level.capitalize(), icon=icon, color=color)
 
 
@@ -85,15 +85,15 @@ def confidence_badge(confidence_text: str) -> None:
     only maps its output string to a color."""
     text = confidence_text.lower()
     if "certain" in text:
-        color, icon = "green", "✅"
+        color, icon = "green", ":material/check_circle:"
     elif "high" in text:
-        color, icon = "blue", "🔵"
+        color, icon = "blue", ":material/info:"
     elif "medium" in text:
-        color, icon = "yellow", "🟡"
+        color, icon = "yellow", ":material/warning:"
     elif "low" in text or "verify" in text:
-        color, icon = "orange", "🟠"
+        color, icon = "orange", ":material/priority_high:"
     else:
-        color, icon = "gray", "⚪"
+        color, icon = "gray", ":material/help:"
     st.badge(confidence_text, icon=icon, color=color)
 
 
@@ -169,7 +169,7 @@ def period_drilldown(
     )
     points = (event.get("selection") or {}).get("points") or []
     if not points:
-        st.caption("💡 Click a bar/point above to see its breakdown. Click it again to clear.")
+        st.caption("Click a bar or point above to see its breakdown. Click again to clear.")
         return
     clicked_raw = pd.to_datetime(points[0]["x"])
     clicked = _nearest_period(detail_df[period_col], clicked_raw)
@@ -194,7 +194,7 @@ def yoy_drilldown(
     )
     points = (event.get("selection") or {}).get("points") or []
     if not points:
-        st.caption("💡 Click a point above to see its breakdown. Click it again to clear.")
+        st.caption("Click a point above to see its breakdown. Click again to clear.")
         return
     point = points[0]
     curve_number = point.get("curve_number")
@@ -265,13 +265,13 @@ CHART_HEIGHTS = {"compact": 240, "std": 320, "tall": 400}
 
 _NS_SEQ = 0  # monotonic suffix for kpi_strip's north-star container key
 
-_DRILL_HINT = "💡 Click a bar or point to break it down for that period. Click again to clear."
+_DRILL_HINT = "Click a bar or point to break it down for that period. Click again to clear."
 
 _STATE_CHIP = {
-    "critical": ("🔴", "red"), "serious": ("🟠", "orange"), "warning": ("🟡", "yellow"),
-    "good": ("🟢", "green"), "info": ("🔵", "blue"),
-    "revision": ("↻", "violet"), "edited": ("✏️", "gray"),
-    "matched": ("🔗", "green"), "unmatched": ("⚠️", "orange"),
+    "critical": (":material/error:", "red"), "serious": (":material/warning:", "orange"), "warning": (":material/warning:", "yellow"),
+    "good": (":material/check_circle:", "green"), "info": (":material/info:", "blue"),
+    "revision": (":material/history:", "violet"), "edited": (":material/edit:", "gray"),
+    "matched": (":material/link:", "green"), "unmatched": (":material/link_off:", "orange"),
 }
 
 
@@ -333,7 +333,7 @@ def kpi_strip(items: list[dict], north_star: int | None = 0) -> None:
     """Up to 6 equal-height metric tiles in bordered columns. Item keys:
     label, value, delta (opt), delta_help (opt caption), help (opt tooltip),
     chart_data (opt sparkline), chart_type (opt, default "line"). `north_star` is
-    the index that gets the "★ " marker (and the accent underline, once
+    the index whose tile gets the accent underline (once
     dashboard/theme.py's rule is active); pass None for a plain strip with no
     highlighted metric."""
     if not items:
@@ -356,8 +356,6 @@ def kpi_strip(items: list[dict], north_star: int | None = 0) -> None:
                 kwargs["chart_data"] = item["chart_data"]
                 kwargs["chart_type"] = item.get("chart_type", "line")
             label = item["label"]
-            if north_star is not None and i == north_star:
-                label = f"★ {label}"
             col.metric(
                 label, item["value"], delta=item.get("delta"),
                 help=item.get("help"), **kwargs,
@@ -421,7 +419,7 @@ def data_grid(df, columns: list[str] | None = None, *, key: str,
 def state_chip(kind: str, text: str | None = None) -> None:
     """One badge vocabulary for row/entity state: the five severities plus
     revision / edited / matched / unmatched."""
-    icon, color = _STATE_CHIP.get(kind, ("⚪", "gray"))
+    icon, color = _STATE_CHIP.get(kind, (":material/help:", "gray"))
     st.badge(text or kind.capitalize(), icon=icon, color=color)
 
 

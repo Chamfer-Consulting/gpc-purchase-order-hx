@@ -1,5 +1,5 @@
 """
-🔗 QuickBooks → Connection & Sync. Phase 4: page_header/section_card polish (structure
+QuickBooks → Connection & Sync. Phase 4: page_header/section_card polish (structure
 from Phase 1, which split the former single "QuickBooks" tab into this page plus
 quickbooks_invoices.py's "Invoice Explorer").
 """
@@ -20,7 +20,7 @@ def render(ctx) -> None:
         "Connect to QuickBooks and sync invoice/item data — see Invoice Explorer for the raw synced data.",
     )
     if qbo_client.is_production():
-        st.warning("⚠️ Environment: **Production** — this pulls real invoice data.")
+        st.warning("Environment: **Production** — this pulls real invoice data.")
     else:
         st.info("Environment: **Sandbox** (test data only). Set `qbo_environment = \"production\"` to switch.")
 
@@ -34,7 +34,7 @@ def render(ctx) -> None:
         with section_card():
             st.info("Not connected to QuickBooks yet.")
             oauth_state = st.session_state.setdefault("qbo_oauth_state", secrets.token_urlsafe(16))
-            st.link_button("🔗 Connect to QuickBooks", qbo_client.build_authorize_url(oauth_state))
+            st.link_button("Connect to QuickBooks", qbo_client.build_authorize_url(oauth_state))
         return
 
     with section_card():
@@ -47,7 +47,7 @@ def render(ctx) -> None:
         full_resync = st.checkbox("Full resync (ignore last-synced cursor, re-pull everything)")
 
         c1, c2 = st.columns(2)
-        if c1.button("🔄 Sync invoices"):
+        if c1.button("Sync invoices"):
             sync_conn = psycopg2.connect(get_database_url())
             try:
                 with st.spinner("Pulling the product catalog from QuickBooks..."):

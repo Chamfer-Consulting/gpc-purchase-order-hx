@@ -1,5 +1,5 @@
 """
-📦 Fulfillment → Match & Review. Phase 3 redesign: the "Needs review" queue splits into
+Fulfillment → Match & Review. Phase 3 redesign: the "Needs review" queue splits into
 Quick confirm (Certain/High confidence — dense one-row list) and Needs judgment
 (everything else — full side-by-side detail opened via st.dialog instead of always-
 rendered expanders), plus a score-breakdown popover using the new additive
@@ -43,10 +43,10 @@ def _score_breakdown(mc, row) -> None:
             + (", outside window" if explain["outside_date_window"] else "") + ")"
             if explain["date_delta_days"] is not None else "(no date to compare)"
         )
-        st.write(f"📅 Date match: {explain['date_score']} {date_note}")
-        st.write(f"💲 Amount match: {explain['amount_score']}")
-        st.write(f"📦 Line-item overlap: {explain['item_score']}")
-        st.write(f"🔢 PO-number hint: {explain['hint_score']}")
+        st.write(f"Date match: {explain['date_score']} {date_note}")
+        st.write(f"Amount match: {explain['amount_score']}")
+        st.write(f"Line-item overlap: {explain['item_score']}")
+        st.write(f"PO-number hint: {explain['hint_score']}")
 
 
 @st.dialog("Review match", width="large")
@@ -63,7 +63,7 @@ def _review_dialog(mc, row: dict, po_items_map: dict, inv_items_map: dict) -> No
         st.markdown("**Purchase Order**")
         st.write(f"PO Number: {row['po_number'] or row['source_file']}")
         if row.get("drive_file_id"):
-            st.markdown(f"[📄 Open original PDF ↗]({gdrive_client.file_view_url(row['drive_file_id'])})")
+            st.markdown(f"[Open original PDF ↗]({gdrive_client.file_view_url(row['drive_file_id'])})")
         st.write(f"Customer: {row['po_customer']}")
         st.write(
             f"PO Date: {row['po_date'] or '—'} · Sent: {row['sent_date'] or '—'} · "
@@ -88,10 +88,10 @@ def _review_dialog(mc, row: dict, po_items_map: dict, inv_items_map: dict) -> No
         _items_table(inv_items_map.get(row["invoice_id"], []))
 
     bc1, bc2 = st.columns(2)
-    if bc1.button("✅ Confirm match", key=f"dlg_confirm_{row['po_id']}_{row['invoice_id']}", type="primary"):
+    if bc1.button("Confirm match", key=f"dlg_confirm_{row['po_id']}_{row['invoice_id']}", type="primary"):
         qbo_matcher.confirm_link(mc, row["po_id"], row["invoice_id"])
         st.rerun()
-    if bc2.button("❌ Reject", key=f"dlg_reject_{row['po_id']}_{row['invoice_id']}"):
+    if bc2.button("Reject", key=f"dlg_reject_{row['po_id']}_{row['invoice_id']}"):
         qbo_matcher.reject_link(mc, row["po_id"], row["invoice_id"])
         st.rerun()
 
@@ -122,7 +122,7 @@ def render(ctx) -> None:
     try:
         with section_card("Automated matching"):
             mcol1, mcol2 = st.columns(2)
-            if mcol1.button("🔄 Run matching"):
+            if mcol1.button("Run matching"):
                 with st.spinner("Matching POs to invoices..."):
                     summary = qbo_matcher.run_matching(mc)
                 st.success(
@@ -138,7 +138,7 @@ def render(ctx) -> None:
                     f"candidate(s) pruned. "
                     f"Fuzzy date window: ±{summary['date_window_days']} days."
                 )
-            if mcol2.button("📁 Sync Drive links"):
+            if mcol2.button("Sync Drive links"):
                 progress_bar = st.progress(0.0, text="Searching Google Drive...")
 
                 def _drive_progress(i, total):
@@ -161,7 +161,7 @@ def render(ctx) -> None:
             with mc.cursor() as _cur:
                 _cur.execute("SELECT COUNT(*), COUNT(drive_file_id) FROM purchase_orders WHERE error IS NULL")
                 _total_po, _linked_po = _cur.fetchone()
-            st.caption(f"📁 {_linked_po} of {_total_po} POs linked to their original PDF in Google Drive.")
+            st.caption(f"{_linked_po} of {_total_po} POs linked to their original PDF in Google Drive.")
 
         st.subheader("Needs review")
         needs_review = qbo_matcher.get_needs_review(mc)
@@ -179,20 +179,20 @@ def render(ctx) -> None:
             judgment = [(r, c) for r, c in annotated if not qbo_matcher.is_quick_confirm(c)]
 
             if quick:
-                with section_card(f"✅ Quick confirm ({len(quick)})", "High-confidence matches — spot-check and confirm."):
+                with section_card(f"Quick confirm ({len(quick)})", "High-confidence matches — spot-check and confirm."):
                     for row, confidence in quick:
                         _review_row(row, confidence, mc, po_items_map, inv_items_map)
 
             if judgment:
                 with section_card(
-                    f"🤔 Needs judgment ({len(judgment)})",
+                    f"Needs judgment ({len(judgment)})",
                     "Lower-confidence or ambiguous matches — open each to compare in full detail.",
                 ):
                     for row, confidence in judgment:
                         _review_row(row, confidence, mc, po_items_map, inv_items_map)
 
         st.divider()
-        st.subheader("🔍 Search & match manually")
+        st.subheader("Search & match manually")
         unresolved_count = len(qbo_matcher.get_unlinked_pos(mc))
         st.caption(
             "Find and link any PO to any invoice directly — independent of the automated "
@@ -222,7 +222,7 @@ def render(ctx) -> None:
                 po_detail = qbo_matcher.get_po_full_detail(mc, selected_po)
                 st.write(f"PO Number: {po_detail['po_number'] or po_detail['source_file']}")
                 if po_detail.get("drive_file_id"):
-                    st.markdown(f"[📄 Open original PDF ↗]({gdrive_client.file_view_url(po_detail['drive_file_id'])})")
+                    st.markdown(f"[Open original PDF ↗]({gdrive_client.file_view_url(po_detail['drive_file_id'])})")
                 st.write(f"Customer: {po_detail['customer_name']}")
                 st.write(
                     f"PO Date: {po_detail['po_date'] or '—'} · Sent: {po_detail['sent_date'] or '—'} · "
@@ -288,7 +288,7 @@ def render(ctx) -> None:
                     f"allowed (e.g. split shipments) but double-check this is intentional."
                 )
 
-            if st.button("🔗 Link these"):
+            if st.button("Link these"):
                 qbo_matcher.manual_link(mc, selected_po, selected_invoice, replace_existing=replace_existing)
                 st.success("Linked.")
                 st.rerun()

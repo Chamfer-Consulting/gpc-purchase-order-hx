@@ -1,5 +1,5 @@
 """
-✉️ Email Ingestion → Connection. One-time Gmail OAuth connect (same shape as
+Email Ingestion → Connection. One-time Gmail OAuth connect (same shape as
 QuickBooks' Connection & Sync page — see quickbooks_connection.py) plus a label
 lister and a manual search test, so the exact label name(s) Gmail's API sees can be
 confirmed before wiring up GMAIL_LABELS config. The cloud extraction pipeline
@@ -48,7 +48,7 @@ def render(ctx) -> None:
                 "gmail_oauth_state", f"gmail_connect:{secrets.token_urlsafe(16)}"
             )
             st.link_button(
-                "✉️ Connect Gmail", gmail_client.build_authorize_url(client_id, redirect_uri, oauth_state),
+                "Connect Gmail", gmail_client.build_authorize_url(client_id, redirect_uri, oauth_state),
             )
         return
 
@@ -66,7 +66,7 @@ def render(ctx) -> None:
                 dc_conn.close()
             st.rerun()
 
-    with section_card("🏷️ Labels", "Confirm the exact label name(s) Gmail's API sees — use these for GMAIL_LABELS config."):
+    with section_card("Labels", "Confirm the exact label name(s) Gmail's API sees — use these for GMAIL_LABELS config."):
         if st.button("List labels"):
             token_conn = psycopg2.connect(get_database_url())
             try:
@@ -86,7 +86,7 @@ def render(ctx) -> None:
                     st.info("No user-created labels found on this account.")
 
     with section_card(
-        "🔎 Test search",
+        "Test search",
         "Search by label (plus optional Gmail query syntax) to confirm matching works, without extracting anything yet.",
     ):
         label = st.text_input('Label name (exact, e.g. "PO/Get Fresh")', key="gmail_test_label")

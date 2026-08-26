@@ -1,4 +1,4 @@
-"""📊 Reports → Customers. Phase 2: page_header/section_card/empty_state polish."""
+"""Reports → Customers. Phase 2: page_header/section_card/empty_state polish."""
 
 import plotly.express as px
 import streamlit as st
@@ -35,7 +35,7 @@ def render(ctx) -> None:
         fig.update_traces(marker_color=palette["sequential_blue"][4])
         st.plotly_chart(style(fig, palette, height=380), use_container_width=True, key="chart_top_customers")
 
-    with section_card("🆚 Compare customers", "Pick two or more customers to compare revenue and invoice volume side by side."):
+    with section_card("Compare customers", "Pick two or more customers to compare revenue and invoice volume side by side."):
         cust_options_all = sorted(by_customer_inv["customer_name"].dropna().unique().tolist())
         entity_comparison(
             f_inv, "customer_name", "Customer", cust_options_all, "effective_date",
@@ -100,7 +100,7 @@ def render(ctx) -> None:
         })
         data_table(customer_table)
         st.download_button(
-            "⬇️ Download customer summary (CSV)",
+            "Download customer summary (CSV)",
             customer_table.to_csv(index=False).encode("utf-8"),
             file_name="customer_summary.csv", mime="text/csv", key="dl_customers",
         )

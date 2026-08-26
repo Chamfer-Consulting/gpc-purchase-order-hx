@@ -50,7 +50,7 @@ from views import (  # noqa: E402
     settings,
 )
 
-st.set_page_config(page_title="Garfield Produce — PO Dashboard", layout="wide", page_icon="🌱")
+st.set_page_config(page_title="Garfield Produce — PO Dashboard", layout="wide", page_icon=":material/monitoring:")
 
 # ── QuickBooks OAuth callback ─────────────────────────────────────────────────────
 # Handled before the password gate: a full-page browser redirect back from Intuit may
@@ -73,7 +73,7 @@ if "code" in _qp and "realmId" in _qp:
         # whole app — clear the bad query params and fall through to the normal app
         # below instead of leaving the user stuck on a dead error screen.
         st.query_params.clear()
-        st.error(f"QuickBooks connection failed: {e}\n\nYou can try **Connect to QuickBooks** again from the 🔗 QuickBooks pages.")
+        st.error(f"QuickBooks connection failed: {e}\n\nYou can try **Connect to QuickBooks** again from the QuickBooks pages.")
 elif "code" in _qp and _qp.get("state", "").startswith("gmail_connect"):
     # Google's callback never carries realmId, so this can't collide with the QBO
     # branch above — see email_ingestion.py's state prefixing.
@@ -90,7 +90,7 @@ elif "code" in _qp and _qp.get("state", "").startswith("gmail_connect"):
         st.rerun()
     except Exception as e:
         st.query_params.clear()
-        st.error(f"Gmail connection failed: {e}\n\nYou can try **Connect Gmail** again from the ✉️ Email Ingestion page.")
+        st.error(f"Gmail connection failed: {e}\n\nYou can try **Connect Gmail** again from the Email Ingestion page.")
 
 # ── Auth ────────────────────────────────────────────────────────────────────────
 
@@ -98,7 +98,7 @@ elif "code" in _qp and _qp.get("state", "").startswith("gmail_connect"):
 def check_password() -> bool:
     if st.session_state.get("authed"):
         return True
-    st.title("🌱 Garfield Produce — PO Dashboard")
+    st.title("Garfield Produce — PO Dashboard")
     with st.form("login"):
         pw = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Log in")
@@ -137,7 +137,7 @@ invoices, inv_items_all = prepare_invoices(inv_df, inv_items_df)
 theme_type = (st.context.theme.type if st.context.theme else None) or "light"
 palette = DARK if theme_type == "dark" else LIGHT
 theme.inject(theme_type)
-st.sidebar.caption("🌗 Switch Light/Dark/system theme via the ⋮ menu (top right) → Settings.")
+st.sidebar.caption("Switch Light / Dark / system theme via the ⋮ menu (top right) → Settings.")
 
 # ── Filters: comprehensive top bar (replaces the former sidebar block) ─────────────
 # Redesign spec §03 / decision #2. filters.render_filter_bar() draws the sticky bar
@@ -147,7 +147,7 @@ st.sidebar.caption("🌗 Switch Light/Dark/system theme via the ⋮ menu (top ri
 # will consume them in later phases; the invoice-category filter still matches the
 # old ["product","sample"] behaviour until the views are ready for it (Phase C).
 
-st.title("🌱 Garfield Produce — Purchase Order Dashboard")
+st.title("Garfield Produce — Purchase Order Dashboard")
 
 min_date = invoices["effective_date"].min()
 max_date = invoices["effective_date"].max()
@@ -170,8 +170,8 @@ selected_sizes = fs.selected_sizes
 include_samples = fs.include_samples
 
 if hidden_products:
-    st.sidebar.caption(f"🙈 {len(hidden_products)} product(s) hidden — manage on the Products report page.")
-if st.sidebar.button("🔄 Refresh data"):
+    st.sidebar.caption(f"{len(hidden_products)} product(s) hidden — manage on the Products report page.")
+if st.sidebar.button("Refresh data"):
     load_data.clear()
     st.rerun()
 
@@ -320,18 +320,18 @@ ctx = AppContext(
 # the page runs), so ctx.pages below — populated right after — is available for
 # Home's "Needs attention" deep links.
 
-page_overview = st.Page(lambda: home.render(ctx), title="Overview", icon="🏠", url_path="home", default=True)
-page_customers = st.Page(lambda: customer_360.render(ctx), title="Customer 360", icon="👥", url_path="customers")
-page_products = st.Page(lambda: reports_products.render(ctx), title="Products & Sizes", icon="🥬", url_path="products")
-page_explore = st.Page(lambda: explore.render(ctx), title="Explore", icon="🔎", url_path="explore")
+page_overview = st.Page(lambda: home.render(ctx), title="Overview", icon=":material/dashboard:", url_path="home", default=True)
+page_customers = st.Page(lambda: customer_360.render(ctx), title="Customer 360", icon=":material/groups:", url_path="customers")
+page_products = st.Page(lambda: reports_products.render(ctx), title="Products & Sizes", icon=":material/inventory_2:", url_path="products")
+page_explore = st.Page(lambda: explore.render(ctx), title="Explore", icon=":material/query_stats:", url_path="explore")
 page_lifecycle = st.Page(
-    lambda: order_lifecycle.render(ctx), title="Order Lifecycle", icon="🔄", url_path="requested_vs_delivered"
+    lambda: order_lifecycle.render(ctx), title="Order Lifecycle", icon=":material/timeline:", url_path="requested_vs_delivered"
 )
 page_data_quality = st.Page(
-    lambda: fulfillment_dataquality.render(ctx), title="Data Quality", icon="⚠️", url_path="data_quality"
+    lambda: fulfillment_dataquality.render(ctx), title="Data Quality", icon=":material/rule:", url_path="data_quality"
 )
-page_match = st.Page(lambda: match_reconcile.render(ctx), title="Match & Reconcile", icon="🔗", url_path="match_review")
-page_settings = st.Page(lambda: settings.render(ctx), title="Settings & Connections", icon="⚙️", url_path="settings")
+page_match = st.Page(lambda: match_reconcile.render(ctx), title="Match & Reconcile", icon=":material/compare_arrows:", url_path="match_review")
+page_settings = st.Page(lambda: settings.render(ctx), title="Settings & Connections", icon=":material/settings:", url_path="settings")
 
 pages = {
     "Analyse": [page_overview, page_customers, page_products, page_explore, page_lifecycle],

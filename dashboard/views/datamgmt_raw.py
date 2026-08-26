@@ -1,4 +1,4 @@
-"""🗂️ Data Management → Raw Data. Redesign Phase B: page_scaffold + scope_bar + data_grid."""
+"""Data Management → Raw Data. Redesign Phase B: page_scaffold + scope_bar + data_grid."""
 
 import streamlit as st
 

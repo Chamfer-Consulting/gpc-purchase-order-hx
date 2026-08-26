@@ -1,5 +1,5 @@
 """
-📊 Reports → Pricing & Reference Prices. Phase 2 finishes the visual merge (Phase 1 did
+Reports → Pricing & Reference Prices. Phase 2 finishes the visual merge (Phase 1 did
 the mechanical file merge): a collapsible price-history section sits above the editable
 reference-price table, which is the page's primary/actionable surface. Every widget key
 and the Reference Prices save-diff-against-snapshot logic are unchanged from Phase 1.
@@ -16,10 +16,10 @@ def render(ctx) -> None:
     page_scaffold(
         "Pricing & Reference Prices",
         "Review price history and drift, then set the reference prices that drive the "
-        "💲 Price anomaly flag on new orders.",
+        "Price anomaly flag on new orders.",
     )
     scope_bar(ctx.fs)
-    with st.expander("📈 Price history", expanded=True):
+    with st.expander("Price history", expanded=True):
         _render_price_history(ctx)
     st.divider()
     _render_reference_prices(ctx)
@@ -94,10 +94,10 @@ def _render_price_history(ctx) -> None:
 
 
 def _render_reference_prices(ctx) -> None:
-    st.subheader("🏷️ Reference prices")
+    st.subheader("Reference prices")
     st.caption(
         "Expected/current price per customer, product, and size — the basis for the "
-        "💲 Price anomalies flag in Data Quality. **auto** rows refresh "
+        "Price anomalies flag in Data Quality. **auto** rows refresh "
         "automatically from the most recent price actually paid each time new POs are "
         "extracted; edit a price or add a row below to set a permanent manual override — "
         "overrides are never touched by future refreshes."
@@ -115,7 +115,7 @@ def _render_reference_prices(ctx) -> None:
         },
     )
 
-    if st.button("💾 Save changes", key="save_reference_prices"):
+    if st.button("Save changes", key="save_reference_prices"):
         seed_key_price = {
             (r["customer_name"], r["product_name"], r["container_size"]): r["price"]
             for r in editor_seed.to_dict("records")

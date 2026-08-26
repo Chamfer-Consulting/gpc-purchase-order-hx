@@ -1,5 +1,5 @@
 """
-🔗 QuickBooks → Invoice Explorer. Phase 4: page_header/section_card/data_table polish.
+QuickBooks → Invoice Explorer. Phase 4: page_header/section_card/data_table polish.
 Queries the synced tables directly regardless of current connection state, since a
 prior sync's data should stay browsable even if the app later disconnects.
 """
@@ -52,7 +52,7 @@ def render(ctx) -> None:
         cat_conn.close()
 
     with section_card(
-        "📦 Item Catalog",
+        "Item Catalog",
         "QuickBooks' own Item list — the product master catalog invoice lines are "
         "matched against by ID. Read-only here; re-synced each time you sync on the "
         "Connection & Sync page.",

@@ -1,5 +1,5 @@
 """
-🏠 Home — formerly the "Overview" sub-tab under Reports. Phase 2 added page_header/
+Home — formerly the "Overview" sub-tab under Reports. Phase 2 added page_header/
 kpi_row (with trailing sparklines)/section_card polish. Phase 3 adds the "Needs
 attention" digest, ranked across the whole app by dashboard/attention.py.
 """
@@ -114,7 +114,7 @@ def render(ctx) -> None:
            if start_ts is not None and end_ts is not None else "")
     )
 
-    with section_card("🔔 Needs attention", "Ranked across the whole business — biggest issues first."):
+    with section_card("Needs attention", "Ranked across the whole business — biggest issues first."):
         _conn = psycopg2.connect(get_database_url())
         try:
             needs_review_rows = qbo_matcher.get_needs_review(_conn)
@@ -126,7 +126,7 @@ def render(ctx) -> None:
             needs_review_rows=needs_review_rows, unlinked_pos=unlinked_pos,
         )
         if not attention_items:
-            st.caption("Nothing needs attention right now. 🎉")
+            st.caption("Nothing needs attention right now. ")
         else:
             for item in attention_items:
                 ic1, ic2, ic3 = st.columns([1, 5, 2])
@@ -140,19 +140,19 @@ def render(ctx) -> None:
 
     needs_review = int(f_po["math_check_failed"].sum())
     extraction_errors = int(po_df["error"].notna().sum())
-    with section_card("📋 PO extraction data quality", "Only covers the subset of orders with a formal PO document — not the metrics above."):
+    with section_card("PO extraction data quality", "Only covers the subset of orders with a formal PO document — not the metrics above."):
         kpi_strip([
-            {"label": "⚠️ Needs Review (math check)", "value": f"{needs_review:,}"},
-            {"label": "❌ Extraction Errors", "value": f"{extraction_errors:,}"},
+            {"label": "Needs review (math check)", "value": f"{needs_review:,}"},
+            {"label": "Extraction errors", "value": f"{extraction_errors:,}"},
         ], north_star=None)
         if needs_review or extraction_errors:
-            st.caption("See the **Data Quality** page (under 📦 Fulfillment) for details on flagged orders.")
+            st.caption("See the **Data Quality** page (under Fulfillment) for details on flagged orders.")
 
     current_year = str(pd.Timestamp.now().year)
     yoy_breakdown_dims = [("Customer", "customer_name")]
     yoy_agg_spec = {"Invoices": ("id", "nunique"), "Revenue ($)": ("total_amt", "sum")}
     with section_card(
-        "📈 Annual comparison",
+        "Annual comparison",
         f"{current_year} vs. each prior year, by calendar month — {current_year} is bold, "
         "past years are muted for reference. Respects the sidebar filters above. "
         "Click a point for a customer breakdown.",
@@ -195,7 +195,7 @@ def render(ctx) -> None:
             strip_tz(f_po.drop(columns=["po_key"], errors="ignore")).to_excel(writer, sheet_name="POs", index=False)
             strip_tz(f_items).to_excel(writer, sheet_name="PO Line Items", index=False)
         st.download_button(
-            "📊 Export full report (Excel)",
+            "Export full report (Excel)",
             excel_buf.getvalue(),
             file_name="gpc_po_report.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -53,7 +53,7 @@ _RULES = """
 /* north-star KPI tile — the first bordered column inside kpi_strip()'s keyed
    container (ui_kit wraps the starred strip in st.container(key="gpc_kpi_ns")).
    If Streamlit ever drops the .st-key-* class the rule just stops applying and
-   the "★ " label marker still carries the meaning. */
+   the label alone still names it. */
 [class*="st-key-gpc_kpi_ns"] [data-testid="stColumn"]:first-child{
   border-bottom:3px solid var(--gpc-status-good) !important;
 }

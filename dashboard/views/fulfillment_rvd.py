@@ -1,8 +1,8 @@
 """
-📦 Fulfillment → Requested vs Delivered. Phase 3 polish: Fulfillment % renders as an
+Fulfillment → Requested vs Delivered. Phase 3 polish: Fulfillment % renders as an
 in-cell progress bar, $ / Qty Variance get conditional coloring (via the app's own
 validated status palette, not raw red/green), and the period picker is a
-segmented_control like Breakdown's. Relocated from its former home under "📊 Reports"
+segmented_control like Breakdown's. Relocated from its former home under "Reports"
 in Phase 1 — all underlying computations are unchanged.
 """
 
@@ -53,7 +53,7 @@ def detailed_sections(ctx) -> None:
     f_po, palette = ctx.f_po, ctx.palette
 
     with section_card(
-        "🆚 Compare customers' fulfillment",
+        "Compare customers' fulfillment",
         "Pick two or more customers to compare requested vs. delivered amounts and fulfillment rate.",
     ):
         po_ids_all = f_po["id"].tolist()
@@ -156,7 +156,7 @@ def detailed_sections(ctx) -> None:
 
                 shorted = grouped[grouped["$ Variance"] < 0]
                 kpi_strip([
-                    {"label": "🔻 Total shortfall", "value": f"${shorted['$ Variance'].sum():,.0f}" if not shorted.empty else "$0"},
+                    {"label": "Total shortfall", "value": f"${shorted['$ Variance'].sum():,.0f}" if not shorted.empty else "$0"},
                     {"label": "Rows shorted", "value": f"{len(shorted):,} of {len(grouped):,}"},
                     {"label": "Worst single shortage", "value": f"${shorted['$ Variance'].min():,.0f}" if not shorted.empty else "—"},
                 ], north_star=None)
@@ -176,7 +176,7 @@ def detailed_sections(ctx) -> None:
                     "note is a documented pricing quirk, not necessarily a fulfillment shortfall."
                 )
                 st.download_button(
-                    "⬇️ Download breakdown (CSV)",
+                    "Download breakdown (CSV)",
                     display_df.to_csv(index=False).encode("utf-8"),
                     file_name="requested_vs_delivered_breakdown.csv", mime="text/csv", key="dl_breakdown",
                 )
@@ -185,7 +185,7 @@ def detailed_sections(ctx) -> None:
                     show_by_customer = "Customer" in dims
                     trend_group_cols = ["Period"] + (["customer_name"] if show_by_customer else [])
 
-                    st.subheader("📈 Requested vs. delivered trend")
+                    st.subheader("Requested vs. delivered trend")
                     chart_src = detail.groupby(trend_group_cols, as_index=False).agg(
                         requested_amount=("requested_amount", "sum"), delivered_amount=("delivered_amount", "sum"),
                     )
@@ -221,7 +221,7 @@ def detailed_sections(ctx) -> None:
                         + (" One line per customer; dashed = Delivered, solid = Requested." if show_by_customer else "")
                     )
 
-                    st.subheader("📅 Ordering trends")
+                    st.subheader("Ordering trends")
                     st.caption(
                         "Number of purchase orders placed per period, per the sidebar filters — reflects "
                         "every order in the filter, not just ones with a confirmed QuickBooks match."
@@ -278,7 +278,7 @@ def detailed_sections(ctx) -> None:
                         }),
                     )
 
-            with section_card("🚚 Delivery & donation charges by customer",
+            with section_card("Delivery & donation charges by customer",
                                "QuickBooks Delivery/Donation line items, attributed to whichever PO their "
                                "containing invoice is confirmed-linked to. Only invoices confirmed-linked "
                                "in the current filter appear here."):
@@ -309,7 +309,7 @@ def detailed_sections(ctx) -> None:
                         }),
                     )
                     st.download_button(
-                        "⬇️ Download delivery & donation charges (CSV)",
+                        "Download delivery & donation charges (CSV)",
                         dd_rows.to_csv(index=False).encode("utf-8"),
                         file_name="delivery_donation_by_po.csv", mime="text/csv", key="dl_delivery_donation",
                     )

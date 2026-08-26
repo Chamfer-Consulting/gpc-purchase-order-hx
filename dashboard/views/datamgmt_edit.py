@@ -1,5 +1,5 @@
 """
-🗂️ Data Management → Edit PO. Phase 4: page_header/section_card polish only — every
+Data Management → Edit PO. Phase 4: page_header/section_card polish only — every
 per-PO session_state key (f"..._{selected_id}") is preserved exactly, byte-for-byte,
 per the plan's risk notes; the {selected_id} suffix is what intentionally resets the
 form when a different PO is picked. The form/data_editor structure itself is untouched.
@@ -74,7 +74,7 @@ def render(ctx) -> None:
                     },
                 )
 
-                submitted = st.form_submit_button("💾 Save changes")
+                submitted = st.form_submit_button("Save changes")
 
         if submitted:
             items = [
