@@ -156,9 +156,11 @@ def detailed_sections(ctx) -> None:
 
                 shorted = grouped[grouped["$ Variance"] < 0]
                 kpi_strip([
-                    {"label": "Total shortfall", "value": f"${shorted['$ Variance'].sum():,.0f}" if not shorted.empty else "$0"},
+                    {"label": "Total shortfall",
+                     "value": f"${abs(shorted['$ Variance'].sum()):,.0f}" if not shorted.empty else "$0"},
                     {"label": "Rows shorted", "value": f"{len(shorted):,} of {len(grouped):,}"},
-                    {"label": "Worst single shortage", "value": f"${shorted['$ Variance'].min():,.0f}" if not shorted.empty else "—"},
+                    {"label": "Worst single shortage",
+                     "value": f"${abs(shorted['$ Variance'].min()):,.0f}" if not shorted.empty else "—"},
                 ], north_star=None)
 
                 styled = display_df.style.map(_variance_styler(palette), subset=["Qty Variance", "$ Variance"])

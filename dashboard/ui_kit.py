@@ -293,14 +293,15 @@ def page_scaffold(title: str, purpose: str | None = None, actions=None) -> None:
         st.markdown(f'<p class="gpc-purpose">{purpose}</p>', unsafe_allow_html=True)
 
 
-def scope_bar(fs, *, order_count: int | None = None) -> None:
+def scope_bar(fs, *, order_count: int | None = None, count_noun: str = "orders") -> None:
     """One-line "Showing…" chip row rendered under the page title, echoing the top
     filter bar's state so the active scope travels with the content. `fs` is a
     filters.FilterState (read duck-typed, so any object with the same attributes
-    works)."""
+    works). `count_noun` labels `order_count` — pass "invoices" on invoice-scoped
+    pages so the same word doesn't mean two different units across the app."""
     chips: list[tuple[str, str]] = []
     if order_count is not None:
-        chips.append(("is-accent", f"{order_count:,} orders"))
+        chips.append(("is-accent", f"{order_count:,} {count_noun}"))
 
     start, end = getattr(fs, "start_ts", None), getattr(fs, "end_ts", None)
     if start is not None and end is not None:

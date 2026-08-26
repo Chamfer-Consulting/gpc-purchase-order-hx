@@ -74,6 +74,8 @@ COLUMN_LABELS: dict[str, str] = {
     "invoiced_amount": "Invoiced $",
     "po_math_note": "PO math note",
     "po_math_notes": "PO math note",
+    "line_items_sum": "Line items Σ",
+    "difference": "Difference",
     "variance": "Variance",
     "fulfillment_pct": "Fulfilment %",
     "match_method": "Match method",
@@ -111,6 +113,7 @@ COLUMN_KIND: dict[str, str] = {
     "total_amt": "currency", "list_price": "currency", "price": "currency",
     "requested_amount": "currency", "delivered_amount": "currency",
     "revised_amount": "currency", "invoiced_amount": "currency", "variance": "currency",
+    "line_items_sum": "currency", "difference": "currency",
     "revenue": "currency", "avg_order_value": "currency", "avg_invoice_value": "currency",
     "prev": "currency", "curr": "currency", "delta": "currency",
     "po_total": "currency",
@@ -140,8 +143,10 @@ GLOSSARY: dict[str, str] = {
                "Excludes donations, delivery/shipping charges, and samples.",
     "Gross invoiced": "Every QuickBooks invoice line, all categories. A reconciliation "
                       "total only — not the same as revenue.",
-    "Donations": "Invoice lines categorised as donation. Booked separately from sales; "
-                 "donation invoices carry no shipping charge.",
+    "Donations": "Invoice lines categorised as donation, summed from the raw invoice "
+                 "data. Almost always booked on their own $0 invoices (a product line "
+                 "plus an offsetting negative donation line), so they sit outside gross "
+                 "invoiced and carry no shipping charge.",
     "Shipping": "Invoice lines categorised as delivery. Shown on its own, and "
                 "attributed to the linked PO where one exists.",
     "Requested": "The line items and amounts on the first version of a purchase order.",

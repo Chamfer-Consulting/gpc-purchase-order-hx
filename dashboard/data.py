@@ -386,6 +386,63 @@ def load_invoice_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     return inv_df, inv_items_df
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_donation_totals() -> pd.DataFrame:
+    """Every QuickBooks 'donation' line item with its invoice date/customer, read
+    straight from the raw tables — NOT gated by prepare_invoices()'s void/zero-total
+    filter. Donations are almost always booked on a $0 invoice (a product line plus an
+    offsetting negative 'donation' line that nets the invoice to zero), and that filter
+    drops such invoices whole, so f_inv_lines can't see them. `donation_amount` is the
+    line total sign-flipped to a positive contribution."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        df = pd.read_sql_query(
+            "SELECT ii.invoice_id, inv.customer_name, inv.txn_date, inv.private_note, "
+            "-ii.line_total AS donation_amount "
+            "FROM qbo_invoice_items ii JOIN qbo_invoices inv ON inv.id = ii.invoice_id "
+            "WHERE ii.category = 'donation'",
+            conn,
+        )
+    finally:
+        conn.close()
+    df = df[~df["private_note"].fillna("").str.contains("void", case=False)].copy()
+    df["effective_date"] = pd.to_datetime(df["txn_date"], errors="coerce")
+    return df.drop(columns=["private_note"])
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_invoice_reconciliation() -> pd.DataFrame:
+    """QBO invoices whose header total_amt doesn't equal the sum of their line items
+    (beyond a 2¢ tolerance), or that carry a non-zero total but no line items at all.
+    QuickBooks-side data quirks — surfaced on the Data Quality page so the line-item
+    revenue views (Products, Explore) can be reconciled against gross invoiced."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        df = pd.read_sql_query(
+            """
+            SELECT i.doc_number, i.customer_name, i.txn_date, i.total_amt, i.private_note,
+                   COALESCE(s.li_sum, 0)  AS line_items_sum,
+                   COALESCE(s.n_lines, 0) AS n_lines
+            FROM qbo_invoices i
+            LEFT JOIN (
+                SELECT invoice_id, SUM(line_total) AS li_sum, COUNT(*) AS n_lines
+                FROM qbo_invoice_items GROUP BY invoice_id
+            ) s ON s.invoice_id = i.id
+            WHERE i.total_amt IS NOT NULL AND i.total_amt <> 0
+            """,
+            conn,
+        )
+    finally:
+        conn.close()
+    df = df[~df["private_note"].fillna("").str.contains("void", case=False)].copy()
+    df["total_amt"] = pd.to_numeric(df["total_amt"], errors="coerce")
+    df["line_items_sum"] = pd.to_numeric(df["line_items_sum"], errors="coerce")
+    df["difference"] = (df["total_amt"] - df["line_items_sum"]).round(2)
+    df["txn_date"] = pd.to_datetime(df["txn_date"], errors="coerce")
+    df = df[df["difference"].abs() > 0.02].drop(columns=["private_note"])
+    return df.reindex(df["difference"].abs().sort_values(ascending=False).index)
+
+
 def prepare_invoices(inv_df: pd.DataFrame, inv_items_df: pd.DataFrame):
     """Excludes voided invoices — same heuristic as qbo_matcher._VOID_SQL (null/zero
     total, or a private note mentioning void) — and derives effective_date."""
@@ -637,8 +694,17 @@ def _lifecycle_rows(vp: pd.DataFrame, matched_items: pd.DataFrame) -> pd.DataFra
         })
     df = pd.DataFrame(rows)
     if matched_items is not None and not matched_items.empty:
-        ship = matched_items.groupby("po_id", as_index=False).agg(shipped_amount=("delivered_amount", "sum"))
-        df = df.merge(ship, on="po_id", how="left")
+        # Attribute shipped $ by po_key, not just the latest version's po_id: a
+        # confirmed PO<->invoice link can sit on an earlier version if a revision
+        # landed after the match was confirmed, and keying on last["id"] alone would
+        # silently zero that order's shipped value.
+        id_to_key = dict(zip(vp["id"], vp["po_key"]))
+        mi = matched_items.copy()
+        mi["po_key"] = mi["po_id"].map(id_to_key)
+        ship = mi.dropna(subset=["po_key"]).groupby("po_key", as_index=False).agg(
+            shipped_amount=("delivered_amount", "sum")
+        )
+        df = df.merge(ship, on="po_key", how="left")
     if "shipped_amount" not in df.columns:
         df["shipped_amount"] = pd.NA
     rev = pd.to_numeric(df["revised_amount"], errors="coerce")

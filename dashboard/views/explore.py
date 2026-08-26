@@ -82,7 +82,7 @@ def render(ctx) -> None:
         "Build any view: pick a measure, a time grain, and how to break it down. "
         "The full QuickBooks invoice history, for the current scope.",
     )
-    scope_bar(ctx.fs, order_count=int(f_inv["id"].nunique()))
+    scope_bar(ctx.fs, order_count=int(f_inv["id"].nunique()), count_noun="invoices")
 
     if f_inv_items.empty:
         empty_state("No line items in the current scope.")
@@ -130,6 +130,12 @@ def render(ctx) -> None:
         {"label": "Grain", "value": grain},
         {"label": "Broken down by", "value": ", ".join(dims) or "—"},
     ], north_star=0)
+    if measure == "Orders":
+        st.caption(
+            f"Counts invoices with at least one line matching the current scope ({total:,}). "
+            "The Overview page's **Invoices** KPI counts every invoice, including "
+            "services-only and donation-only ones with no product line."
+        )
 
     # ── chart ────────────────────────────────────────────────────────────────
     with section_card(f"{measure} by {grain.lower()}"):
@@ -163,20 +169,21 @@ def render(ctx) -> None:
         data_grid(show, list(show.columns), key="explore", download_name="explore.csv")
 
     # ── year over year ───────────────────────────────────────────────────────
-    with section_card("Year over year", "Each calendar year as its own line, by month. Click a point for a customer breakdown."):
+    with section_card(
+        f"Year over year — {measure.lower()}",
+        "Each calendar year as its own line, by month, for the measure selected above. "
+        "Click a point for a customer breakdown.",
+    ):
         current_year = str(pd.Timestamp.now().year)
         fig_yoy = yoy_annual_chart(
-            f_inv, "effective_date", "total_amt" if measure != "Orders" else "id",
-            "sum" if measure != "Orders" else "nunique",
-            "Revenue ($)" if measure != "Orders" else "Orders", palette, current_year,
+            detail, "effective_date", val_col, agg, val_label, palette, current_year,
         )
         if fig_yoy is None:
-            st.caption("Not enough dated invoices in the current scope.")
+            st.caption("Not enough dated line items in the current scope.")
         else:
             yoy_drilldown(
-                fig_yoy, "xp_yoy", f_inv, "effective_date",
-                [("Customer", "customer_name")],
-                {"Orders": ("id", "nunique"), "Revenue ($)": ("total_amt", "sum")}, palette,
+                fig_yoy, "xp_yoy", detail, "effective_date",
+                [("Customer", "customer_name")], {val_label: (val_col, agg)}, palette,
             )
 
     # ── compare two periods ──────────────────────────────────────────────────
@@ -202,15 +209,21 @@ def render(ctx) -> None:
         b0, b1 = pd.Timestamp(range_b[0]), pd.Timestamp(range_b[1])
         inv_a = f_inv[(f_inv["effective_date"] >= a0) & (f_inv["effective_date"] <= a1)]
         inv_b = f_inv[(f_inv["effective_date"] >= b0) & (f_inv["effective_date"] <= b1)]
-        rev_a, rev_b = inv_a["total_amt"].sum(), inv_b["total_amt"].sum()
         n_a, n_b = inv_a["id"].nunique(), inv_b["id"].nunique()
+        # Revenue = product-line revenue (same basis as the "Total revenue" KPI above),
+        # not gross invoice total_amt.
+        li = f_inv_items.dropna(subset=["effective_date"])
+        rev_a = li.loc[(li["effective_date"] >= a0) & (li["effective_date"] <= a1), "line_total"].sum()
+        rev_b = li.loc[(li["effective_date"] >= b0) & (li["effective_date"] <= b1), "line_total"].sum()
         kpi_strip([
             {"label": "Invoices — A", "value": f"{n_a:,}"},
             {"label": "Invoices — B", "value": f"{n_b:,}", "delta": fmt_delta(n_b - n_a)},
             {"label": "Revenue — A", "value": f"${rev_a:,.0f}"},
             {"label": "Revenue — B", "value": f"${rev_b:,.0f}", "delta": fmt_delta(rev_b - rev_a, prefix="$")},
         ], north_star=None)
-        movers = compare_periods_by_group(f_inv, "effective_date", "customer_name", "total_amt", (a0, a1), (b0, b1))
+        movers = compare_periods_by_group(
+            f_inv_items, "effective_date", "customer_name", "line_total", (a0, a1), (b0, b1)
+        )
         if movers is not None and not movers.empty:
             st.caption("Customers with the biggest revenue change from A to B:")
             data_grid(

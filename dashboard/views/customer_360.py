@@ -42,7 +42,6 @@ def _monthly(df: pd.DataFrame, value_col: str, agg: str) -> pd.DataFrame:
 
 def render(ctx) -> None:
     palette = ctx.palette
-    by_customer_inv = ctx.by_customer_inv
     f_inv, f_inv_items = ctx.f_inv, ctx.f_inv_items
     invoices, inv_items_all, all_items, valid_po = (
         ctx.invoices, ctx.inv_items_all, ctx.all_items, ctx.valid_po,
@@ -54,11 +53,28 @@ def render(ctx) -> None:
         "from request to shipment, and value.",
     )
 
-    if by_customer_inv.empty:
+    # Rank customers by product-sales revenue — the same basis as this page's
+    # "Revenue" KPI — so the picker label, the "All customers" table and the KPI all
+    # agree (by_customer_inv is gross invoice total_amt, which would not).
+    prod_rev = (
+        f_inv_items[f_inv_items["category"] == "product"]
+        .groupby("customer_name", as_index=False)["line_total"].sum()
+        .rename(columns={"line_total": "revenue"})
+    )
+    inv_counts = (
+        f_inv.groupby("customer_name", as_index=False)["id"].nunique().rename(columns={"id": "invoices"})
+    )
+    ranked = prod_rev.merge(inv_counts, on="customer_name", how="outer")
+    ranked[["revenue", "invoices"]] = ranked[["revenue", "invoices"]].fillna(0)
+    ranked["avg_invoice_value"] = (
+        ranked["revenue"] / ranked["invoices"].where(ranked["invoices"] > 0)
+    ).round(2)
+    ranked = ranked.sort_values("revenue", ascending=False)
+
+    if ranked.empty:
         empty_state("No customers in the current scope.")
         return
 
-    ranked = by_customer_inv.sort_values("revenue", ascending=False)
     labels = {
         f"{r.customer_name}  ·  ${r.revenue:,.0f}  ·  {int(r.invoices):,} orders": r.customer_name
         for r in ranked.itertuples()
@@ -76,13 +92,17 @@ def render(ctx) -> None:
     # ── KPI strip ────────────────────────────────────────────────────────────
     revenue = c_prod["line_total"].sum()
     n_orders = int(c_inv["id"].nunique())
-    avg_order = revenue / n_orders if n_orders else 0
+    # Average over invoices that actually carry a product line, since `revenue` is
+    # product-only — dividing by every invoice (incl. services/donation-only) understates.
+    n_prod_orders = int(c_prod["invoice_id"].nunique())
+    avg_order = revenue / n_prod_orders if n_prod_orders else 0
     fulfil = None
-    if not lc.empty and pd.to_numeric(lc["revised_amount"], errors="coerce").sum() > 0:
-        fulfil = (
-            pd.to_numeric(lc["shipped_amount"], errors="coerce").sum()
-            / pd.to_numeric(lc["revised_amount"], errors="coerce").sum() * 100
-        )
+    if not lc.empty:
+        _shp = pd.to_numeric(lc["shipped_amount"], errors="coerce")
+        _rev = pd.to_numeric(lc["revised_amount"], errors="coerce")
+        _m = _shp.notna()
+        if _rev[_m].sum() > 0:
+            fulfil = _shp[_m].sum() / _rev[_m].sum() * 100
     since = hist["effective_date"].min()
 
     delta_rev = None
@@ -93,6 +113,13 @@ def render(ctx) -> None:
             & (inv_items_all["effective_date"] >= ctx.prev_start)
             & (inv_items_all["effective_date"] <= ctx.prev_end)
         ]
+        # Match the current figure's filters so the delta is like-for-like.
+        if ctx.selected_products:
+            prev = prev[prev["product_name"].isin(ctx.selected_products)]
+        if ctx.selected_sizes:
+            prev = prev[prev["container_size"].isin(ctx.selected_sizes)]
+        if ctx.hidden_products:
+            prev = prev[~prev["product_name"].isin(ctx.hidden_products)]
         if not prev.empty:
             delta_rev = revenue - prev["line_total"].sum()
 

@@ -7,13 +7,14 @@ North-star = extraction success rate.
 
 import streamlit as st
 
-from data import load_matched_line_items
+from data import load_invoice_reconciliation, load_matched_line_items
 from ui_kit import data_grid, kpi_strip, metric_help, page_scaffold, scope_bar, section_card, state_chip
 
 _CATEGORIES = [
     ("extraction_errors", "Extraction errors", "critical"),
     ("math_check", "Math-check failures", "critical"),
     ("price_anomalies", "Price anomalies", "serious"),
+    ("invoice_recon", "Invoice total ≠ line items", "warning"),
 ]
 
 
@@ -37,6 +38,14 @@ def render(ctx) -> None:
     if not price_issues.empty:
         price_issues = price_issues.reindex(price_issues["line_total"].abs().sort_values(ascending=False).index)
 
+    # QBO invoices whose header total doesn't match their line items — scoped to the
+    # current date range / customers (extraction errors above deliberately aren't).
+    recon = load_invoice_reconciliation()
+    if ctx.start_ts is not None and ctx.end_ts is not None:
+        recon = recon[(recon["txn_date"] >= ctx.start_ts) & (recon["txn_date"] <= ctx.end_ts)]
+    if ctx.selected_customers:
+        recon = recon[recon["customer_name"].isin(ctx.selected_customers)]
+
     total_rows = max(len(po_df), 1)
     success_rate = (total_rows - len(errored)) / total_rows * 100
     matched = load_matched_line_items()
@@ -48,10 +57,14 @@ def render(ctx) -> None:
         {"label": "Errors", "value": f"{len(errored):,}"},
         {"label": "Math-check failures", "value": f"{len(math_fail):,}"},
         {"label": "Price anomalies", "value": f"{len(price_issues):,}", "help": metric_help("Price anomaly")},
+        {"label": "Invoice mismatches", "value": f"{len(recon):,}"},
         {"label": "Match coverage", "value": f"{coverage:.0f}%", "help": metric_help("Match coverage")},
     ], north_star=0)
 
-    counts = {"extraction_errors": len(errored), "math_check": len(math_fail), "price_anomalies": len(price_issues)}
+    counts = {
+        "extraction_errors": len(errored), "math_check": len(math_fail),
+        "price_anomalies": len(price_issues), "invoice_recon": len(recon),
+    }
     options = [f"{label} ({counts[key]})" for key, label, _ in _CATEGORIES]
     picked = st.segmented_control("Queue", options, default=options[0], key="dq_category") or options[0]
     selected = _CATEGORIES[options.index(picked)][0]
@@ -96,7 +109,7 @@ def render(ctx) -> None:
                     key="dq_math", download_name="math_check_failures.csv",
                 )
 
-    else:  # price_anomalies
+    elif selected == "price_anomalies":
         with section_card(
             "Price anomalies",
             "Unit price more than 10% off the reference price for that customer / product / size, "
@@ -109,4 +122,22 @@ def render(ctx) -> None:
                     price_issues,
                     ["po_number", "customer_name", "product_name", "container_size", "line_total", "price_anomaly"],
                     key="dq_price", download_name="price_anomalies.csv",
+                )
+
+    else:  # invoice_recon
+        with section_card(
+            "Invoice total ≠ sum of line items",
+            "QuickBooks invoices whose header total doesn't match their line items (or that "
+            "carry a total but no line items). For these, the line-item revenue views "
+            "(Products, Explore) can't reconcile to gross invoiced — a QBO-side quirk, "
+            "biggest difference first.",
+        ):
+            if recon.empty:
+                st.caption("None — every invoice's header matches its line items in this scope.")
+            else:
+                data_grid(
+                    recon,
+                    ["doc_number", "customer_name", "txn_date", "total_amt", "line_items_sum",
+                     "n_lines", "difference"],
+                    key="dq_recon", download_name="invoice_reconciliation.csv",
                 )

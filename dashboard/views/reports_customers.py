@@ -20,7 +20,7 @@ def render(ctx) -> None:
     by_customer_inv, product_colors, inv_items_all = ctx.by_customer_inv, ctx.product_colors, ctx.inv_items_all
 
     page_scaffold("Customers", "Revenue, order volume, and product mix by customer, for the current scope.")
-    scope_bar(ctx.fs, order_count=int(f_inv["id"].nunique()))
+    scope_bar(ctx.fs, order_count=int(f_inv["id"].nunique()), count_noun="invoices")
 
     if f_inv.empty:
         empty_state("No invoices in the current filter.")

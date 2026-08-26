@@ -34,8 +34,10 @@ from data import (  # noqa: E402
     color_map_for,
     get_database_url,
     load_data,
+    load_donation_totals,
     load_hidden_products,
     load_invoice_data,
+    load_invoice_reconciliation,
     prepare,
     prepare_invoices,
 )
@@ -173,6 +175,9 @@ if hidden_products:
     st.sidebar.caption(f"{len(hidden_products)} product(s) hidden — manage on the Products report page.")
 if st.sidebar.button("Refresh data"):
     load_data.clear()
+    load_invoice_data.clear()
+    load_donation_totals.clear()
+    load_invoice_reconciliation.clear()
     st.rerun()
 
 # Apply filters

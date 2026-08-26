@@ -43,9 +43,17 @@ def render(ctx) -> None:
     req = pd.to_numeric(lc["requested_amount"], errors="coerce")
     rev = pd.to_numeric(lc["revised_amount"], errors="coerce")
     shp = pd.to_numeric(lc["shipped_amount"], errors="coerce")
-    req_t, rev_t, shp_t = req.sum(), rev.sum(), shp.sum()
-    fulfil = shp_t / rev_t * 100 if rev_t else None
-    shortfall = (shp - rev).where(shp.notna() & (shp < rev)).sum()
+    req_t, rev_t = req.sum(), rev.sum()
+    # Fulfilment compares like with like: shipped $ only exists for orders with a
+    # confirmed invoice match, so the denominator must be the revised $ of *those same
+    # orders*, not of every in-scope order (unmatched ones would drag the rate down
+    # despite nothing being known about what shipped).
+    matched_mask = shp.notna()
+    n_matched, n_total = int(matched_mask.sum()), len(lc)
+    shp_t = shp[matched_mask].sum()
+    rev_matched = rev[matched_mask].sum()
+    fulfil = shp_t / rev_matched * 100 if rev_matched else None
+    shortfall = (shp - rev).where(matched_mask & (shp < rev)).sum()
 
     kpi_strip([
         {"label": "Fulfilment rate", "value": f"{fulfil:.1f}%" if fulfil is not None else "—",
@@ -53,10 +61,14 @@ def render(ctx) -> None:
         {"label": "Requested", "value": f"${req_t:,.0f}", "help": metric_help("Requested")},
         {"label": "Revised", "value": f"${rev_t:,.0f}", "delta": fmt_delta(rev_t - req_t, prefix="$"),
          "help": metric_help("Revised")},
-        {"label": "Shipped", "value": f"${shp_t:,.0f}", "delta": fmt_delta(shp_t - rev_t, prefix="$"),
+        {"label": "Shipped", "value": f"${shp_t:,.0f}", "delta": fmt_delta(shp_t - rev_matched, prefix="$"),
          "help": metric_help("Shipped value")},
-        {"label": "Total shortfall", "value": f"${shortfall:,.0f}" if pd.notna(shortfall) else "$0"},
+        {"label": "Total shortfall", "value": f"${abs(shortfall):,.0f}" if pd.notna(shortfall) else "$0"},
     ], north_star=0)
+    st.caption(
+        f"Fulfilment rate and shortfall cover the **{n_matched:,} of {n_total:,}** in-scope "
+        f"orders with a confirmed invoice match; Requested and Revised cover all {n_total:,}."
+    )
 
     # ── value by month ───────────────────────────────────────────────────────
     with section_card("Value by month", "Requested, revised and shipped totals for orders dated in each month."):

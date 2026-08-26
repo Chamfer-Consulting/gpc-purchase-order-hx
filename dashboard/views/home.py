@@ -12,7 +12,14 @@ import streamlit as st
 
 import attention
 import qbo_matcher
-from data import fmt_delta, get_database_url, load_matched_line_items, strip_tz, yoy_annual_chart
+from data import (
+    fmt_delta,
+    get_database_url,
+    load_donation_totals,
+    load_matched_line_items,
+    strip_tz,
+    yoy_annual_chart,
+)
 from ui_kit import (
     kpi_strip,
     metric_help,
@@ -55,15 +62,27 @@ def render(ctx) -> None:
     page_scaffold("Overview", "Revenue, orders, and what needs attention for the current scope.")
 
     total_invoices = f_inv["id"].nunique()
-    scope_bar(ctx.fs, order_count=total_invoices)
+    scope_bar(ctx.fs, order_count=total_invoices, count_noun="invoices")
 
-    # "Revenue" = product sales only (redesign decision #1). Gross invoiced, donations
-    # and shipping are broken out in the caption below so the headline stays clean.
+    # "Revenue" = product sales only (redesign decision #1). Gross invoiced, shipping
+    # and a services/other residual are broken out in the caption below so the headline
+    # stays clean.
     lines = ctx.f_inv_lines if ctx.f_inv_lines is not None else f_inv_items
     sales_revenue = lines.loc[lines["category"] == "product", "line_total"].sum()
-    donations = lines.loc[lines["category"] == "donation", "line_total"].sum()
     shipping = lines.loc[lines["category"] == "delivery", "line_total"].sum()
     gross_invoiced = f_inv["total_amt"].sum()
+    # Everything invoiced that isn't product sales or shipping — services, samples,
+    # equipment, rounding. Keeps the caption's four parts adding up to gross.
+    other_invoiced = gross_invoiced - sales_revenue - shipping
+    # Donations are booked on separate $0 invoices that prepare_invoices() drops whole,
+    # so they never reach f_inv / f_inv_lines — sum them from the raw loader instead,
+    # scoped to the same date range and customers as the rest of the page.
+    don_df = load_donation_totals()
+    if start_ts is not None and end_ts is not None:
+        don_df = don_df[(don_df["effective_date"] >= start_ts) & (don_df["effective_date"] <= end_ts)]
+    if selected_customers:
+        don_df = don_df[don_df["customer_name"].isin(selected_customers)]
+    donations = don_df["donation_amount"].sum()
     total_revenue = sales_revenue
     unique_customers = f_inv["customer_name"].nunique()
     distinct_products = f_inv_items.loc[f_inv_items["category"] == "product", "product_name"].nunique()
@@ -84,8 +103,17 @@ def render(ctx) -> None:
                 & (inv_items_all["effective_date"] <= prev_end)
                 & (inv_items_all["category"] == "product")
             ]
+            # Filter the baseline exactly like the current figure (sales_revenue), so
+            # the delta is like-for-like when a customer / product / size / hidden
+            # filter is active.
             if selected_customers:
                 prev_lines = prev_lines[prev_lines["customer_name"].isin(selected_customers)]
+            if ctx.selected_products:
+                prev_lines = prev_lines[prev_lines["product_name"].isin(ctx.selected_products)]
+            if ctx.selected_sizes:
+                prev_lines = prev_lines[prev_lines["container_size"].isin(ctx.selected_sizes)]
+            if ctx.hidden_products:
+                prev_lines = prev_lines[~prev_lines["product_name"].isin(ctx.hidden_products)]
             delta_invoices = total_invoices - prev_count
             delta_revenue = sales_revenue - prev_lines["line_total"].sum()
             delta_aiv = avg_invoice_value - prev_inv["total_amt"].mean()
@@ -93,7 +121,7 @@ def render(ctx) -> None:
     kpi_strip([
         {
             "label": "Total revenue", "value": f"${total_revenue:,.0f}", "delta": fmt_delta(delta_revenue, prefix="$"),
-            "chart_data": _trailing_monthly(f_inv, "total_amt", "sum"), "chart_type": "line",
+            "chart_data": _trailing_monthly(f_inv_items, "line_total", "sum"), "chart_type": "line",
             "help": metric_help("Revenue"),
         },
         {
@@ -108,8 +136,9 @@ def render(ctx) -> None:
         },
     ], north_star=0)
     st.caption(
-        f"Gross invoiced **${gross_invoiced:,.0f}** — product sales ${sales_revenue:,.0f} · "
-        f"donations ${donations:,.0f} · shipping ${shipping:,.0f}. "
+        f"Gross invoiced **${gross_invoiced:,.0f}** = product sales ${sales_revenue:,.0f} · "
+        f"shipping ${shipping:,.0f} · services, samples & other ${other_invoiced:,.0f}. "
+        f"Donations ${donations:,.0f} are booked on separate $0 invoices and sit outside gross. "
         + ("Deltas compare the selected date range to the immediately preceding period of equal length."
            if start_ts is not None and end_ts is not None else "")
     )
@@ -149,8 +178,10 @@ def render(ctx) -> None:
             st.caption("See the **Data Quality** page (under Fulfillment) for details on flagged orders.")
 
     current_year = str(pd.Timestamp.now().year)
-    yoy_breakdown_dims = [("Customer", "customer_name")]
-    yoy_agg_spec = {"Invoices": ("id", "nunique"), "Revenue ($)": ("total_amt", "sum")}
+    # Revenue chart is product-line revenue (same basis as the "Total revenue" KPI);
+    # the invoices chart is invoice-level. Each drill-down uses the matching source.
+    yoy_rev_agg = {"Revenue ($)": ("line_total", "sum"), "Qty": ("quantity", "sum")}
+    yoy_inv_agg = {"Invoices": ("id", "nunique"), "Revenue ($)": ("total_amt", "sum")}
     with section_card(
         "Annual comparison",
         f"{current_year} vs. each prior year, by calendar month — {current_year} is bold, "
@@ -159,22 +190,24 @@ def render(ctx) -> None:
     ):
         ac1, ac2 = st.columns(2)
         with ac1:
-            st.caption("Revenue")
-            fig_rev_yoy = yoy_annual_chart(f_inv, "effective_date", "total_amt", "sum", "Revenue ($)", palette, current_year)
+            st.caption("Revenue (product sales)")
+            fig_rev_yoy = yoy_annual_chart(
+                f_inv_items, "effective_date", "line_total", "sum", "Revenue ($)", palette, current_year
+            )
             if fig_rev_yoy is not None:
                 yoy_drilldown(
-                    fig_rev_yoy, "chart_overview_revenue_yoy", f_inv, "effective_date",
-                    yoy_breakdown_dims, yoy_agg_spec, palette, height=320,
+                    fig_rev_yoy, "chart_overview_revenue_yoy", f_inv_items, "effective_date",
+                    [("Customer", "customer_name")], yoy_rev_agg, palette, height=320,
                 )
             else:
-                st.caption("Not enough dated invoices in the current filter.")
+                st.caption("Not enough dated line items in the current filter.")
         with ac2:
             st.caption("Invoices")
             fig_inv_yoy = yoy_annual_chart(f_inv, "effective_date", "id", "nunique", "Invoices", palette, current_year)
             if fig_inv_yoy is not None:
                 yoy_drilldown(
                     fig_inv_yoy, "chart_overview_orders_yoy", f_inv, "effective_date",
-                    yoy_breakdown_dims, yoy_agg_spec, palette, height=320,
+                    [("Customer", "customer_name")], yoy_inv_agg, palette, height=320,
                 )
             else:
                 st.caption("Not enough dated invoices in the current filter.")
@@ -183,10 +216,13 @@ def render(ctx) -> None:
         excel_buf = io.BytesIO()
         with pd.ExcelWriter(excel_buf, engine="openpyxl") as writer:
             pd.DataFrame({
-                "Metric": ["Invoices", "Total Revenue", "Customers", "Products", "Avg Invoice Value",
-                           "Needs Review (math check, PO subset)", "Extraction Errors (PO subset)"],
-                "Value": [total_invoices, total_revenue, unique_customers, distinct_products,
-                          avg_invoice_value, needs_review, extraction_errors],
+                "Metric": ["Invoices", "Total Revenue (product sales)", "Gross Invoiced",
+                           "Donations (separate $0 invoices)", "Shipping", "Customers", "Products",
+                           "Avg Invoice Value", "Needs Review (math check, PO subset)",
+                           "Extraction Errors (PO subset)"],
+                "Value": [total_invoices, total_revenue, gross_invoiced, donations, shipping,
+                          unique_customers, distinct_products, avg_invoice_value, needs_review,
+                          extraction_errors],
             }).to_excel(writer, sheet_name="Overview", index=False)
             strip_tz(f_inv.drop(columns=["private_note"], errors="ignore")).to_excel(writer, sheet_name="Invoices", index=False)
             strip_tz(f_inv_items).to_excel(writer, sheet_name="Invoice Line Items", index=False)

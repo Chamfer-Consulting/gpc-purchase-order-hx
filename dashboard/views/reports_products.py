@@ -49,7 +49,7 @@ def render(ctx) -> None:
     by_product_inv, product_colors = ctx.by_product_inv, ctx.product_colors
 
     page_scaffold("Products", "Revenue, quantity, and mix by product and container size, for the current scope.")
-    scope_bar(ctx.fs, order_count=int(ctx.f_inv["id"].nunique()))
+    scope_bar(ctx.fs, order_count=int(ctx.f_inv["id"].nunique()), count_noun="invoices")
 
     with section_card(
         "Manage products",
