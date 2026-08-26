@@ -5,17 +5,18 @@ import plotly.express as px
 import streamlit as st
 
 from data import color_map_for, style
-from ui_kit import data_table, empty_state, page_header, period_drilldown, section_card
+from ui_kit import data_table, empty_state, page_scaffold, period_drilldown, scope_bar, section_card
 
 
 def render(ctx) -> None:
     f_inv_items, palette = ctx.f_inv_items, ctx.palette
 
-    page_header(
+    page_scaffold(
         "Breakdown",
         "Slice revenue and quantity across time, customer, product, and size, in any "
-        "combination — the full QuickBooks invoice history, respecting the sidebar filters above.",
+        "combination — the full QuickBooks invoice history, for the current scope.",
     )
+    scope_bar(ctx.fs, order_count=int(ctx.f_inv["id"].nunique()))
 
     bc1, bc2 = st.columns(2)
     b_period = bc1.segmented_control(

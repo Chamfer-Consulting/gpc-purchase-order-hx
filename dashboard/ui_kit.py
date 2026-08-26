@@ -33,19 +33,10 @@ _SEVERITY_ICON = {
 
 
 def page_header(title: str, subtitle: str | None = None, actions=None) -> None:
-    """Consistent page top: title, one-line context caption, optional right-aligned
-    action buttons (export/refresh/etc — pass a callable that renders into a
-    st.container, e.g. `actions=lambda: st.button("Refresh")`)."""
-    if actions is not None:
-        head = st.container(horizontal=True, horizontal_alignment="right")
-        with head:
-            st.title(title)
-        with head:
-            actions()
-    else:
-        st.title(title)
-    if subtitle:
-        st.caption(subtitle)
+    """Back-compat alias — page_scaffold() is the canonical name (see below).
+    Kept so views not yet migrated to the redesign skeleton keep working while
+    still picking up the styled purpose line."""
+    page_scaffold(title, subtitle, actions)
 
 
 def kpi_row(items: list[dict]) -> None:
@@ -335,16 +326,17 @@ def scope_bar(fs, *, order_count: int | None = None) -> None:
     st.markdown(html, unsafe_allow_html=True)
 
 
-def kpi_strip(items: list[dict], north_star: int = 0) -> None:
+def kpi_strip(items: list[dict], north_star: int | None = 0) -> None:
     """Up to 6 equal-height metric tiles in bordered columns. Item keys:
-    label, value, delta (opt), delta_help (opt caption), chart_data (opt sparkline),
-    chart_type (opt, default "line"). `north_star` is the index that gets the "★ "
-    marker (and the accent underline, once dashboard/theme.py's rule is active)."""
+    label, value, delta (opt), delta_help (opt caption), help (opt tooltip),
+    chart_data (opt sparkline), chart_type (opt, default "line"). `north_star` is
+    the index that gets the "★ " marker (and the accent underline, once
+    dashboard/theme.py's rule is active); pass None for a plain strip with no
+    highlighted metric."""
     if not items:
         return
     items = items[:6]
-    strip = st.container(key="gpc_kpi")
-    with strip:
+    with st.container():
         cols = st.columns(len(items), border=True)
         for i, (col, item) in enumerate(zip(cols, items)):
             kwargs = {}
@@ -352,7 +344,7 @@ def kpi_strip(items: list[dict], north_star: int = 0) -> None:
                 kwargs["chart_data"] = item["chart_data"]
                 kwargs["chart_type"] = item.get("chart_type", "line")
             label = item["label"]
-            if i == north_star:
+            if north_star is not None and i == north_star:
                 label = f"★ {label}"
             col.metric(
                 label, item["value"], delta=item.get("delta"),

@@ -12,7 +12,15 @@ import psycopg2
 import streamlit as st
 
 from data import color_map_for, get_database_url, load_matched_line_items, style
-from ui_kit import data_table, empty_state, kpi_row, page_header, period_drilldown, section_card
+from ui_kit import (
+    data_table,
+    empty_state,
+    kpi_strip,
+    page_scaffold,
+    period_drilldown,
+    scope_bar,
+    section_card,
+)
 
 
 def _variance_styler(palette):
@@ -29,12 +37,13 @@ def _variance_styler(palette):
 def render(ctx) -> None:
     f_po, palette = ctx.f_po, ctx.palette
 
-    page_header(
+    page_scaffold(
         "Requested vs Delivered",
-        "Compares PO line items (requested) to matched QuickBooks invoice line items "
-        "(delivered), respecting the sidebar filters above. Confirm matches in "
-        "🔗 Match & Review first — this report only reflects confirmed links.",
+        "PO line items (requested) vs. matched QuickBooks invoice line items "
+        "(delivered), for the current scope. Confirm matches in 🔗 Match & Review "
+        "first — this report only reflects confirmed links.",
     )
+    scope_bar(ctx.fs, order_count=int(f_po["id"].nunique()))
 
     with section_card(
         "🆚 Compare customers' fulfillment",
@@ -139,11 +148,11 @@ def render(ctx) -> None:
                     display_df = display_df.drop(columns=["All"])
 
                 shorted = grouped[grouped["$ Variance"] < 0]
-                kpi_row([
+                kpi_strip([
                     {"label": "🔻 Total shortfall", "value": f"${shorted['$ Variance'].sum():,.0f}" if not shorted.empty else "$0"},
                     {"label": "Rows shorted", "value": f"{len(shorted):,} of {len(grouped):,}"},
                     {"label": "Worst single shortage", "value": f"${shorted['$ Variance'].min():,.0f}" if not shorted.empty else "—"},
-                ])
+                ], north_star=0)
 
                 styled = display_df.style.map(_variance_styler(palette), subset=["Qty Variance", "$ Variance"])
                 data_table(

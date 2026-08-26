@@ -12,7 +12,7 @@ import plotly.express as px
 import streamlit as st
 
 from data import style
-from ui_kit import data_table, empty_state, page_header, section_card, severity_badge
+from ui_kit import data_table, empty_state, page_scaffold, scope_bar, section_card, severity_badge
 
 _CATEGORIES = [
     ("extraction_errors", "❌ Extraction Errors", "critical"),
@@ -28,11 +28,12 @@ _CATEGORIES = [
 def render(ctx) -> None:
     f_po, valid_po, all_items, po_df, palette = ctx.f_po, ctx.valid_po, ctx.all_items, ctx.po_df, ctx.palette
 
-    page_header(
+    page_scaffold(
         "Data Quality",
-        "Respects the sidebar filters above, except **Extraction errors** (errored files "
+        "Follows the current scope, except **Extraction errors** (errored files "
         "often have no usable date).",
     )
+    scope_bar(ctx.fs, order_count=int(f_po["id"].nunique()))
 
     # ── Compute every category's data once, up front (cheap — all in-memory pandas ops
     # already loaded for this rerun), so the KPI row can show real counts regardless of

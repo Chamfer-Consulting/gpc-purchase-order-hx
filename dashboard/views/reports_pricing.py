@@ -9,15 +9,16 @@ import plotly.express as px
 import streamlit as st
 
 from data import color_map_for, load_reference_prices, save_reference_prices, style
-from ui_kit import data_table, page_header
+from ui_kit import data_table, page_scaffold, scope_bar
 
 
 def render(ctx) -> None:
-    page_header(
+    page_scaffold(
         "Pricing & Reference Prices",
         "Review price history and drift, then set the reference prices that drive the "
         "💲 Price anomaly flag on new orders.",
     )
+    scope_bar(ctx.fs)
     with st.expander("📈 Price history", expanded=True):
         _render_price_history(ctx)
     st.divider()

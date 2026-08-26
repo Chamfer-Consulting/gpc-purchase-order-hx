@@ -8,7 +8,15 @@ import plotly.express as px
 import streamlit as st
 
 from data import load_hidden_products, month_over_month_movers, set_product_hidden, style
-from ui_kit import data_table, empty_state, entity_comparison, page_header, period_drilldown, section_card
+from ui_kit import (
+    data_table,
+    empty_state,
+    entity_comparison,
+    page_scaffold,
+    period_drilldown,
+    scope_bar,
+    section_card,
+)
 
 
 def _manage_products(ctx) -> None:
@@ -40,7 +48,8 @@ def render(ctx) -> None:
     f_inv_items, palette = ctx.f_inv_items, ctx.palette
     by_product_inv, product_colors = ctx.by_product_inv, ctx.product_colors
 
-    page_header("Products", "Revenue, quantity, and mix by product — respects the sidebar filters above.")
+    page_scaffold("Products", "Revenue, quantity, and mix by product and container size, for the current scope.")
+    scope_bar(ctx.fs, order_count=int(ctx.f_inv["id"].nunique()))
 
     with section_card(
         "⚙️ Manage products",

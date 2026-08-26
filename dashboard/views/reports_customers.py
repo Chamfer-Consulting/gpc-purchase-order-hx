@@ -4,14 +4,23 @@ import plotly.express as px
 import streamlit as st
 
 from data import color_map_for, month_over_month_movers, style
-from ui_kit import data_table, empty_state, entity_comparison, page_header, period_drilldown, section_card
+from ui_kit import (
+    data_table,
+    empty_state,
+    entity_comparison,
+    page_scaffold,
+    period_drilldown,
+    scope_bar,
+    section_card,
+)
 
 
 def render(ctx) -> None:
     f_inv, f_inv_items, palette = ctx.f_inv, ctx.f_inv_items, ctx.palette
     by_customer_inv, product_colors, inv_items_all = ctx.by_customer_inv, ctx.product_colors, ctx.inv_items_all
 
-    page_header("Customers", "Revenue, order volume, and product mix by customer — respects the sidebar filters above.")
+    page_scaffold("Customers", "Revenue, order volume, and product mix by customer, for the current scope.")
+    scope_bar(ctx.fs, order_count=int(f_inv["id"].nunique()))
 
     if f_inv.empty:
         empty_state("No invoices in the current filter.")

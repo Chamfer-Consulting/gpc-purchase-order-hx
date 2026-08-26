@@ -13,7 +13,15 @@ import streamlit as st
 import attention
 import qbo_matcher
 from data import fmt_delta, get_database_url, load_matched_line_items, strip_tz, yoy_annual_chart
-from ui_kit import kpi_row, page_header, section_card, severity_badge, yoy_drilldown
+from ui_kit import (
+    kpi_strip,
+    metric_help,
+    page_scaffold,
+    scope_bar,
+    section_card,
+    severity_badge,
+    yoy_drilldown,
+)
 
 _SPARKLINE_MONTHS = 6
 
@@ -43,9 +51,11 @@ def render(ctx) -> None:
     invoices = ctx.invoices
     by_product_inv, by_customer_inv = ctx.by_product_inv, ctx.by_customer_inv
 
-    page_header("Garfield Produce — Purchase Order Dashboard")
+    page_scaffold("Overview", "Revenue, orders, and what needs attention for the current scope.")
 
     total_invoices = f_inv["id"].nunique()
+    scope_bar(ctx.fs, order_count=total_invoices)
+
     total_revenue = f_inv["total_amt"].sum()
     unique_customers = f_inv["customer_name"].nunique()
     distinct_products = f_inv_items.loc[f_inv_items["category"] == "product", "product_name"].nunique()
@@ -65,20 +75,23 @@ def render(ctx) -> None:
             delta_revenue = total_revenue - prev_inv["total_amt"].sum()
             delta_aiv = avg_invoice_value - prev_inv["total_amt"].mean()
 
-    kpi_row([
+    kpi_strip([
+        {
+            "label": "Total revenue", "value": f"${total_revenue:,.0f}", "delta": fmt_delta(delta_revenue, prefix="$"),
+            "chart_data": _trailing_monthly(f_inv, "total_amt", "sum"), "chart_type": "line",
+            "help": metric_help("Revenue"),
+        },
         {
             "label": "Invoices", "value": f"{total_invoices:,}", "delta": fmt_delta(delta_invoices),
             "chart_data": _trailing_monthly(f_inv, "id", "nunique"), "chart_type": "bar",
         },
-        {
-            "label": "Total Revenue", "value": f"${total_revenue:,.0f}", "delta": fmt_delta(delta_revenue, prefix="$"),
-            "chart_data": _trailing_monthly(f_inv, "total_amt", "sum"), "chart_type": "line",
-        },
         {"label": "Customers", "value": f"{unique_customers:,}"},
         {"label": "Products", "value": f"{distinct_products:,}"},
-    ])
-
-    st.metric("Avg Invoice Value", f"${avg_invoice_value:,.2f}", delta=fmt_delta(delta_aiv, prefix="$", decimals=2))
+        {
+            "label": "Avg invoice value", "value": f"${avg_invoice_value:,.2f}",
+            "delta": fmt_delta(delta_aiv, prefix="$", decimals=2),
+        },
+    ], north_star=0)
     if start_ts is not None and end_ts is not None:
         st.caption("Deltas compare the selected date range to the immediately preceding period of equal length.")
 
@@ -109,10 +122,10 @@ def render(ctx) -> None:
     needs_review = int(f_po["math_check_failed"].sum())
     extraction_errors = int(po_df["error"].notna().sum())
     with section_card("📋 PO extraction data quality", "Only covers the subset of orders with a formal PO document — not the metrics above."):
-        kpi_row([
+        kpi_strip([
             {"label": "⚠️ Needs Review (math check)", "value": f"{needs_review:,}"},
             {"label": "❌ Extraction Errors", "value": f"{extraction_errors:,}"},
-        ])
+        ], north_star=None)
         if needs_review or extraction_errors:
             st.caption("See the **Data Quality** page (under 📦 Fulfillment) for details on flagged orders.")
 

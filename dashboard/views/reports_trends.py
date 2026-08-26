@@ -10,17 +10,27 @@ import plotly.express as px
 import streamlit as st
 
 from data import color_map_for, compare_periods_by_group, fmt_delta, top_entity_per_period
-from ui_kit import data_table, empty_state, kpi_row, page_header, period_drilldown, section_card, yoy_drilldown
+from ui_kit import (
+    data_table,
+    empty_state,
+    kpi_strip,
+    page_scaffold,
+    period_drilldown,
+    scope_bar,
+    section_card,
+    yoy_drilldown,
+)
 
 
 def render(ctx) -> None:
     f_inv, palette = ctx.f_inv, ctx.palette
 
-    page_header(
+    page_scaffold(
         "Trends",
         "Invoice volume and revenue over time — the full QuickBooks invoice history, "
-        "respecting the sidebar filters above.",
+        "for the current scope.",
     )
+    scope_bar(ctx.fs, order_count=int(f_inv["id"].nunique()))
 
     monthly = f_inv.dropna(subset=["effective_date"]).copy()
     monthly["month"] = monthly["effective_date"].dt.to_period("M").dt.to_timestamp()
@@ -113,12 +123,12 @@ def render(ctx) -> None:
                 aiv_a = inv_a["total_amt"].mean() if invoices_a else 0
                 aiv_b = inv_b["total_amt"].mean() if invoices_b else 0
 
-                kpi_row([
+                kpi_strip([
                     {"label": "Invoices — A", "value": f"{invoices_a:,}"},
                     {"label": "Invoices — B", "value": f"{invoices_b:,}", "delta": fmt_delta(invoices_b - invoices_a)},
                     {"label": "Revenue — A", "value": f"${revenue_a:,.0f}"},
                     {"label": "Revenue — B", "value": f"${revenue_b:,.0f}", "delta": fmt_delta(revenue_b - revenue_a, prefix="$")},
-                ])
+                ], north_star=None)
                 st.metric("Avg Invoice Value — B vs A", f"${aiv_b:,.2f}", delta=fmt_delta(aiv_b - aiv_a, prefix="$", decimals=2))
 
                 movers = compare_periods_by_group(f_inv, "effective_date", "customer_name", "total_amt", (a_start, a_end), (b_start, b_end))
