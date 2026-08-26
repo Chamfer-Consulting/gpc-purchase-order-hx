@@ -121,6 +121,50 @@ def is_known(conn, source_file: str, file_hash: str) -> bool:
         return cur.fetchone() is not None
 
 
+# The slice of schema.sql the cloud run's thread loop touches before it reaches
+# the publish step (which applies the *full* schema.sql via
+# sync_dashboard.apply_schema). Applying the whole file at startup instead was
+# measurably slower against a cold serverless DB for no benefit. Keep in sync with
+# schema.sql's gmail_thread_id / gmail_thread_meta / gmail_thread_state blocks.
+_CLOUD_SCHEMA_DDL = """
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS gmail_thread_id TEXT;
+
+CREATE TABLE IF NOT EXISTS gmail_thread_meta (
+    thread_id         TEXT PRIMARY KEY,
+    subject           TEXT,
+    from_addrs        TEXT,
+    first_message_at  TIMESTAMPTZ,
+    last_message_at   TIMESTAMPTZ,
+    message_count     INTEGER,
+    attachment_names  TEXT,
+    url               TEXT,
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS gmail_thread_state (
+    thread_id       TEXT PRIMARY KEY,
+    message_count   INTEGER NOT NULL,
+    last_file_hash  TEXT NOT NULL,
+    was_po          BOOLEAN NOT NULL,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+"""
+
+
+def ensure_cloud_schema(conn) -> None:
+    """Create just the table(s)/column the thread loop reads, and one-time-backfill
+    gmail_thread_id for existing text-thread rows (source_file is literally
+    'gmail-thread:<id>', 13-char prefix). Idempotent; the backfill matches nothing
+    once done. Committed immediately."""
+    with conn.cursor() as cur:
+        cur.execute(_CLOUD_SCHEMA_DDL)
+        cur.execute(
+            "UPDATE purchase_orders SET gmail_thread_id = substring(source_file FROM 14) "
+            "WHERE gmail_thread_id IS NULL AND source_file LIKE 'gmail-thread:%'"
+        )
+    conn.commit()
+
+
 def get_thread_state(conn, thread_id: str) -> dict | None:
     """The gmail_thread_state row for this thread, or None if it's never been fully
     processed. Keys: message_count, last_file_hash, was_po — see the table comment

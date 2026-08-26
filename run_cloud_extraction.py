@@ -53,9 +53,9 @@ from tqdm import tqdm
 import gmail_client
 import postgres_store
 from extract_pos import _extract_from_source, annotate_revisions, extract_pdf_text, pdf_to_base64
-from sync_dashboard import _publish_to_postgres, apply_schema  # noqa — same cross-module
-# private-import pattern sync_dashboard.py itself already uses for
-# extract_pos.annotate_revisions.
+from sync_dashboard import _publish_to_postgres  # noqa — same cross-module private-import
+# pattern sync_dashboard.py itself already uses for extract_pos.annotate_revisions.
+# (_publish_to_postgres applies the full schema.sql itself at publish time.)
 
 logger = logging.getLogger("run_cloud_extraction")
 
@@ -404,10 +404,10 @@ def main():
 
     pg_conn = psycopg2.connect(database_url)
     try:
-        # Normally _publish_to_postgres() applies schema.sql at the end of a run,
-        # but the per-thread state table (gmail_thread_state) is read during the
-        # thread loop, before that — ensure it exists up front. Idempotent.
-        apply_schema(pg_conn)
+        # The thread loop reads gmail_thread_state / writes gmail_thread_meta before
+        # the publish step (which applies the full schema.sql) runs — ensure just
+        # those exist up front. Cheaper than a whole-schema apply against a cold DB.
+        postgres_store.ensure_cloud_schema(pg_conn)
 
         connection = gmail_client.get_connection(pg_conn)
         if connection is None:

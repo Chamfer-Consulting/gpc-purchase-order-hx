@@ -251,22 +251,35 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         # a link) so the Extraction Errors view and anywhere else can trace a
         # "gmail-thread:…" or bare-PDF-filename row back to the actual email.
         # NULL for local-PDF rows, which is fine — those already carry a real
-        # filename in source_file.
-        po_df = pd.read_sql_query(
-            """
-            SELECT po.*,
-                   m.subject          AS gmail_subject,
-                   m.from_addrs       AS gmail_from,
-                   m.first_message_at AS gmail_first_message_at,
-                   m.last_message_at  AS gmail_last_message_at,
-                   m.message_count    AS gmail_message_count,
-                   m.attachment_names AS gmail_attachment_names,
-                   m.url              AS gmail_url
-            FROM purchase_orders po
-            LEFT JOIN gmail_thread_meta m ON m.thread_id = po.gmail_thread_id
-            """,
-            conn,
-        )
+        # filename in source_file. The table/column are created by the extraction
+        # pipeline, which may not have run against this DB yet — fall back to the
+        # plain read (with empty gmail_* columns) until it has.
+        _GMAIL_META = [
+            "gmail_subject", "gmail_from", "gmail_first_message_at",
+            "gmail_last_message_at", "gmail_message_count",
+            "gmail_attachment_names", "gmail_url",
+        ]
+        try:
+            po_df = pd.read_sql_query(
+                """
+                SELECT po.*,
+                       m.subject          AS gmail_subject,
+                       m.from_addrs       AS gmail_from,
+                       m.first_message_at AS gmail_first_message_at,
+                       m.last_message_at  AS gmail_last_message_at,
+                       m.message_count    AS gmail_message_count,
+                       m.attachment_names AS gmail_attachment_names,
+                       m.url              AS gmail_url
+                FROM purchase_orders po
+                LEFT JOIN gmail_thread_meta m ON m.thread_id = po.gmail_thread_id
+                """,
+                conn,
+            )
+        except Exception:
+            conn.rollback()  # the failed statement aborts the transaction
+            po_df = pd.read_sql_query("SELECT * FROM purchase_orders", conn)
+            for _c in _GMAIL_META:
+                po_df[_c] = pd.NA
         items_df = pd.read_sql_query("SELECT * FROM line_items", conn)
         # One row per CONFIRMED PO<->invoice match — the only pairs anyone has actually
         # verified, not just an algorithm's guess. Powers "requested vs. delivered" views.

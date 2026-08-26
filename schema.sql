@@ -216,15 +216,11 @@ CREATE TABLE IF NOT EXISTS gmail_connection (
 -- Join to gmail_thread_meta on this to show who sent it / when / attachments / a
 -- link, especially for rows that errored out ("not a purchase order").
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS gmail_thread_id TEXT;
-
--- Backfill the trivial case: a text-only thread row's source_file is exactly
--- "gmail-thread:<id>" ('gmail-thread:' is 13 chars), so its thread id is already
--- sitting in the column. Idempotent — only fills rows still NULL. Attachment rows
--- (bare filename, no derivable thread id) are linked instead by
--- postgres_store.link_thread_rows() on the next --full-backlog run.
-UPDATE purchase_orders
-SET gmail_thread_id = substring(source_file FROM 14)
-WHERE gmail_thread_id IS NULL AND source_file LIKE 'gmail-thread:%';
+-- Existing text-thread rows (source_file = "gmail-thread:<id>") are backfilled
+-- once by postgres_store.ensure_cloud_schema() at the start of a cloud run;
+-- attachment rows (bare filename) get linked by link_thread_rows() on a
+-- --full-backlog run. Kept out of this file so it doesn't re-scan on every
+-- publish-time apply_schema().
 
 -- Display metadata for a Gmail thread the cloud pipeline has processed — rewritten
 -- every run the thread is seen (cheap: built from the thread fetch that
