@@ -85,6 +85,7 @@ def _publish_to_postgres(results: list, database_url: str) -> list:
             r.get("customer_name"), r.get("customer_id"),
             r.get("subtotal"), r.get("tax"), r.get("total"), r.get("notes"),
             bool(r.get("math_check_failed", False)), r.get("math_check_detail"),
+            r.get("gmail_thread_id"),
         ))
 
     pg_conn = psycopg2.connect(database_url)
@@ -101,7 +102,7 @@ def _publish_to_postgres(results: list, database_url: str) -> list:
                     revision_number, revision_label, is_revision, version_label,
                     customer_name, customer_id,
                     subtotal, tax, total, notes,
-                    math_check_failed, math_check_detail, extracted_at
+                    math_check_failed, math_check_detail, gmail_thread_id, extracted_at
                 ) VALUES %s
                 ON CONFLICT (source_file, file_hash) DO UPDATE SET
                     extraction_method   = EXCLUDED.extraction_method,
@@ -124,12 +125,13 @@ def _publish_to_postgres(results: list, database_url: str) -> list:
                     notes               = EXCLUDED.notes,
                     math_check_failed   = EXCLUDED.math_check_failed,
                     math_check_detail   = EXCLUDED.math_check_detail,
+                    gmail_thread_id     = EXCLUDED.gmail_thread_id,
                     extracted_at        = now()
                 WHERE purchase_orders.edited = FALSE
                 RETURNING source_file, file_hash, id
                 """,
                 header_rows,
-                template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())",
+                template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())",
                 page_size=200,
                 fetch=True,
             )

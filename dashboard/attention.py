@@ -43,7 +43,7 @@ def _extraction_error_items(ctx) -> list[AttentionItem]:
         return []
     return [AttentionItem(
         severity="critical", category="extraction_error",
-        title=f"{len(errored)} PDF(s) failed extraction",
+        title=f"{len(errored)} source(s) failed extraction or weren't a purchase order",
         magnitude=len(errored), page="data_quality", count=len(errored),
     )]
 

@@ -209,6 +209,43 @@ CREATE TABLE IF NOT EXISTS gmail_connection (
     last_synced_at           TIMESTAMPTZ
 );
 
+-- Links a purchase_orders row back to the Gmail thread it came from — set for
+-- BOTH cloud paths (the text-only thread extraction, where source_file is already
+-- "gmail-thread:<id>", and each PDF attachment, where source_file is just the
+-- filename and this is the only trail back to the email). NULL for local-PDF rows.
+-- Join to gmail_thread_meta on this to show who sent it / when / attachments / a
+-- link, especially for rows that errored out ("not a purchase order").
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS gmail_thread_id TEXT;
+
+-- Backfill the trivial case: a text-only thread row's source_file is exactly
+-- "gmail-thread:<id>" ('gmail-thread:' is 13 chars), so its thread id is already
+-- sitting in the column. Idempotent — only fills rows still NULL. Attachment rows
+-- (bare filename, no derivable thread id) are linked instead by
+-- postgres_store.link_thread_rows() on the next --full-backlog run.
+UPDATE purchase_orders
+SET gmail_thread_id = substring(source_file FROM 14)
+WHERE gmail_thread_id IS NULL AND source_file LIKE 'gmail-thread:%';
+
+-- Display metadata for a Gmail thread the cloud pipeline has processed — rewritten
+-- every run the thread is seen (cheap: built from the thread fetch that
+-- _process_thread already does), independent of whether extraction ran, so it
+-- backfills naturally (a one-off `--full-backlog` run populates every existing
+-- row). Everything here is for humans investigating an extraction result in the
+-- dashboard, not used by extraction itself. url is a deep link into the connected
+-- mailbox; from_addrs is the customer-side sender(s), comma-joined; attachment_names
+-- is comma-joined filenames or NULL.
+CREATE TABLE IF NOT EXISTS gmail_thread_meta (
+    thread_id         TEXT PRIMARY KEY,
+    subject           TEXT,
+    from_addrs        TEXT,
+    first_message_at  TIMESTAMPTZ,
+    last_message_at   TIMESTAMPTZ,
+    message_count     INTEGER,
+    attachment_names  TEXT,
+    url               TEXT,
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Per-thread extraction memory for the cloud pipeline's text-only (no-PDF) path.
 -- purchase_orders keys on (source_file, file_hash), and a text thread's file_hash
 -- is a hash of the WHOLE thread's combined text — so a thread gaining even one

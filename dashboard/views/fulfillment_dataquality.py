@@ -103,8 +103,25 @@ def render(ctx) -> None:
             if errored.empty:
                 st.caption("None — every file extracted successfully.")
             else:
-                err_table = errored[["source_file", "error"]].rename(columns={"source_file": "Source File", "error": "Error"})
-                data_table(err_table)
+                cols = [
+                    "source_file", "error", "gmail_from", "gmail_subject",
+                    "gmail_first_message_at", "gmail_last_message_at",
+                    "gmail_message_count", "gmail_attachment_names", "gmail_url",
+                ]
+                err_table = errored[[c for c in cols if c in errored.columns]].rename(columns={
+                    "source_file": "Source", "error": "Error", "gmail_from": "From",
+                    "gmail_subject": "Subject", "gmail_first_message_at": "First msg",
+                    "gmail_last_message_at": "Last msg", "gmail_message_count": "Msgs",
+                    "gmail_attachment_names": "Attachments", "gmail_url": "Email",
+                })
+                data_table(err_table, column_config={
+                    "Email": st.column_config.LinkColumn("Email", display_text="Open ↗"),
+                })
+                st.caption(
+                    "Rows from `gmail-thread:…` are whole email conversations with no PO "
+                    "document; **Open ↗** goes to the thread in Gmail. A bare filename is a "
+                    "PDF attachment that extracted but wasn't classified as a purchase order."
+                )
                 st.download_button(
                     "⬇️ Download extraction errors (CSV)", err_table.to_csv(index=False).encode("utf-8"),
                     file_name="extraction_errors.csv", mime="text/csv", key="dl_errors",

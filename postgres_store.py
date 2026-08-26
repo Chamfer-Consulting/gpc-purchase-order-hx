@@ -23,6 +23,7 @@ _HEADER_COLUMNS = (
     "revision_number", "revision_label", "customer_name", "customer_id",
     "subtotal", "tax", "total", "notes",
     "math_check_failed", "math_check_detail",
+    "gmail_thread_id",
 )
 
 _LINE_ITEM_COLUMNS = (
@@ -65,6 +66,7 @@ def _row_to_result(header_row: dict, line_rows: list) -> dict:
         "notes": header_row["notes"],
         "math_check_failed": bool(header_row["math_check_failed"]),
         "math_check_detail": header_row["math_check_detail"],
+        "gmail_thread_id": header_row["gmail_thread_id"],
         "line_items": [],
     }
     if header_row["error"] is not None:
@@ -151,6 +153,62 @@ def upsert_thread_state(conn, thread_id: str, message_count: int, last_file_hash
                 updated_at     = now()
             """,
             (thread_id, message_count, last_file_hash, was_po),
+        )
+    conn.commit()
+
+
+def upsert_gmail_thread_meta(
+    conn,
+    thread_id: str,
+    *,
+    subject: str | None,
+    from_addrs: str | None,
+    first_message_at: str | None,
+    last_message_at: str | None,
+    message_count: int,
+    attachment_names: str | None,
+    url: str | None,
+) -> None:
+    """Record human-facing metadata for a Gmail thread the cloud pipeline has just
+    seen (see the gmail_thread_meta comment in schema.sql). Called every run the
+    thread is processed, regardless of whether extraction actually ran, so it
+    backfills on its own. Committed immediately."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO gmail_thread_meta (
+                thread_id, subject, from_addrs, first_message_at, last_message_at,
+                message_count, attachment_names, url, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
+            ON CONFLICT (thread_id) DO UPDATE SET
+                subject          = EXCLUDED.subject,
+                from_addrs       = EXCLUDED.from_addrs,
+                first_message_at = EXCLUDED.first_message_at,
+                last_message_at  = EXCLUDED.last_message_at,
+                message_count    = EXCLUDED.message_count,
+                attachment_names = EXCLUDED.attachment_names,
+                url              = EXCLUDED.url,
+                updated_at       = now()
+            """,
+            (thread_id, subject, from_addrs, first_message_at, last_message_at,
+             message_count, attachment_names, url),
+        )
+    conn.commit()
+
+
+def link_thread_rows(conn, thread_id: str, source_files: list[str]) -> None:
+    """Stamp gmail_thread_id onto any purchase_orders row this thread produced that
+    doesn't have it yet — the "gmail-thread:<id>" text row and/or each attachment
+    filename. Only touches rows where the column is still NULL, so it's a cheap
+    no-op once a thread is linked; its point is backfilling rows that predate the
+    column. Committed immediately."""
+    if not source_files:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE purchase_orders SET gmail_thread_id = %s "
+            "WHERE gmail_thread_id IS NULL AND source_file = ANY(%s)",
+            (thread_id, source_files),
         )
     conn.commit()
 

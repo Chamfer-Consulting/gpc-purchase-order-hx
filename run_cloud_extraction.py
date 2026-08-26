@@ -182,6 +182,48 @@ def _build_thread_text(messages: list) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
+def _gmail_thread_url(mailbox_email: str, thread_id: str) -> str:
+    """Deep link to the thread in the connected mailbox's web UI. The /u/<email>/
+    form pins it to the right account even when the viewer is signed into several
+    Google accounts; #all/ opens the thread regardless of which label it lives in."""
+    return f"https://mail.google.com/mail/u/{mailbox_email}/#all/{thread_id}"
+
+
+def _thread_meta(mailbox_email: str, thread_id: str, messages: list) -> dict:
+    """Human-facing metadata for a thread — subject, who sent it, first/last
+    timestamps, message count, attachment filenames, and a link. Persisted to
+    gmail_thread_meta (see schema.sql) so an extraction result — especially an
+    errored, low-information one like "not a purchase order" — can be traced back
+    to the actual email. messages must be chronological (get_thread() returns them
+    that way)."""
+    senders, customer_senders, attachment_names = [], [], []
+    for m in messages:
+        frm = (gmail_client.message_headers(m).get("from") or "").strip()
+        if frm and frm not in senders:
+            senders.append(frm)
+            if GARFIELD_DOMAIN not in frm.lower():
+                customer_senders.append(frm)
+        for att in gmail_client.extract_body_and_attachments(m)[1]:
+            name = att.get("filename")
+            if name and name not in attachment_names:
+                attachment_names.append(name)
+
+    timestamps = sorted(t for t in (_received_at(m) for m in messages) if t)
+    subject = (gmail_client.message_headers(messages[0]).get("subject") or "").strip()
+
+    return {
+        "subject": subject or None,
+        # Customer-side sender(s) are what you actually want to see on a bad
+        # extraction; fall back to every sender if the thread is somehow all ours.
+        "from_addrs": ", ".join(customer_senders or senders) or None,
+        "first_message_at": timestamps[0] if timestamps else None,
+        "last_message_at": timestamps[-1] if timestamps else None,
+        "message_count": len(messages),
+        "attachment_names": ", ".join(attachment_names) or None,
+        "url": _gmail_thread_url(mailbox_email, thread_id),
+    }
+
+
 def _looks_like_new_order(client: anthropic.Anthropic, source_label: str, new_text: str) -> bool:
     """Cheap yes/no gate used only for a thread already classified NOT a purchase
     order that has since gained messages: do the NEW messages alone contain a
@@ -223,6 +265,7 @@ def _process_thread(
     reference_prices: dict,
     pg_conn,
     stop_event: threading.Event,
+    mailbox_email: str,
 ) -> list[dict]:
     """Returns extraction result dict(s) for one Gmail thread, routed by whether
     any message in it carries a PDF attachment:
@@ -246,6 +289,19 @@ def _process_thread(
         _, attachments = gmail_client.extract_body_and_attachments(m)
         for att in attachments:
             attachments_by_message.append((m, att))
+
+    # Written every run the thread is seen, before any skip/extraction decision, so
+    # the dashboard can always trace a result back to the email. link_thread_rows
+    # also stamps gmail_thread_id onto any already-stored row this thread produced
+    # (the "gmail-thread:<id>" text row and each attachment filename) that predates
+    # this column — so a one-off --full-backlog run backfills every old row.
+    postgres_store.upsert_gmail_thread_meta(
+        pg_conn, thread_id, **_thread_meta(mailbox_email, thread_id, messages)
+    )
+    postgres_store.link_thread_rows(
+        pg_conn, thread_id,
+        [f"gmail-thread:{thread_id}"] + [att["filename"] for _, att in attachments_by_message if att.get("filename")],
+    )
 
     results = []
 
@@ -281,6 +337,7 @@ def _process_thread(
             if result is not None:
                 result["_file_hash"] = file_hash
                 result["source_received_at"] = _received_at(m)
+                result["gmail_thread_id"] = thread_id
                 results.append(result)
         return results
 
@@ -321,6 +378,7 @@ def _process_thread(
     if result is not None:
         result["_file_hash"] = file_hash
         result["source_received_at"] = _thread_received_at(messages)
+        result["gmail_thread_id"] = thread_id
         results.append(result)
         postgres_store.upsert_thread_state(
             pg_conn, thread_id, message_count, file_hash, was_po=("error" not in result),
@@ -355,6 +413,7 @@ def main():
         if connection is None:
             print("❌ Not connected to Gmail — connect via the dashboard's ✉️ Email Ingestion page first.", file=sys.stderr)
             sys.exit(1)
+        mailbox_email = connection["email_address"]  # for thread deep links (see _thread_meta)
 
         # Refreshed again before each message below rather than held for the whole
         # run — a run over thousands of messages can easily outlast a single access
@@ -424,7 +483,9 @@ def main():
             try:
                 pg_conn = _ensure_connection(pg_conn, database_url)
                 access_token = gmail_client.get_valid_access_token(pg_conn, gmail_client_id, gmail_client_secret)
-                results = _process_thread(client, access_token, thread_id, reference_prices, pg_conn, stop_event)
+                results = _process_thread(
+                    client, access_token, thread_id, reference_prices, pg_conn, stop_event, mailbox_email
+                )
             except Exception as e:
                 # Nothing stable to key a Postgres row on here (the failure may have
                 # happened before any content — and therefore any file_hash — was
