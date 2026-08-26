@@ -155,6 +155,11 @@ min_date = invoices["effective_date"].min()
 max_date = invoices["effective_date"].max()
 
 hidden_products = load_hidden_products()
+_user_hidden_count = len(hidden_products)
+# "UNKNOWN" is the extractor's placeholder for an unparseable product name, never a
+# real product — exclude it everywhere hidden products are excluded (charts, tables,
+# filter pickers, the Products KPI, the Order Lifecycle / Data Quality guards).
+hidden_products = hidden_products | {"UNKNOWN"}
 customers = sorted(invoices["customer_name"].dropna().unique().tolist())
 products = sorted(
     set(inv_items_all.loc[inv_items_all["category"] == "product", "product_name"].dropna().unique().tolist())
@@ -171,8 +176,8 @@ selected_products = fs.selected_products
 selected_sizes = fs.selected_sizes
 include_samples = fs.include_samples
 
-if hidden_products:
-    st.sidebar.caption(f"{len(hidden_products)} product(s) hidden — manage on the Products report page.")
+if _user_hidden_count:
+    st.sidebar.caption(f"{_user_hidden_count} product(s) hidden — manage on the Products report page.")
 if st.sidebar.button("Refresh data"):
     load_data.clear()
     load_invoice_data.clear()

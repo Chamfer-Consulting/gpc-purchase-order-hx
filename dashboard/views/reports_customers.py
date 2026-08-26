@@ -110,10 +110,18 @@ def render(ctx) -> None:
         if movers is None:
             st.caption("Need at least two distinct months of data in the current filter to compare.")
         else:
-            mdf, curr_m, prev_m = movers
-            st.caption(f"Comparing **{curr_m}** to **{prev_m}**.")
+            mdf, curr_m, prev_m, skipped_partial = movers
+            cap = f"Comparing **{curr_m}** to **{prev_m}**."
+            if skipped_partial:
+                cap += " The current in-progress month is excluded so it's full-month vs full-month."
+            st.caption(cap)
+            prev_col, curr_col = f"{prev_m} Revenue", f"{curr_m} Revenue"
             data_table(
-                mdf[["customer_name", "prev", "curr", "Change"]].rename(columns={
-                    "customer_name": "Customer", "prev": f"{prev_m} Revenue ($)", "curr": f"{curr_m} Revenue ($)",
-                }),
+                mdf[["customer_name", "prev", "curr", "Change"]].rename(
+                    columns={"customer_name": "Customer", "prev": prev_col, "curr": curr_col}
+                ),
+                column_config={
+                    prev_col: st.column_config.NumberColumn(prev_col, format="dollar"),
+                    curr_col: st.column_config.NumberColumn(curr_col, format="dollar"),
+                },
             )

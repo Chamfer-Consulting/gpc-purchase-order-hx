@@ -152,9 +152,17 @@ def strip_tz(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def month_over_month_movers(df: pd.DataFrame, date_col: str, group_col: str, value_col: str, top_n: int = 8):
+def month_over_month_movers(df: pd.DataFrame, date_col: str, group_col: str, value_col: str,
+                            top_n: int = 8, skip_partial_current: bool = True):
     """Compares the two most recent distinct months present in df, grouped by group_col.
-    Returns (movers_df, current_month, previous_month), or None if fewer than 2 months exist."""
+    Returns (movers_df, current_month, previous_month, skipped_partial) or None if
+    fewer than 2 months exist.
+
+    `skip_partial_current` (default) drops the latest month when it is the current
+    calendar month and at least three months of data exist — otherwise a month only
+    part-way through is compared against a full prior month and every group looks like
+    it's falling. `skipped_partial` reports whether that happened, so the caller's
+    caption can say so."""
     d = df.dropna(subset=[date_col, group_col]).copy()
     if d.empty:
         return None
@@ -162,6 +170,11 @@ def month_over_month_movers(df: pd.DataFrame, date_col: str, group_col: str, val
     months = sorted(d["month"].unique())
     if len(months) < 2:
         return None
+    skipped_partial = (
+        skip_partial_current and len(months) >= 3 and months[-1] == pd.Timestamp.now().to_period("M")
+    )
+    if skipped_partial:
+        months = months[:-1]
     curr_m, prev_m = months[-1], months[-2]
     curr = d[d["month"] == curr_m].groupby(group_col)[value_col].sum()
     prev = d[d["month"] == prev_m].groupby(group_col)[value_col].sum()
@@ -170,7 +183,7 @@ def month_over_month_movers(df: pd.DataFrame, date_col: str, group_col: str, val
     merged = merged.reindex(merged["delta"].abs().sort_values(ascending=False).index).head(top_n)
     merged = merged.reset_index().rename(columns={"index": group_col})
     merged["Change"] = merged["delta"].apply(lambda v: f"▲ +${v:,.0f}" if v >= 0 else f"▼ -${abs(v):,.0f}")
-    return merged, curr_m, prev_m
+    return merged, curr_m, prev_m, skipped_partial
 
 
 def compare_periods_by_group(
