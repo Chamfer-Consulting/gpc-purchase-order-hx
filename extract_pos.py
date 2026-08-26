@@ -444,6 +444,45 @@ def _is_out_of_credits(e: anthropic.PermissionDeniedError) -> bool:
     return "credit balance" in str(e).lower()
 
 
+_NUMERIC_HEADER_FIELDS = ("subtotal", "tax", "total")
+_NUMERIC_ITEM_FIELDS = ("quantity", "unit_price", "additional_cost", "line_total")
+
+
+def _coerce_number(v):
+    """Best-effort parse of a model-supplied numeric field. The extraction tool
+    declares these as JSON numbers, but the model (especially the lighter
+    text-thread model) occasionally returns them as strings — "12", "$8.50",
+    "1,200.00" — which the tool schema does not coerce. Left alone, the first
+    arithmetic that touches one raises (seen live: "unsupported operand type(s)
+    for -: 'str' and 'str'" out of math_check), which the retry loop then
+    mislabels a "Malformed tool response" and burns every attempt on.
+    Returns a float, or None if missing / unparseable (treated as omitted)."""
+    if v is None or isinstance(v, (int, float)):
+        return v
+    if isinstance(v, str):
+        cleaned = v.strip().replace("$", "").replace(",", "").replace("%", "")
+        if cleaned.lower() in ("", "-", "n/a", "na", "null", "none"):
+            return None
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+    return None
+
+
+def _coerce_numeric_fields(data: dict) -> None:
+    """In-place coercion of every declared-numeric field in an extraction result,
+    so the math/price checks and the values stored to Postgres are all real
+    numbers regardless of how the model typed them."""
+    for f in _NUMERIC_HEADER_FIELDS:
+        if f in data:
+            data[f] = _coerce_number(data[f])
+    for item in data.get("line_items") or []:
+        for f in _NUMERIC_ITEM_FIELDS:
+            if f in item:
+                item[f] = _coerce_number(item[f])
+
+
 def _extract_from_source(
     client: anthropic.Anthropic,
     source_label: str,
@@ -528,6 +567,7 @@ def _extract_from_source(
 
             data = dict(tool_block.input)
             is_po = data.pop("is_po", True)
+            _coerce_numeric_fields(data)
             data["_source_file"] = source_label
             data["_extraction_method"] = extraction_method
 

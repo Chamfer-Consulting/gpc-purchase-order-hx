@@ -15,6 +15,10 @@ def flag_price_anomaly(item: dict, customer_name: str | None, reference_prices: 
     price = item.get("unit_price")
     if price is None or not customer_name:
         return
+    try:
+        price = float(str(price).strip().replace("$", "").replace(",", ""))
+    except (ValueError, TypeError):
+        return  # unparseable price — nothing to compare against a reference
     ref = reference_prices.get((customer_name, item.get("product_name"), item.get("container_size")))
     if not ref:
         return

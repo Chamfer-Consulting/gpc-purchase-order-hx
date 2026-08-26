@@ -7,6 +7,20 @@ imported both by the extraction pipeline (extract_pos.py) and the dashboard
 MATH_TOLERANCE = 0.02    # dollars — arithmetic checks below this are treated as rounding noise
 
 
+def _n(v):
+    """Coerce a possibly string-typed numeric field to float (or None). Callers
+    have historically handed this module Decimals (psycopg2 NUMERIC) and strings
+    (model tool output typed "12" instead of 12); mixing either with a float in
+    one expression raises TypeError, which upstream then mislabels. Coerce here
+    so this shared, dependency-free checker never crashes on a caller's typing."""
+    if v is None:
+        return None
+    try:
+        return float(str(v).strip().replace("$", "").replace(",", ""))
+    except (ValueError, TypeError):
+        return None
+
+
 def validate_math(data: dict) -> None:
     """
     Flags arithmetic mismatches for manual review; does not alter any values.
@@ -17,8 +31,8 @@ def validate_math(data: dict) -> None:
     has_totals = False
 
     for item in items:
-        qty, price, total = item.get("quantity"), item.get("unit_price"), item.get("line_total")
-        additional = item.get("additional_cost") or 0
+        qty, price, total = _n(item.get("quantity")), _n(item.get("unit_price")), _n(item.get("line_total"))
+        additional = _n(item.get("additional_cost")) or 0
         if qty is not None and price is not None and total is not None:
             has_totals = True
             expected = qty * price + additional
@@ -32,7 +46,7 @@ def validate_math(data: dict) -> None:
         if total is not None:
             line_total_sum += total
 
-    subtotal, tax, total_amt = data.get("subtotal"), data.get("tax"), data.get("total")
+    subtotal, tax, total_amt = _n(data.get("subtotal")), _n(data.get("tax")), _n(data.get("total"))
     issues = []
     if has_totals:
         # Line-item pricing is sometimes tax-inclusive (sums to total) and sometimes
