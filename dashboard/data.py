@@ -500,34 +500,33 @@ def prepare(po_df: pd.DataFrame, items_df: pd.DataFrame):
     return valid_po, latest_po, items, latest_items
 
 
-# ── Customer 360 helpers (redesign Phase D) ───────────────────────────────────
+# ── Order Lifecycle / Customer 360 helpers (redesign Phase D/E) ───────────────
 
-def customer_order_lifecycle(customer: str, valid_po: pd.DataFrame, matched_items: pd.DataFrame) -> pd.DataFrame:
-    """One row per purchase order this customer placed, with its value at each
-    stage: requested (first version's header total), revised (latest version's
-    total), shipped (sum of matched invoice line items). fulfillment_pct = shipped
-    / revised. Empty frame if the customer has no PO-documented orders."""
-    vp = valid_po[valid_po["customer_name"] == customer]
+_LIFECYCLE_COLS = [
+    "po_key", "po_number", "source_file", "customer_name", "effective_date",
+    "requested_amount", "revised_amount", "shipped_amount", "fulfillment_pct", "po_id",
+]
+
+
+def _lifecycle_rows(vp: pd.DataFrame, matched_items: pd.DataFrame) -> pd.DataFrame:
+    """One row per PO (po_key) in `vp`, valued at each stage: requested = the first
+    version's header total, revised = the latest version's total, shipped = sum of
+    matched invoice line items for that PO. fulfillment_pct = shipped / revised."""
     if vp.empty:
-        return pd.DataFrame(columns=[
-            "po_key", "po_number", "source_file", "effective_date", "requested_amount",
-            "revised_amount", "shipped_amount", "fulfillment_pct", "po_id",
-        ])
+        return pd.DataFrame(columns=_LIFECYCLE_COLS)
     rows = []
     for po_key, grp in vp.sort_values(["po_key", "effective_date", "id"]).groupby("po_key"):
         first, last = grp.iloc[0], grp.iloc[-1]
         rows.append({
             "po_key": po_key, "po_number": last.get("po_number"),
-            "source_file": last.get("source_file"), "effective_date": last["effective_date"],
+            "source_file": last.get("source_file"), "customer_name": last.get("customer_name"),
+            "effective_date": last["effective_date"],
             "requested_amount": first.get("total"), "revised_amount": last.get("total"),
             "po_id": last["id"],
         })
     df = pd.DataFrame(rows)
     if matched_items is not None and not matched_items.empty:
-        ship = (
-            matched_items[matched_items["customer_name"] == customer]
-            .groupby("po_id", as_index=False).agg(shipped_amount=("delivered_amount", "sum"))
-        )
+        ship = matched_items.groupby("po_id", as_index=False).agg(shipped_amount=("delivered_amount", "sum"))
         df = df.merge(ship, on="po_id", how="left")
     if "shipped_amount" not in df.columns:
         df["shipped_amount"] = pd.NA
@@ -535,6 +534,19 @@ def customer_order_lifecycle(customer: str, valid_po: pd.DataFrame, matched_item
     shp = pd.to_numeric(df["shipped_amount"], errors="coerce")
     df["fulfillment_pct"] = (shp / rev * 100).where(rev > 0).round(1)
     return df.sort_values("effective_date", ascending=False)
+
+
+def customer_order_lifecycle(customer: str, valid_po: pd.DataFrame, matched_items: pd.DataFrame) -> pd.DataFrame:
+    """`_lifecycle_rows` scoped to one customer (used by Customer 360)."""
+    vp = valid_po[valid_po["customer_name"] == customer]
+    m = matched_items[matched_items["customer_name"] == customer] if matched_items is not None and not matched_items.empty else matched_items
+    return _lifecycle_rows(vp, m)
+
+
+def order_lifecycle(valid_po: pd.DataFrame, keep_po_keys, matched_items: pd.DataFrame) -> pd.DataFrame:
+    """`_lifecycle_rows` scoped to a set of po_keys (the filtered orders) — used by
+    the Order Lifecycle page for its aggregate + per-order view."""
+    return _lifecycle_rows(valid_po[valid_po["po_key"].isin(set(keep_po_keys))], matched_items)
 
 
 def typical_sizes(customer: str, inv_items: pd.DataFrame) -> pd.DataFrame:

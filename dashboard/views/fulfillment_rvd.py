@@ -35,15 +35,22 @@ def _variance_styler(palette):
 
 
 def render(ctx) -> None:
-    f_po, palette = ctx.f_po, ctx.palette
-
+    """Standalone page (kept working, but nav now points at Order Lifecycle, which
+    calls detailed_sections() below after its own aggregate view)."""
     page_scaffold(
         "Requested vs Delivered",
         "PO line items (requested) vs. matched QuickBooks invoice line items "
-        "(delivered), for the current scope. Confirm matches in 🔗 Match & Review "
-        "first — this report only reflects confirmed links.",
+        "(delivered), for the current scope.",
     )
-    scope_bar(ctx.fs, order_count=int(f_po["id"].nunique()))
+    scope_bar(ctx.fs, order_count=int(ctx.f_po["id"].nunique()))
+    detailed_sections(ctx)
+
+
+def detailed_sections(ctx) -> None:
+    """Everything below the page header: the compare, the multi-dimensional
+    breakdown pivot, the matched PO<->invoice detail, and delivery/donation
+    charges. Called by both render() and views/order_lifecycle.py."""
+    f_po, palette = ctx.f_po, ctx.palette
 
     with section_card(
         "🆚 Compare customers' fulfillment",

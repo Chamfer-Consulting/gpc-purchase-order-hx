@@ -43,9 +43,9 @@ from views import (  # noqa: E402
     customer_360,
     explore,
     fulfillment_dataquality,
-    fulfillment_rvd,
     home,
     match_reconcile,
+    order_lifecycle,
     reports_products,
     settings,
 )
@@ -325,7 +325,7 @@ page_customers = st.Page(lambda: customer_360.render(ctx), title="Customer 360",
 page_products = st.Page(lambda: reports_products.render(ctx), title="Products & Sizes", icon="🥬", url_path="products")
 page_explore = st.Page(lambda: explore.render(ctx), title="Explore", icon="🔎", url_path="explore")
 page_lifecycle = st.Page(
-    lambda: fulfillment_rvd.render(ctx), title="Order Lifecycle", icon="🔄", url_path="requested_vs_delivered"
+    lambda: order_lifecycle.render(ctx), title="Order Lifecycle", icon="🔄", url_path="requested_vs_delivered"
 )
 page_data_quality = st.Page(
     lambda: fulfillment_dataquality.render(ctx), title="Data Quality", icon="⚠️", url_path="data_quality"
