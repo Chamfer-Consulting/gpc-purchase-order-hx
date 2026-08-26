@@ -10,6 +10,8 @@ import plotly.express as px
 import streamlit as st
 
 from data import color_map_for, style
+from labels import COLUMN_KIND, GLOSSARY
+from labels import label as col_label
 
 # Maps this app's validated status semantics (see dashboard/data.py's LIGHT/DARK
 # palette["status"]) onto st.badge's fixed color enum.
@@ -260,3 +262,180 @@ def entity_comparison(
             color_discrete_map=colors, labels={"month": "", col: label, entity_col: entity_label},
         )
         st.plotly_chart(style(fig, palette, height=320), use_container_width=True, key=f"{key}_chart_{label}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Redesign components (spec §04). Additive — existing helpers above are unchanged
+# and views migrate to these in Phase B.
+# ══════════════════════════════════════════════════════════════════════════════
+
+CHART_HEIGHTS = {"compact": 240, "std": 320, "tall": 400}
+
+_DRILL_HINT = "💡 Click a bar or point to break it down for that period. Click again to clear."
+
+_STATE_CHIP = {
+    "critical": ("🔴", "red"), "serious": ("🟠", "orange"), "warning": ("🟡", "yellow"),
+    "good": ("🟢", "green"), "info": ("🔵", "blue"),
+    "revision": ("↻", "violet"), "edited": ("✏️", "gray"),
+    "matched": ("🔗", "green"), "unmatched": ("⚠️", "orange"),
+}
+
+
+def page_scaffold(title: str, purpose: str | None = None, actions=None) -> None:
+    """Canonical page top: title, one-line purpose, optional right-aligned actions.
+    Supersedes page_header() — same behaviour, plus the purpose line is styled via
+    the .gpc-purpose class from dashboard/theme.py. Call scope_bar() next, then
+    kpi_strip(), then the page's headline chart, then supporting section_card()s,
+    then the detail table — that fixed order is the whole point (spec §04)."""
+    if actions is not None:
+        head = st.container(horizontal=True, horizontal_alignment="right")
+        with head:
+            st.title(title)
+        with head:
+            actions()
+    else:
+        st.title(title)
+    if purpose:
+        st.markdown(f'<p class="gpc-purpose">{purpose}</p>', unsafe_allow_html=True)
+
+
+def scope_bar(fs, *, order_count: int | None = None) -> None:
+    """One-line "Showing…" chip row rendered under the page title, echoing the top
+    filter bar's state so the active scope travels with the content. `fs` is a
+    filters.FilterState (read duck-typed, so any object with the same attributes
+    works)."""
+    chips: list[tuple[str, str]] = []
+    if order_count is not None:
+        chips.append(("is-accent", f"{order_count:,} orders"))
+
+    start, end = getattr(fs, "start_ts", None), getattr(fs, "end_ts", None)
+    if start is not None and end is not None:
+        chips.append(("", f"{start.strftime('%b %d, %Y')} – {end.strftime('%b %d, %Y')}"))
+    else:
+        chips.append(("", "All dates"))
+
+    if getattr(fs, "has_comparison", False):
+        chips.append(("is-accent", "vs same period last year"
+                      if getattr(fs, "compare_mode", "") == "yoy" else "vs previous period"))
+
+    cust = getattr(fs, "selected_customers", []) or []
+    chips.append(("", f"{len(cust)} customer(s)" if cust else "All customers"))
+    prod = getattr(fs, "selected_products", []) or []
+    if prod:
+        chips.append(("", f"{len(prod)} product(s)"))
+    size = getattr(fs, "selected_sizes", []) or []
+    if size:
+        chips.append(("", f"{len(size)} size(s)"))
+    lts = getattr(fs, "line_types", []) or []
+    chips.append(("", " + ".join(lts) if lts else "no line types"))
+
+    html = '<div class="gpc-scope">' + "".join(
+        f'<span class="gpc-chip {cls}">{txt}</span>' for cls, txt in chips
+    ) + "</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def kpi_strip(items: list[dict], north_star: int = 0) -> None:
+    """Up to 6 equal-height metric tiles in bordered columns. Item keys:
+    label, value, delta (opt), delta_help (opt caption), chart_data (opt sparkline),
+    chart_type (opt, default "line"). `north_star` is the index that gets the "★ "
+    marker (and the accent underline, once dashboard/theme.py's rule is active)."""
+    if not items:
+        return
+    items = items[:6]
+    strip = st.container(key="gpc_kpi")
+    with strip:
+        cols = st.columns(len(items), border=True)
+        for i, (col, item) in enumerate(zip(cols, items)):
+            kwargs = {}
+            if item.get("chart_data") is not None and len(item["chart_data"]) >= 2:
+                kwargs["chart_data"] = item["chart_data"]
+                kwargs["chart_type"] = item.get("chart_type", "line")
+            label = item["label"]
+            if i == north_star:
+                label = f"★ {label}"
+            col.metric(
+                label, item["value"], delta=item.get("delta"),
+                help=item.get("help"), **kwargs,
+            )
+            if item.get("delta_help"):
+                col.caption(item["delta_help"])
+
+
+def chart_frame(fig, *, palette: dict, key: str, title: str | None = None,
+                size: str = "std", hint: str | None = None) -> None:
+    """Plain (non-drilldown) chart with a standard frame: optional bold title above,
+    one of three height tiers, style() applied, optional caption below. For
+    click-to-drill charts keep using period_drilldown / yoy_drilldown — they already
+    standardise the hint text (see _DRILL_HINT)."""
+    if title:
+        st.markdown(f"**{title}**")
+    st.plotly_chart(
+        style(fig, palette, height=CHART_HEIGHTS.get(size, 320)),
+        use_container_width=True, key=key,
+    )
+    if hint:
+        st.caption(hint)
+
+
+def _column_config_for(cols) -> dict:
+    cfg = {}
+    for raw in cols:
+        disp = col_label(raw)
+        kind = COLUMN_KIND.get(raw)
+        if kind == "currency":
+            cfg[disp] = st.column_config.NumberColumn(disp, format="dollar")
+        elif kind == "percent":
+            cfg[disp] = st.column_config.NumberColumn(disp, format="%.1f%%")
+        elif kind == "qty":
+            cfg[disp] = st.column_config.NumberColumn(disp, format="localized")
+        elif kind == "int":
+            cfg[disp] = st.column_config.NumberColumn(disp, format="%d")
+        elif kind == "date":
+            cfg[disp] = st.column_config.DateColumn(disp)
+    return cfg
+
+
+def data_grid(df, columns: list[str] | None = None, *, key: str,
+              download_name: str | None = None, height=None) -> None:
+    """A dataframe rendered the standard way: columns picked (and ordered) via
+    `columns`, relabelled through labels.COLUMN_LABELS, auto-formatted ($ / % / qty
+    / date) via labels.COLUMN_KIND, then a bottom-right "Export this table (CSV)"
+    button. Replaces every per-view rename map + ad-hoc download button."""
+    show = df if columns is None else df[[c for c in columns if c in df.columns]]
+    cfg = _column_config_for(show.columns)
+    show = show.rename(columns={c: col_label(c) for c in show.columns})
+    data_table(show, column_config=cfg, height=height)
+    if download_name:
+        st.download_button(
+            "Export this table (CSV)",
+            show.to_csv(index=False).encode("utf-8"),
+            file_name=download_name, mime="text/csv", key=f"dl_{key}",
+        )
+
+
+def state_chip(kind: str, text: str | None = None) -> None:
+    """One badge vocabulary for row/entity state: the five severities plus
+    revision / edited / matched / unmatched."""
+    icon, color = _STATE_CHIP.get(kind, ("⚪", "gray"))
+    st.badge(text or kind.capitalize(), icon=icon, color=color)
+
+
+def loading(message: str = "Loading…"):
+    """`with loading():` — a labelled spinner. Thin, but keeps the call site
+    consistent with empty()/error()."""
+    return st.spinner(message)
+
+
+def error(message: str, detail: str | None = None) -> None:
+    """A query/compute failure shown in a bordered card — never a raw traceback.
+    `message` says what failed; `detail` says what to check."""
+    with st.container(border=True):
+        st.error(message)
+        if detail:
+            st.caption(detail)
+
+
+def metric_help(term: str) -> str | None:
+    """Glossary tooltip text for a KPI label / term (spec decision #5)."""
+    return GLOSSARY.get(term)
