@@ -38,6 +38,7 @@ it.
 """
 
 import argparse
+import copy
 import hashlib
 import logging
 import os
@@ -584,6 +585,11 @@ def main():
                 if key not in seen_keys:
                     seen_keys.add(key)
                     deduped.append(r)
+            fresh_keys = seen_keys  # (source_file, file_hash) of everything we're about to publish
+            # Deferred thread-state rows (see _process_thread), collected up front so a
+            # retry doesn't lose the ones a partially-failed previous attempt already
+            # consumed.
+            thread_states = [r["_thread_state"] for r in deduped if r.get("_thread_state") is not None]
 
             def _po_key(r):
                 return r.get("po_number") or r.get("_source_file")
@@ -591,23 +597,40 @@ def main():
             for attempt in range(1, FLUSH_MAX_ATTEMPTS + 1):
                 try:
                     pg_conn = _ensure_connection(pg_conn, database_url)
-                    combined = postgres_store.get_full_dataset(pg_conn) + deduped
+                    # Drop any stored row a fresh result supersedes: a prior attempt
+                    # that committed server-side but died before the client saw the
+                    # ack (an SSL drop during/after COMMIT) leaves those rows in
+                    # get_full_dataset() AND still in `deduped` — combining both gives
+                    # _publish_to_postgres two rows with the same (source_file,
+                    # file_hash), which its ON CONFLICT ... DO UPDATE cannot touch
+                    # twice in one execute_values batch. The fresh copy is
+                    # authoritative; keep only it.
+                    existing = [
+                        r for r in postgres_store.get_full_dataset(pg_conn)
+                        if (r.get("_source_file"), r.get("_file_hash")) not in fresh_keys
+                    ]
+                    # annotate_revisions() mutates line_items in place and is NOT
+                    # idempotent (re-running over its own output re-injects "Removed"
+                    # ghost rows). Work on a deep copy each attempt so the originals in
+                    # `deduped` stay pristine for a retry and for the post-publish
+                    # thread-state bookkeeping below.
+                    batch = copy.deepcopy(deduped)
+                    combined = existing + batch
                     combined.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
                     annotate_revisions(combined)
                     # annotate_revisions needs the full history in memory (a new result
                     # can be a revision of an old PO), but only PO-number groups a new
                     # result touched can have *changed* annotations — publish just
                     # those; every other group's DELETE+reinsert would be pure churn.
-                    touched = {_po_key(r) for r in deduped}
+                    touched = {_po_key(r) for r in batch}
                     to_publish = [r for r in combined if _po_key(r) in touched]
-                    all_bad_dates.extend(_publish_to_postgres(to_publish, database_url))
+                    flush_bad_dates = _publish_to_postgres(to_publish, database_url)
                     # Now that these are persisted, record the deferred thread-state
-                    # rows for the successful text-thread extractions (see
-                    # _process_thread).
-                    for r in deduped:
-                        ts = r.pop("_thread_state", None)
-                        if ts is not None:
-                            postgres_store.upsert_thread_state(pg_conn, *ts)
+                    # rows for the successful text-thread extractions. upsert is
+                    # idempotent, so re-running these on a retry is harmless.
+                    for ts in thread_states:
+                        postgres_store.upsert_thread_state(pg_conn, *ts)
+                    all_bad_dates.extend(flush_bad_dates)  # only on the success path
                     break
                 except Exception as e:
                     if attempt == FLUSH_MAX_ATTEMPTS:
