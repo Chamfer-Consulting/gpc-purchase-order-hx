@@ -256,6 +256,13 @@ if selected_sizes:
 if hidden_products:
     f_inv_items = f_inv_items[~f_inv_items["product_name"].isin(hidden_products)]
 
+# When a product/size filter is active, narrow the invoice universe to invoices that
+# actually have an in-scope line — otherwise the "N invoices" counts on the scope
+# bars (and Explore's Invoices A/B) wouldn't move at all when you filter to one
+# product. No-op in the common unfiltered case.
+if selected_products or selected_sizes:
+    f_inv = f_inv[f_inv["id"].isin(f_inv_items["invoice_id"])]
+
 # f_inv_lines keeps EVERY line-type the filter bar's "line type" control has
 # checked (Sales=product, Donations, Shipping=delivery, …) — used by Overview to
 # split revenue from donations/shipping (redesign decision #1) and by Customer 360
@@ -275,24 +282,8 @@ product_colors = color_map_for(
     palette,
 )
 
-# Precomputed once so multiple pages can reuse them.
-if f_items.empty:
-    by_product = pd.DataFrame(columns=["product_name", "revenue", "quantity"])
-else:
-    by_product = (
-        f_items.groupby("product_name").agg(revenue=("line_total", "sum"), quantity=("quantity", "sum")).reset_index()
-    )
-
-if f_po.empty:
-    by_customer = pd.DataFrame(columns=["customer_name", "orders", "revenue", "avg_order_value"])
-else:
-    by_customer = (
-        f_po.groupby("customer_name").agg(orders=("id", "nunique"), revenue=("total", "sum")).reset_index()
-    )
-    by_customer["avg_order_value"] = (by_customer["revenue"] / by_customer["orders"]).round(2)
-
-# Invoice-based equivalents — same shape, source is f_inv/f_inv_items (the full
-# customer/product universe) instead of the PO-only f_po/f_items above.
+# Precomputed once so multiple pages can reuse them. (The PO-scoped by_product /
+# by_customer aggregates were unused by every view and have been removed.)
 if f_inv_items.empty:
     by_product_inv = pd.DataFrame(columns=["product_name", "revenue", "quantity"])
 else:
@@ -335,8 +326,6 @@ ctx = AppContext(
     f_inv_items=f_inv_items,
     f_inv_lines=f_inv_lines,
     hidden_products=hidden_products,
-    by_product=by_product,
-    by_customer=by_customer,
     by_product_inv=by_product_inv,
     by_customer_inv=by_customer_inv,
     product_colors=product_colors,

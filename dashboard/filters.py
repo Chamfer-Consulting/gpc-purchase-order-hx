@@ -134,6 +134,11 @@ def render_filter_bar(min_date, max_date, customers, products, sizes) -> FilterS
             st.radio("Compare to", _COMPARE, key="flt_compare")
         compare_mode = _COMPARE_KEY[st.session_state["flt_compare"]]
         prev_start, prev_end = _compare_range(compare_mode, start_ts, end_ts)
+        # If the comparison window falls entirely before any data (e.g. "All time"
+        # + "vs previous period"), there's nothing to compare against — drop it so
+        # the scope bar doesn't advertise a comparison that yields no deltas.
+        if prev_end is not None and not pd.isna(min_date) and prev_end < pd.Timestamp(min_date):
+            prev_start = prev_end = None
 
         # ── customers ─────────────────────────────────────────────────────────
         sel_cust = st.session_state.get("flt_customers", [])

@@ -924,8 +924,6 @@ class AppContext:
     f_inv_lines: pd.DataFrame = None          # every line-type the filter bar has checked
 
     # Precomputed aggregates (shared across multiple pages)
-    by_product: pd.DataFrame = None
-    by_customer: pd.DataFrame = None
     by_product_inv: pd.DataFrame = None
     by_customer_inv: pd.DataFrame = None
     product_colors: dict = field(default_factory=dict)
