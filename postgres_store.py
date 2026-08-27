@@ -169,11 +169,17 @@ def ensure_cloud_schema(conn) -> None:
 
 def handled_thread_ids(conn) -> set:
     """Thread IDs already fully processed under the current schema — a purchase_orders
-    row that carries gmail_thread_id, or a gmail_thread_state row recording the thread
-    as NOT an order. A --full-backlog run skips these (no Gmail fetch, no Claude call)
-    so it stays resumable after a timeout instead of re-scanning everything from the
-    top every run. Old rows still needing the gmail_thread_id backfill (gmail_thread_id
-    IS NULL) are deliberately NOT in this set, so they still get processed and stamped.
+    row that carries gmail_thread_id and did NOT record a real failure, or a
+    gmail_thread_state row recording the thread as NOT an order. A --full-backlog run
+    skips these (no Gmail fetch, no Claude call) so it stays resumable after a timeout
+    instead of re-scanning everything from the top every run. Old rows still needing
+    the gmail_thread_id backfill (gmail_thread_id IS NULL) are deliberately NOT in this
+    set, so they still get processed and stamped.
+
+    Mirrors is_known()'s predicate: a row whose error is a real failure (expired
+    token, API/credit error, timeout) is NOT treated as handled, so --full-backlog
+    retries it like the incremental path does. Only error IS NULL (clean) or
+    error = 'not a purchase order' counts.
 
     A was_po=TRUE state row is intentionally NOT trusted on its own: it's only valid
     paired with a published purchase_orders row (covered by the first clause). If the
@@ -182,10 +188,13 @@ def handled_thread_ids(conn) -> set:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT gmail_thread_id FROM purchase_orders WHERE gmail_thread_id IS NOT NULL
+            SELECT gmail_thread_id FROM purchase_orders
+            WHERE gmail_thread_id IS NOT NULL
+              AND (error IS NULL OR error = %s)
             UNION
             SELECT thread_id FROM gmail_thread_state WHERE was_po = FALSE
-            """
+            """,
+            (NOT_A_PO_ERROR,),
         )
         return {row[0] for row in cur.fetchall()}
 
