@@ -127,6 +127,16 @@ _NON_PO_FILENAME_PATTERN = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# A purchase order — even one PDF bundling an original plus a revision, even with a
+# page of boilerplate terms — is a short document. A PDF whose extracted text runs
+# to tens of thousands of characters is a report / contract / cert packet, not an
+# order, so skip it before the (paid) model call rather than truncating it to
+# MAX_TEXT_CHARS and asking anyway. Set well above MAX_TEXT_CHARS (15k) so the
+# 15k-25k band still extracts-with-truncation as before; only the clearly-not-a-PO
+# range is dropped. Only bounds the text-extractable path — a scanned PO with no
+# extractable text still goes to vision regardless of page count.
+NON_PO_TEXT_CEILING = 30000
+
 
 def configure_logging(log_path: str) -> None:
     logging.basicConfig(
@@ -399,6 +409,12 @@ def _process_thread(
                 continue
 
             text = extract_pdf_text(pdf_bytes)
+            if text and len(text) > NON_PO_TEXT_CEILING:
+                logger.info(
+                    f"{source_label}: {len(text)} chars of text — far larger than any purchase order, "
+                    "treating as a non-PO document — skipping (no API call)"
+                )
+                continue
             pdf_b64 = None if text else pdf_to_base64(pdf_bytes)
             result = _extract_from_source(
                 client, source_label, stop_event, reference_prices,
