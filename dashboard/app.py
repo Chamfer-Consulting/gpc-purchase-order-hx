@@ -209,7 +209,15 @@ if start_ts is not None and end_ts is not None:
     f_items = f_items[f_items["po_id"].isin(f_po["id"])]
 
 if selected_customers:
-    f_po = f_po[f_po["customer_name"].isin(selected_customers)]
+    # The PO table stores short customer names ("Get Fresh", "Testa Produce") while
+    # the filter bar is populated from QBO invoice names ("Get Fresh Produce, Inc.").
+    # Match the PO side by containment so filtering to a customer doesn't blank every
+    # PO-scoped page (Order Lifecycle, Data Quality, Raw Data).
+    from qbo_matcher import customers_match  # noqa: E402 — dashboard-local
+
+    _po_customer_names = set(latest_po["customer_name"].dropna().unique())
+    _po_selected = {p for p in _po_customer_names if any(customers_match(p, s) for s in selected_customers)}
+    f_po = f_po[f_po["customer_name"].isin(set(selected_customers) | _po_selected)]
     f_items = f_items[f_items["po_id"].isin(f_po["id"])]
 
 if selected_products:

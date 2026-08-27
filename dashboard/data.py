@@ -600,7 +600,18 @@ def load_matched_line_items() -> pd.DataFrame:
     )
     for col in ("requested_qty", "requested_amount", "delivered_qty", "delivered_amount"):
         combined[col] = combined[col].fillna(0.0)
-    return combined[_MATCHED_ITEMS_COLUMNS]
+
+    # A PO linked to more than one invoice has its requested-side rows fanned out
+    # once per invoice (po_side merged po_grouped on po_id alone). Keep the requested
+    # amounts on the first row per (po_id, product, size) only — so summing this
+    # frame counts each PO's request once, while delivered still sums across every
+    # linked invoice. (No live multi-invoice POs today, but manual_link allows split
+    # shipments, and every requested-vs-delivered aggregation sums these columns.)
+    combined = combined.sort_values(["po_id", "product_name", "container_size", "invoice_id"])
+    dup = combined.duplicated(subset=["po_id", "product_name", "container_size"], keep="first")
+    combined.loc[dup, ["requested_qty", "requested_amount"]] = 0.0
+    combined.loc[dup, "po_math_note"] = None
+    return combined[_MATCHED_ITEMS_COLUMNS].reset_index(drop=True)
 
 
 @st.cache_data(ttl=300, show_spinner="Loading reference prices...")

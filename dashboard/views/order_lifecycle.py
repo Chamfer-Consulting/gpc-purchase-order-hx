@@ -32,7 +32,7 @@ def render(ctx) -> None:
         "Requested → revised → shipped, per order and in aggregate — for orders that "
         "have a purchase order document, in the current scope.",
     )
-    scope_bar(ctx.fs, order_count=int(f_po["id"].nunique()))
+    scope_bar(ctx.fs, order_count=int(f_po["id"].nunique()), count_noun="POs")
 
     matched = load_matched_line_items()
     lc = order_lifecycle(valid_po, f_po["po_key"], matched)
@@ -92,6 +92,10 @@ def render(ctx) -> None:
                 labels={"month": "", "Amount": "$"},
             )
             chart_frame(fig, palette=palette, key="ol_monthly", size="tall")
+            st.caption(
+                "Shipped only covers orders with a confirmed invoice match — a gap below "
+                "Revised in a given month may be unmatched orders, not a real shortfall."
+            )
 
     # ── where the gap is ─────────────────────────────────────────────────────
     with section_card("Where the gap is", "By product and size, biggest shortfall first."):
@@ -116,8 +120,10 @@ def render(ctx) -> None:
 
     # ── revision analysis ────────────────────────────────────────────────────
     with section_card("Revision analysis", "How the agreed PO differs from the customer's first ask."):
+        # Match on po_key, not the latest version's id — ~10% of the "Added"/"Changed"
+        # markers sit on a superseded version's line items and would be missed.
         changes = all_items[
-            all_items["po_id"].isin(f_po["id"])
+            all_items["po_key"].isin(f_po["po_key"])
             & all_items["revision_status"].isin(["Added", "Changed", "Removed"])
             & (~all_items["product_name"].isin(ctx.hidden_products))
         ]
