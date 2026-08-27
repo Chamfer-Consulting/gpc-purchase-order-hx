@@ -169,17 +169,22 @@ def ensure_cloud_schema(conn) -> None:
 
 def handled_thread_ids(conn) -> set:
     """Thread IDs already fully processed under the current schema — a purchase_orders
-    row that carries gmail_thread_id, or a gmail_thread_state row. A --full-backlog
-    run skips these (no Gmail fetch, no Claude call) so it stays resumable after a
-    timeout instead of re-scanning everything from the top every run. Old rows still
-    needing the gmail_thread_id backfill (gmail_thread_id IS NULL) are deliberately
-    NOT in this set, so they still get processed and stamped."""
+    row that carries gmail_thread_id, or a gmail_thread_state row recording the thread
+    as NOT an order. A --full-backlog run skips these (no Gmail fetch, no Claude call)
+    so it stays resumable after a timeout instead of re-scanning everything from the
+    top every run. Old rows still needing the gmail_thread_id backfill (gmail_thread_id
+    IS NULL) are deliberately NOT in this set, so they still get processed and stamped.
+
+    A was_po=TRUE state row is intentionally NOT trusted on its own: it's only valid
+    paired with a published purchase_orders row (covered by the first clause). If the
+    PO was never published (e.g. a run killed between checkpoint and publish), the
+    thread is genuinely unhandled and must be re-processed."""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT gmail_thread_id FROM purchase_orders WHERE gmail_thread_id IS NOT NULL
             UNION
-            SELECT thread_id FROM gmail_thread_state
+            SELECT thread_id FROM gmail_thread_state WHERE was_po = FALSE
             """
         )
         return {row[0] for row in cur.fetchall()}

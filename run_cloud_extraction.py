@@ -357,8 +357,13 @@ def _process_thread(
     message_count = len(messages)
 
     state = postgres_store.get_thread_state(pg_conn, thread_id)
+    # The last_file_hash short-circuit is only trusted for a thread recorded as NOT an
+    # order (was_po=False) — there the state row IS the whole record and nothing can be
+    # lost by skipping. For was_po=True the authoritative signal is is_known() (a
+    # published purchase_orders row); an unchanged hash with no published PO means a
+    # prior run extracted it but died before publishing, so it must be re-processed.
     if postgres_store.is_known(pg_conn, source_label, file_hash) or (
-        state is not None and state["last_file_hash"] == file_hash
+        state is not None and not state["was_po"] and state["last_file_hash"] == file_hash
     ):
         logger.info(f"{source_label}: unchanged since last run — skipping")
         return []
