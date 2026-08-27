@@ -114,7 +114,7 @@ def _render_reference_prices(ctx) -> None:
     ref_df = load_reference_prices()
     editor_seed = ref_df[["customer_name", "product_name", "container_size", "price", "source"]].copy()
     edited_prices = st.data_editor(
-        editor_seed, num_rows="dynamic", use_container_width=True, key="reference_prices_editor",
+        editor_seed, num_rows="dynamic", width="stretch", key="reference_prices_editor",
         column_config={
             "customer_name": st.column_config.TextColumn("Customer"),
             "product_name": st.column_config.TextColumn("Product"),

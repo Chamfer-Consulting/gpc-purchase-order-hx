@@ -72,7 +72,7 @@ def render(ctx) -> None:
                 items_seed = _po_lines[~_po_lines["is_removed"].fillna(False)][_cols].reset_index(drop=True)
                 _removed_seed = _po_lines[_po_lines["is_removed"].fillna(False)]
                 edited_items = st.data_editor(
-                    items_seed, num_rows="dynamic", use_container_width=True, key=f"items_editor_{selected_id}",
+                    items_seed, num_rows="dynamic", width="stretch", key=f"items_editor_{selected_id}",
                     column_config={
                         "quantity": st.column_config.NumberColumn("Qty"),
                         "unit_price": st.column_config.NumberColumn("Unit Price ($)", format="%.2f"),

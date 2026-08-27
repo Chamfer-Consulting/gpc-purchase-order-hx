@@ -637,10 +637,11 @@ def _extract_from_source(
             }
 
         except anthropic.RateLimitError as e:
-            wait = RETRY_DELAY * (2 ** attempt)  # exponential: 5s, 10s, 20s
-            last_error = f"Rate limit (attempt {attempt + 1}/{MAX_RETRIES}): {e} — retrying in {wait}s"
-            logger.warning(f"{source_label}: rate limit hit, waiting {wait}s...")
-            time.sleep(wait)
+            last_error = f"Rate limit (attempt {attempt + 1}/{MAX_RETRIES}): {e}"
+            if attempt < MAX_RETRIES - 1:
+                wait = RETRY_DELAY * (2 ** attempt)  # exponential: 5s, 10s, 20s
+                logger.warning(f"{source_label}: rate limit hit, waiting {wait}s...")
+                time.sleep(wait)
             continue
 
         except anthropic.APIStatusError as e:

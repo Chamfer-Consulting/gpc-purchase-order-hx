@@ -26,7 +26,7 @@ _COMPARE_KEY = {"No comparison": "none", "vs previous period": "prev",
                 "vs same period last year": "yoy"}
 _DEFAULT_LINE_TYPES = ["Sales", "Donations", "Shipping"]
 _FLT_KEYS = (
-    "flt_preset", "flt_year", "flt_custom", "flt_compare",
+    "flt_preset", "flt_custom", "flt_compare",
     "flt_customers", "flt_products", "flt_sizes", "flt_line_types",
 )
 
@@ -100,7 +100,7 @@ def _compare_range(mode: str, start, end):
     return prev_end - span, prev_end
 
 
-def _summary(pop, label: str, n: int) -> str:
+def _summary(label: str, n: int) -> str:
     return f"{label} · {n}" if n else label
 
 
@@ -115,7 +115,7 @@ def render_filter_bar(min_date, max_date, customers, products, sizes) -> FilterS
         c = st.columns([2.2, 2, 2, 2, 1.6, 2, 1.1], vertical_alignment="center")
 
         # ── date ──────────────────────────────────────────────────────────────
-        with c[0].popover(f"Dates: {st.session_state['flt_preset']}", use_container_width=True):
+        with c[0].popover(f"Dates: {st.session_state['flt_preset']}", width="stretch"):
             preset = st.segmented_control(
                 "Date range", _PRESETS, key="flt_preset",
                 selection_mode="single", default="All time",
@@ -130,7 +130,7 @@ def render_filter_bar(min_date, max_date, customers, products, sizes) -> FilterS
         start_ts, end_ts = _resolve_range(preset, min_date, max_date)
 
         # ── compare ───────────────────────────────────────────────────────────
-        with c[1].popover(f"Compare: {st.session_state['flt_compare']}", use_container_width=True):
+        with c[1].popover(f"Compare: {st.session_state['flt_compare']}", width="stretch"):
             st.radio("Compare to", _COMPARE, key="flt_compare")
         compare_mode = _COMPARE_KEY[st.session_state["flt_compare"]]
         prev_start, prev_end = _compare_range(compare_mode, start_ts, end_ts)
@@ -142,22 +142,22 @@ def render_filter_bar(min_date, max_date, customers, products, sizes) -> FilterS
 
         # ── customers ─────────────────────────────────────────────────────────
         sel_cust = st.session_state.get("flt_customers", [])
-        with c[2].popover(_summary(None, "Customers", len(sel_cust)), use_container_width=True):
+        with c[2].popover(_summary("Customers", len(sel_cust)), width="stretch"):
             sel_cust = st.multiselect("Customers", customers, key="flt_customers")
 
         # ── products ──────────────────────────────────────────────────────────
         sel_prod = st.session_state.get("flt_products", [])
-        with c[3].popover(_summary(None, "Products", len(sel_prod)), use_container_width=True):
+        with c[3].popover(_summary("Products", len(sel_prod)), width="stretch"):
             sel_prod = st.multiselect("Products", products, key="flt_products")
 
         # ── sizes ─────────────────────────────────────────────────────────────
         sel_size = st.session_state.get("flt_sizes", [])
-        with c[4].popover(_summary(None, "Sizes", len(sel_size)), use_container_width=True):
+        with c[4].popover(_summary("Sizes", len(sel_size)), width="stretch"):
             sel_size = st.multiselect("Container sizes", sizes, key="flt_sizes")
 
         # ── line type ─────────────────────────────────────────────────────────
         lt = st.session_state.get("flt_line_types", list(_DEFAULT_LINE_TYPES))
-        with c[5].popover(f"Line types ({len(lt)})", use_container_width=True):
+        with c[5].popover(f"Line types ({len(lt)})", width="stretch"):
             lt = st.multiselect(
                 "Include in totals", list(LINE_TYPE_GROUPS.keys()), key="flt_line_types",
                 help="Sales are product revenue. Donations, shipping and samples are "
@@ -165,7 +165,7 @@ def render_filter_bar(min_date, max_date, customers, products, sizes) -> FilterS
             )
 
         # ── reset ─────────────────────────────────────────────────────────────
-        if c[6].button("Reset", use_container_width=True):
+        if c[6].button("Reset", width="stretch"):
             reset()
             st.rerun()
 

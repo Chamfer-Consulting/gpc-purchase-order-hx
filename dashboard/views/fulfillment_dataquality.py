@@ -8,7 +8,7 @@ purchase order" is the pipeline working, not a failure.
 
 import streamlit as st
 
-from data import load_invoice_reconciliation, load_matched_line_items
+from data import load_invoice_reconciliation, load_match_anomalies, load_matched_line_items
 from ui_kit import data_grid, kpi_strip, metric_help, page_scaffold, scope_bar, section_card
 
 _NOT_PO = "not a purchase order"
@@ -19,6 +19,7 @@ _CATEGORIES = [
     ("extraction_errors", "Extraction failures", "critical"),
     ("math_check", "Math-check failures", "critical"),
     ("price_anomalies", "Price anomalies", "serious"),
+    ("match_anomalies", "Questionable matches", "serious"),
     ("invoice_recon", "Invoice ≠ line items", "warning"),
 ]
 
@@ -59,6 +60,18 @@ def render(ctx) -> None:
     if not price_issues.empty:
         price_issues = price_issues.reindex(price_issues["line_total"].abs().sort_values(ascending=False).index)
 
+    # Confirmed PO<->invoice links that look wrong (customer / date gap). Scoped by
+    # the *invoice* date, not the PO's — a wrong PO date is one of the things this
+    # catches, so scoping on it would hide exactly those rows.
+    match_anom = load_match_anomalies()
+    if not match_anom.empty:
+        if ctx.start_ts is not None and ctx.end_ts is not None:
+            match_anom = match_anom[
+                (match_anom["invoice_date"] >= ctx.start_ts) & (match_anom["invoice_date"] <= ctx.end_ts)
+            ]
+        if ctx.selected_customers:
+            match_anom = match_anom[match_anom["invoice_customer"].isin(ctx.selected_customers)]
+
     # QBO invoices whose header total doesn't match their line items — scoped to the
     # current date range / customers (extraction failures above deliberately aren't).
     recon = load_invoice_reconciliation()
@@ -92,7 +105,8 @@ def render(ctx) -> None:
 
     counts = {
         "extraction_errors": len(real_errors), "math_check": math_count,
-        "price_anomalies": len(price_issues), "invoice_recon": len(recon),
+        "price_anomalies": len(price_issues), "match_anomalies": len(match_anom),
+        "invoice_recon": len(recon),
     }
     labels = {key: label for key, label, _ in _CATEGORIES}
     keys = [key for key, _, _ in _CATEGORIES]
@@ -170,6 +184,26 @@ def render(ctx) -> None:
                     ["po_number", "customer_name", "product_name", "container_size", "line_total", "price_anomaly"],
                     key="dq_price", download_name="price_anomalies.csv",
                 )
+
+    elif selected == "match_anomalies":
+        with section_card(
+            "Questionable confirmed matches",
+            "Confirmed PO↔invoice links where the customers don't correspond, the dates are "
+            "far apart (real matches land within ~2 weeks), or the totals differ widely. "
+            "Re-verify on Match & Reconcile — or the PO's date came out of extraction wrong.",
+        ):
+            if match_anom.empty:
+                st.caption("None — every confirmed match looks consistent.")
+            else:
+                data_grid(
+                    match_anom,
+                    ["po_number", "po_customer", "po_date", "po_total", "doc_number",
+                     "invoice_customer", "invoice_date", "invoice_total", "day_gap", "reason"],
+                    key="dq_match_anom", download_name="questionable_matches.csv",
+                )
+                target = ctx.pages.get("match_review")
+                if target is not None:
+                    st.page_link(target, label="Open Match & Reconcile →")
 
     else:  # invoice_recon
         with section_card(

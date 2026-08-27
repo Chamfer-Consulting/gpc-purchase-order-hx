@@ -207,22 +207,6 @@ def compare_periods_by_group(
     return merged.reset_index().rename(columns={"index": group_col})
 
 
-def top_entity_per_period(detail_df: pd.DataFrame, period_col: str, entity_col: str, value_col: str, agg: str = "sum") -> pd.Series:
-    """Returns a Series indexed by period value -> "entity (value)" string for whichever
-    entity_col value is largest in that period — used to enrich a chart's hover tooltip
-    (merge the result onto the chart's already-grouped dataframe by period_col) so
-    hovering a bar shows more than just the raw aggregate number. Empty Series if
-    detail_df has nothing to summarize."""
-    if detail_df.empty:
-        return pd.Series(dtype=object)
-    grouped = detail_df.dropna(subset=[period_col, entity_col]).groupby([period_col, entity_col])[value_col].agg(agg).reset_index()
-    if grouped.empty:
-        return pd.Series(dtype=object)
-    idx = grouped.groupby(period_col)[value_col].idxmax()
-    top = grouped.loc[idx].set_index(period_col)
-    return top.apply(lambda r: f"{r[entity_col]} ({r[value_col]:,.0f})", axis=1)
-
-
 def yoy_annual_chart(df: pd.DataFrame, date_col: str, agg_col: str, agg_fn: str, y_label: str, palette: dict, current_year: str):
     """Line chart with one line per calendar year (month-of-year on the x-axis),
     current_year emphasized (bold, full opacity) against past years (thin, dotted,
@@ -487,6 +471,55 @@ def load_donation_totals() -> pd.DataFrame:
     df = df[~df["private_note"].fillna("").str.contains("void", case=False)].copy()
     df["effective_date"] = pd.to_datetime(df["txn_date"], errors="coerce")
     return df.drop(columns=["private_note"])
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_match_anomalies() -> pd.DataFrame:
+    """Confirmed PO<->invoice links that look wrong and should be re-verified: the
+    two sides' customers don't correspond, or the dates are implausibly far apart
+    (real matches land within a couple of weeks — see
+    qbo_matcher._calibrated_date_window). `run_matching` won't create these any more
+    (it pre-filters candidates by customer), but historical/manual links can be
+    wrong, and a bad `po_date` from extraction surfaces here too. Amount differences
+    are deliberately NOT flagged — shipped ≠ requested is normal and is what Order
+    Lifecycle reports on."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        df = pd.read_sql_query(
+            """
+            SELECT po.id AS po_id, inv.id AS invoice_id, l.match_method,
+                   po.po_number, po.customer_name AS po_customer,
+                   COALESCE(po.po_date, po.sent_date::date) AS po_date, po.total AS po_total,
+                   inv.doc_number, inv.customer_name AS invoice_customer,
+                   inv.txn_date AS invoice_date, inv.total_amt AS invoice_total
+            FROM po_invoice_links l
+            JOIN purchase_orders po ON po.id = l.po_id
+            JOIN qbo_invoices inv ON inv.id = l.invoice_id
+            WHERE l.confirmed = TRUE
+            """,
+            conn,
+        )
+    finally:
+        conn.close()
+    if df.empty:
+        return df
+    df["po_date"] = pd.to_datetime(df["po_date"], errors="coerce")
+    df["invoice_date"] = pd.to_datetime(df["invoice_date"], errors="coerce")
+    df["po_total"] = pd.to_numeric(df["po_total"], errors="coerce")
+    df["invoice_total"] = pd.to_numeric(df["invoice_total"], errors="coerce")
+    df["day_gap"] = (df["invoice_date"] - df["po_date"]).abs().dt.days
+
+    cust_mismatch = ~df.apply(
+        lambda r: customers_match(r["po_customer"], r["invoice_customer"]), axis=1
+    )
+    date_far = df["day_gap"].fillna(0) > 120
+
+    df["reason"] = ""
+    df.loc[cust_mismatch, "reason"] += "customer; "
+    df.loc[date_far, "reason"] += "date gap; "
+    df = df[df["reason"] != ""].copy()
+    df["reason"] = df["reason"].str.rstrip("; ")
+    return df.sort_values("day_gap", ascending=False, na_position="last")
 
 
 @st.cache_data(ttl=300, show_spinner=False)
