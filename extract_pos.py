@@ -437,8 +437,12 @@ def pdf_to_base64(pdf_source: str | bytes) -> str:
 
 # ── Claude API Extraction ──────────────────────────────────────────────────────
 
-def _is_out_of_credits(e: anthropic.PermissionDeniedError) -> bool:
-    """True for Anthropic's 'credit balance too low' error, as opposed to other 403s."""
+def _is_out_of_credits(e: Exception) -> bool:
+    """True for Anthropic's 'credit balance too low' error. It usually arrives as a
+    403 PermissionDeniedError but has also been seen live as a plain 400
+    APIStatusError ("invalid_request_error", message "Your credit balance is too
+    low…") — match on either, since the response is the same: pause, add credits,
+    rerun."""
     if getattr(e, "type", None) == "billing_error":
         return True
     return "credit balance" in str(e).lower()
@@ -640,6 +644,15 @@ def _extract_from_source(
             continue
 
         except anthropic.APIStatusError as e:
+            if _is_out_of_credits(e):
+                if stop_event is not None:
+                    stop_event.set()
+                logger.error(f"{source_label}: out of API credits — {e}")
+                return {
+                    "_source_file": source_label,
+                    "_extraction_method": extraction_method,
+                    "error": "insufficient API credits — add credits and rerun to resume",
+                }
             last_error = f"API error {e.status_code} (attempt {attempt + 1}/{MAX_RETRIES}): {e.message}"
             logger.warning(f"{source_label}: {last_error}")
             if attempt < MAX_RETRIES - 1:

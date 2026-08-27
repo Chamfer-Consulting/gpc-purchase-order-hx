@@ -108,17 +108,26 @@ def get_full_dataset(conn) -> list:
     return [_row_to_result(h, items_by_po.get(h["id"], [])) for h in headers]
 
 
+NOT_A_PO_ERROR = "not a purchase order"
+
+
 def is_known(conn, source_file: str, file_hash: str) -> bool:
-    """True if this exact (source_file, file_hash) has already been extracted and
-    stored — mirrors db.get_cached_result()'s cache-hit check for the local
-    pipeline, so re-scanning a Gmail message already processed in a prior
-    incremental run doesn't re-call the Claude API for it."""
+    """True if this exact (source_file, file_hash) is already handled — a clean
+    extraction, or one the model classified 'not a purchase order' (the thread loop
+    tracks those separately via gmail_thread_state). A row that recorded a *real*
+    failure (expired token, API/credit error, timeout, exception) is NOT considered
+    known, so a transient failure is retried on the next run instead of being stuck
+    forever — matches db.get_cached_result()'s `error IS NULL` behaviour for the
+    local pipeline, plus the not-a-PO carve-out the cloud pipeline needs."""
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT 1 FROM purchase_orders WHERE source_file = %s AND file_hash = %s LIMIT 1",
+            "SELECT error FROM purchase_orders WHERE source_file = %s AND file_hash = %s LIMIT 1",
             (source_file, file_hash),
         )
-        return cur.fetchone() is not None
+        row = cur.fetchone()
+    if row is None:
+        return False
+    return row[0] is None or row[0] == NOT_A_PO_ERROR
 
 
 # The slice of schema.sql the cloud run's thread loop touches before it reaches

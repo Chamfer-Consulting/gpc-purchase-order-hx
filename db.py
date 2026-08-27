@@ -132,7 +132,7 @@ def _row_to_result(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     if row["error"] is not None:
         result["error"] = row["error"]
 
-    items = conn.execute("SELECT * FROM line_items WHERE po_id = ?", (row["id"],)).fetchall()
+    items = conn.execute("SELECT * FROM line_items WHERE po_id = ? ORDER BY id", (row["id"],)).fetchall()
     for it in items:
         item = {
             "product_raw": it["product_raw"],

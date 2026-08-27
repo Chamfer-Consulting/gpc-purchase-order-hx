@@ -4,7 +4,9 @@ Re-run math validation against already-extracted data, without calling the API.
 
 Use this after changing validate_math()'s logic in math_check.py — all the
 fields it needs (subtotal, tax, total, line items) are already stored locally,
-so past extractions can be re-checked for free.
+so past extractions can be re-checked for free. Re-persists both the PO header
+verdict AND each line's math_mismatch (the Data Quality page reads the line-level
+flag), then run sync_dashboard.py to push the changes to the hosted DB.
 
 Usage:
     python recompute_math_checks.py --db po_data.db
@@ -28,6 +30,16 @@ def recompute(sqlite_path: str) -> tuple[int, int]:
         if result["math_check_failed"] != was_failed or result["math_check_detail"] != row["math_check_detail"]:
             changed += 1
         db.update_math_check(conn, row["id"], result["math_check_failed"], result["math_check_detail"])
+        # Re-persist the per-line verdict too — _row_to_result and this query both
+        # order line items by id, so they zip 1:1.
+        item_ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM line_items WHERE po_id = ? ORDER BY id", (row["id"],)
+        )]
+        for item_id, item in zip(item_ids, result["line_items"]):
+            conn.execute(
+                "UPDATE line_items SET math_mismatch = ? WHERE id = ?",
+                (item.get("math_mismatch"), item_id),
+            )
 
     conn.commit()
     conn.close()

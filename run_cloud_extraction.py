@@ -380,9 +380,16 @@ def _process_thread(
         result["source_received_at"] = _thread_received_at(messages)
         result["gmail_thread_id"] = thread_id
         results.append(result)
-        postgres_store.upsert_thread_state(
-            pg_conn, thread_id, message_count, file_hash, was_po=("error" not in result),
-        )
+        # Record thread state only for a *settled* disposition — a clean extraction
+        # or a "not a purchase order" classification. A real failure (credit/API
+        # error, timeout) must NOT be recorded, or the state's last_file_hash would
+        # make this thread skip its own retry next run even though is_known() now
+        # allows it.
+        settled = "error" not in result or result["error"] == postgres_store.NOT_A_PO_ERROR
+        if settled:
+            postgres_store.upsert_thread_state(
+                pg_conn, thread_id, message_count, file_hash, was_po=("error" not in result),
+            )
 
     return results
 
