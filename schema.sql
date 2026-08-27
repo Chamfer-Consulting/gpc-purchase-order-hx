@@ -170,7 +170,7 @@ CREATE TABLE IF NOT EXISTS po_invoice_links (
     id            SERIAL PRIMARY KEY,
     po_id         INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
     invoice_id    INTEGER NOT NULL REFERENCES qbo_invoices(id) ON DELETE CASCADE,
-    match_method  TEXT NOT NULL,       -- 'po_number' | 'fuzzy' | 'manual'
+    match_method  TEXT NOT NULL,       -- po_number | po_number_items | po_number_ambiguous | po_number_review | fuzzy | manual
     match_score   NUMERIC,             -- for ranking/display of fuzzy candidates
     confirmed     BOOLEAN NOT NULL DEFAULT FALSE,
     rejected      BOOLEAN NOT NULL DEFAULT FALSE,
@@ -182,6 +182,26 @@ CREATE INDEX IF NOT EXISTS idx_qbo_invoice_items_invoice_id ON qbo_invoice_items
 CREATE INDEX IF NOT EXISTS idx_qbo_invoice_items_product_name ON qbo_invoice_items(product_name);
 CREATE INDEX IF NOT EXISTS idx_po_invoice_links_po_id ON po_invoice_links(po_id);
 CREATE INDEX IF NOT EXISTS idx_po_invoice_links_invoice_id ON po_invoice_links(invoice_id);
+
+-- One-time cleanup for links created before run_matching() learned to
+-- (a) reject the losing siblings of a line-item-disambiguated auto-match, and
+-- (b) tag an unresolved same-PO-number tie as 'po_number_ambiguous' rather than
+--     'po_number' (which confidence_label() reads as "Certain" and drops in the
+--     Quick-confirm queue). Both are idempotent — safe to re-run every apply.
+UPDATE po_invoice_links l SET rejected = TRUE
+WHERE l.confirmed = FALSE AND l.rejected = FALSE
+  AND EXISTS (
+    SELECT 1 FROM po_invoice_links w
+    WHERE w.po_id = l.po_id AND w.confirmed = TRUE AND w.match_method = 'po_number_items'
+  );
+
+UPDATE po_invoice_links l SET match_method = 'po_number_ambiguous'
+WHERE l.match_method = 'po_number' AND l.confirmed = FALSE AND l.rejected = FALSE
+  AND (
+    SELECT COUNT(*) FROM po_invoice_links s
+    WHERE s.po_id = l.po_id AND s.match_method = 'po_number'
+      AND s.confirmed = FALSE AND s.rejected = FALSE
+  ) > 1;
 
 -- Dashboard-side product visibility override — a product listed here is excluded from
 -- every reporting surface (charts, tables, filters, exports, picker dropdowns) app-wide,

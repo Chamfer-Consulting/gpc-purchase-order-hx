@@ -19,6 +19,22 @@ from data import get_database_url
 from ui_kit import confidence_badge, data_table, page_header, section_card
 
 
+def _live(conn):
+    """Return a usable connection, reconnecting if the held one has dropped — Neon
+    serverless can close a connection mid-operation on a cold or slow run, and this
+    page keeps one open for its whole lifetime."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        return conn
+    except psycopg2.Error:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return psycopg2.connect(get_database_url())
+
+
 def _items_table(items):
     if not items:
         st.caption("No line items.")
@@ -123,22 +139,35 @@ def render(ctx) -> None:
         with section_card("Automated matching"):
             mcol1, mcol2 = st.columns(2)
             if mcol1.button("Run matching"):
+                summary = None
                 with st.spinner("Matching POs to invoices..."):
-                    summary = qbo_matcher.run_matching(mc)
-                st.success(
-                    f"{summary['auto_matched']} auto-matched with certainty, "
-                    f"{summary['customer_mismatch']} PO-number match(es) held for review "
-                    f"(customer didn't corroborate), "
-                    f"{summary['fuzzy_candidates']} fuzzy candidate(s) added for review, "
-                    f"{summary['ambiguous_po_number']} still-ambiguous PO-number match(es), "
-                    f"{summary['no_candidates']} PO(s) with no candidate at all "
-                    f"(out of {summary['total_pos']} total POs). "
-                    f"{summary['voided_released']} PO(s) released back for rematching (their "
-                    f"invoice was voided in QuickBooks), {summary['voided_pruned']} stale voided "
-                    f"candidate(s) pruned. "
-                    f"Fuzzy date window: ±{summary['date_window_days']} days."
-                )
+                    try:
+                        summary = qbo_matcher.run_matching(mc)
+                    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+                        try:  # connection dropped mid-run — run_matching is idempotent
+                            mc = _live(mc)
+                            summary = qbo_matcher.run_matching(mc)
+                        except Exception as e:
+                            st.error(f"Matching failed after reconnect: {e}")
+                    except Exception as e:
+                        st.error(f"Matching failed: {e}")
+                if summary is not None:
+                    st.success(
+                        f"{summary['auto_matched']} auto-matched with certainty, "
+                        f"{summary['customer_mismatch']} PO-number match(es) held for review "
+                        f"(customer didn't corroborate), "
+                        f"{summary['fuzzy_candidates']} fuzzy candidate(s) added for review, "
+                        f"{summary['ambiguous_po_number']} still-ambiguous PO-number match(es), "
+                        f"{summary['no_candidates']} PO(s) with no candidate at all. "
+                        f"({summary['already_resolved']} PO(s) were already resolved and skipped this "
+                        f"run; {summary['total_pos']} POs total.) "
+                        f"{summary['voided_released']} PO(s) released back for rematching (their "
+                        f"invoice was voided in QuickBooks), {summary['voided_pruned']} stale voided "
+                        f"candidate(s) pruned. "
+                        f"Fuzzy date window: ±{summary['date_window_days']} days."
+                    )
             if mcol2.button("Sync Drive links"):
+                mc = _live(mc)
                 progress_bar = st.progress(0.0, text="Searching Google Drive...")
 
                 def _drive_progress(i, total):

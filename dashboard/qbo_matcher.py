@@ -17,6 +17,7 @@ guessing.
 
 from datetime import date, datetime
 import re
+import statistics
 
 from psycopg2.extras import execute_values
 
@@ -65,6 +66,8 @@ def confidence_label(match_method: str, score) -> str:
         return "Certain (PO number + customer)"
     if match_method == "po_number_items":
         return "Certain (PO number + line items)"
+    if match_method == "po_number_ambiguous":
+        return "Same PO number on several invoices — pick the right one"
     if match_method == "po_number_review":
         return "PO number matched, but customer doesn't corroborate — verify"
     if match_method == "manual":
@@ -210,12 +213,41 @@ def _invoice_line_items(conn, invoice_ids: list[int]) -> dict[int, dict[str, flo
     return out
 
 
+def _invoice_product_subtotals(conn, invoice_ids: list[int]) -> dict[int, float]:
+    """invoice_id -> sum of its non-sample product line_totals. Used by the amount
+    sub-score so a PO total is compared like-for-like against the invoice's product
+    lines, not its gross total_amt (which folds in delivery / service / tax lines —
+    ~16% of confirmed matches differ enough on gross to score 0 on amount)."""
+    if not invoice_ids:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT invoice_id, COALESCE(SUM(line_total), 0) FROM qbo_invoice_items "
+            "WHERE invoice_id = ANY(%s) AND is_sample = FALSE AND category = 'product' "
+            "GROUP BY invoice_id",
+            (invoice_ids,),
+        )
+        return {inv_id: float(subtotal or 0) for inv_id, subtotal in cur.fetchall()}
+
+
+def _invoice_amount_for_scoring(inv: dict, inv_subtotals: dict[int, float]):
+    """The invoice figure the amount sub-score compares against: its product-line
+    subtotal, falling back to gross total_amt when the invoice has no product lines
+    (e.g. an all-service invoice — genuinely not a product fulfilment, let the low
+    score stand)."""
+    return inv_subtotals.get(inv["id"], 0.0) or inv.get("total_amt")
+
+
 def _line_item_similarity(po_items: dict, inv_items: dict) -> float:
     """Quantity-weighted intersection-over-union across {product: qty} maps.
     1.0 = identical product+quantity sets. 0.0 = no product overlap at all.
-    0.5 (neutral, no signal either way) when one side has no line items at all."""
-    if not po_items or not inv_items:
+    0.5 (no signal either way) only when *both* sides have no line items; if one
+    side has products and the other has none they demonstrably don't match, so 0.0
+    — otherwise a contentless invoice would outrank a weak-but-real overlap."""
+    if not po_items and not inv_items:
         return 0.5
+    if not po_items or not inv_items:
+        return 0.0
     products = set(po_items) | set(inv_items)
     overlap = sum(min(po_items.get(p, 0.0), inv_items.get(p, 0.0)) for p in products)
     total = sum(max(po_items.get(p, 0.0), inv_items.get(p, 0.0)) for p in products)
@@ -248,9 +280,11 @@ def _best_date_delta(effective_date, delivery_date, txn_date):
 
 
 def _calibrated_date_window(conn) -> int:
-    """P95 of the best observed date gap (see _best_date_delta) across confirmed,
-    customer-corroborated PO-number matches — a data-driven fuzzy window instead of a
-    guess. Falls back to the default until there are enough confirmed matches to trust."""
+    """The ~P95 best observed date gap (see _best_date_delta) across confirmed,
+    customer-corroborated PO-number matches, clamped to [14, 90] days — a data-driven
+    fuzzy window instead of a guess. Falls back to the default until there are enough
+    confirmed matches to trust. For this dataset invoices land the same day as the PO
+    (P95 = 0), so the 14-day floor is what actually applies."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -270,9 +304,10 @@ def _calibrated_date_window(conn) -> int:
             deltas.append(delta)
     if len(deltas) < MIN_SAMPLES_TO_CALIBRATE:
         return DATE_WINDOW_DAYS_DEFAULT
-    deltas.sort()
-    p95 = deltas[int(len(deltas) * 0.95)]
-    return max(14, min(90, p95))
+    # Interpolated P95 (statistics.quantiles), not deltas[int(n*0.95)] — the latter
+    # degenerates to the single max value at small sample counts.
+    p95 = statistics.quantiles(deltas, n=100, method="inclusive")[94] if len(deltas) >= 2 else deltas[0]
+    return int(round(max(14, min(90, p95))))
 
 
 MIN_PO_DIGITS_FOR_HINT = 6
@@ -291,7 +326,7 @@ def _po_number_hint_score(po, inv) -> float:
     return 1.0 if po_norm in inv_norm else 0.0
 
 
-def _score_candidate(po, inv, po_items_map, inv_items_map, date_window):
+def _score_candidate(po, inv, po_items_map, inv_items_map, date_window, inv_subtotals=None):
     """None means the candidate is outside the acceptable date range — excluded entirely.
     Line-item content and a possible embedded-PO-number hint are weighted highest
     (0.3, 0.2) since they're the most specific independent signals available once an
@@ -304,7 +339,8 @@ def _score_candidate(po, inv, po_items_map, inv_items_map, date_window):
     else:
         date_score = max(0.0, 1 - delta_days / date_window)
 
-    amount_score = _amount_score(po.get("total"), inv.get("total_amt"))
+    inv_amount = _invoice_amount_for_scoring(inv, inv_subtotals or {})
+    amount_score = _amount_score(po.get("total"), inv_amount)
     item_score = _line_item_similarity(po_items_map.get(po["id"], {}), inv_items_map.get(inv["id"], {}))
     hint_score = _po_number_hint_score(po, inv)
 
@@ -345,6 +381,7 @@ def explain_candidate(conn, po_id: int, invoice_id: int) -> dict | None:
 
     po_items_map = _po_line_items(conn, [po_id])
     inv_items_map = _invoice_line_items(conn, [invoice_id])
+    inv_subtotals = _invoice_product_subtotals(conn, [invoice_id])
     date_window = _calibrated_date_window(conn)
 
     delta_days = _best_date_delta(po.get("_effective_date"), po.get("delivery_date"), inv.get("txn_date"))
@@ -357,7 +394,7 @@ def explain_candidate(conn, po_id: int, invoice_id: int) -> dict | None:
     else:
         date_score = max(0.0, 1 - delta_days / date_window)
 
-    amount_score = _amount_score(po.get("total"), inv.get("total_amt"))
+    amount_score = _amount_score(po.get("total"), _invoice_amount_for_scoring(inv, inv_subtotals))
     item_score = _line_item_similarity(po_items_map.get(po_id, {}), inv_items_map.get(invoice_id, {}))
     hint_score = _po_number_hint_score(po, inv)
 
@@ -435,6 +472,7 @@ def run_matching(conn) -> dict:
     invoices = [inv for inv in _load_invoices(conn) if inv["id"] not in already_confirmed_invoice_ids]
     po_items_map = _po_line_items(conn, [po["id"] for po in pos])
     inv_items_map = _invoice_line_items(conn, [inv["id"] for inv in invoices])
+    inv_subtotals = _invoice_product_subtotals(conn, [inv["id"] for inv in invoices])
     date_window = _calibrated_date_window(conn)
 
     with conn.cursor() as cur:
@@ -450,25 +488,24 @@ def run_matching(conn) -> dict:
     new_links = []  # (po_id, invoice_id, match_method, match_score, confirmed)
     auto_matched = ambiguous = customer_mismatch = 0
     unmatched_pos = []
+    decisive_winners = []  # (po_id, winner_invoice_id) — their losing siblings get rejected post-insert
 
     for po in pos:
         norm = normalize_po_number(po.get("po_number"))
-        candidates = [c for c in by_po_number.get(norm, []) if (po["id"], c["id"]) not in decided] if norm else []
+        raw_candidates = [c for c in by_po_number.get(norm, []) if (po["id"], c["id"]) not in decided] if norm else []
+        # Only same-customer invoices are real candidates — a PO-number digit collision
+        # across customers must not become review-queue noise. Keep the cross-customer
+        # hits aside so a genuine coincidental collision still gets flagged.
+        candidates = [c for c in raw_candidates if customers_match(po.get("customer_name"), c.get("customer_name"))]
+        cross_customer = [c for c in raw_candidates if c not in candidates]
 
         if len(candidates) == 1:
-            inv = candidates[0]
-            if customers_match(po.get("customer_name"), inv.get("customer_name")):
-                new_links.append((po["id"], inv["id"], "po_number", 1.0, True))
-                auto_matched += 1
-            else:
-                # PO number matched but nothing corroborates it — could be a genuine
-                # coincidental collision. Don't blind-trust a single signal.
-                new_links.append((po["id"], inv["id"], "po_number_review", 0.6, False))
-                customer_mismatch += 1
+            new_links.append((po["id"], candidates[0]["id"], "po_number", 1.0, True))
+            auto_matched += 1
         elif len(candidates) > 1:
-            # Same PO number on multiple invoices (revisions/corrections) — use line-item
-            # content to pick the real match instead of guessing or dumping all of them
-            # into review.
+            # Same PO number on multiple invoices for this customer (revisions/
+            # corrections) — use line-item content to pick the real match instead of
+            # guessing or dumping all of them into review.
             scored = [
                 (_line_item_similarity(po_items_map.get(po["id"], {}), inv_items_map.get(c["id"], {})), c)
                 for c in candidates
@@ -479,17 +516,29 @@ def run_matching(conn) -> dict:
             decisive = (
                 best_sim >= AMBIGUOUS_ITEM_SIM_THRESHOLD
                 and (best_sim - runner_up_sim) >= AMBIGUOUS_ITEM_SIM_MARGIN
-                and customers_match(po.get("customer_name"), best_inv.get("customer_name"))
             )
             if decisive:
                 new_links.append((po["id"], best_inv["id"], "po_number_items", best_sim, True))
                 for sim, c in scored[1:]:
-                    new_links.append((po["id"], c["id"], "po_number", round(sim, 3), False))
+                    new_links.append((po["id"], c["id"], "po_number_ambiguous", round(sim, 3), False))
+                decisive_winners.append((po["id"], best_inv["id"]))
                 auto_matched += 1
             else:
+                # A real tie — keep every candidate for the reviewer, but as
+                # 'po_number_ambiguous' (not 'po_number') so confidence_label doesn't
+                # call an unresolved tie "Certain" and drop it in Quick confirm.
                 for sim, c in scored:
-                    new_links.append((po["id"], c["id"], "po_number", round(sim, 3), False))
+                    new_links.append((po["id"], c["id"], "po_number_ambiguous", round(sim, 3), False))
                 ambiguous += 1
+        elif cross_customer:
+            # PO number matched invoice(s), but only for a different customer — flag
+            # the most content-similar one for a human rather than silently dropping it.
+            flagged = max(
+                cross_customer,
+                key=lambda c: _line_item_similarity(po_items_map.get(po["id"], {}), inv_items_map.get(c["id"], {})),
+            )
+            new_links.append((po["id"], flagged["id"], "po_number_review", 0.6, False))
+            customer_mismatch += 1
         else:
             unmatched_pos.append(po)
 
@@ -500,7 +549,7 @@ def run_matching(conn) -> dict:
         for inv in non_voided:
             if (po["id"], inv["id"]) in decided or not customers_match(po.get("customer_name"), inv.get("customer_name")):
                 continue
-            score = _score_candidate(po, inv, po_items_map, inv_items_map, date_window)
+            score = _score_candidate(po, inv, po_items_map, inv_items_map, date_window, inv_subtotals)
             if score is not None:
                 scored.append((score, inv))
         scored.sort(key=lambda x: -x[0])
@@ -522,6 +571,15 @@ def run_matching(conn) -> dict:
                 """,
                 new_links,
             )
+            # A PO auto-resolved by line-item disambiguation is done — reject its
+            # losing same-number siblings (and any stale pending fuzzy rows) so they
+            # don't linger in the review queue.
+            for po_id, winner_inv in decisive_winners:
+                cur.execute(
+                    "UPDATE po_invoice_links SET rejected = TRUE "
+                    "WHERE po_id = %s AND invoice_id <> %s AND confirmed = FALSE AND rejected = FALSE",
+                    (po_id, winner_inv),
+                )
         conn.commit()
 
     return {
