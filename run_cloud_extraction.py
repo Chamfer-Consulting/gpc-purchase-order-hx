@@ -79,10 +79,13 @@ CLOUD_EXTRACTION_MODEL = "claude-sonnet-5"
 CHECKPOINT_EVERY = 150
 
 # _flush()'s publish step (full-dataset read + annotate + batched upsert) can hit a
-# transient DB error mid-run; retry a few times before giving up so one blip
-# doesn't abort a multi-hour backlog and strand the in-flight checkpoint.
-FLUSH_MAX_ATTEMPTS = 3
-FLUSH_RETRY_SLEEP_SECONDS = 5
+# transient DB error mid-run — most often Neon's serverless compute having
+# autosuspended after the idle gap since the previous checkpoint ("SSL connection
+# has been closed unexpectedly"). Retry with exponential backoff (5, 10, 20, 40s)
+# before giving up, so a slow Neon cold-start is ridden out rather than aborting a
+# multi-hour backlog and stranding ~CHECKPOINT_EVERY threads of paid work.
+FLUSH_MAX_ATTEMPTS = 5
+FLUSH_RETRY_BASE_SLEEP_SECONDS = 5
 
 MAX_SEARCH_RESULTS = 3000  # per label, per run — customer labels are general
 # correspondence (every email exchanged with that customer, not just POs), and
@@ -610,10 +613,12 @@ def main():
                     if attempt == FLUSH_MAX_ATTEMPTS:
                         logger.error(f"checkpoint publish failed after {attempt} attempt(s) — {e}")
                         raise
+                    backoff = FLUSH_RETRY_BASE_SLEEP_SECONDS * (2 ** (attempt - 1))
                     logger.warning(
-                        f"checkpoint publish failed (attempt {attempt}/{FLUSH_MAX_ATTEMPTS}) — {e}; retrying"
+                        f"checkpoint publish failed (attempt {attempt}/{FLUSH_MAX_ATTEMPTS}) — {e}; "
+                        f"retrying in {backoff}s"
                     )
-                    time.sleep(FLUSH_RETRY_SLEEP_SECONDS)
+                    time.sleep(backoff)
 
             published_total += len(deduped)
             error_total += sum(1 for r in deduped if "error" in r)
