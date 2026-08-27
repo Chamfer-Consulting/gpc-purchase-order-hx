@@ -34,6 +34,26 @@ def _variance_styler(palette):
     return _color
 
 
+def _fulfillment_styler(palette):
+    """Colour a Fulfillment % cell: green ≥ 100 (delivered everything asked, or more),
+    amber 90–100, red below 90. A plain coloured number instead of a ProgressColumn,
+    which caps its bar at 100 and so can't show over-delivery."""
+    good = palette["status"]["good"]
+    warning = palette["status"]["warning"]
+    serious = palette["status"]["serious"]
+
+    def _color(val):
+        if pd.isna(val):
+            return ""
+        if val >= 100:
+            return f"background-color: {good}30"
+        if val >= 90:
+            return f"background-color: {warning}30"
+        return f"background-color: {serious}30"
+
+    return _color
+
+
 def render(ctx) -> None:
     """Standalone page (kept working, but nav now points at Order Lifecycle, which
     calls detailed_sections() below after its own aggregate view)."""
@@ -77,9 +97,12 @@ def detailed_sections(ctx) -> None:
             display = summary.rename(columns={
                 "customer_name": "Customer", "requested_amount": "Requested ($)", "delivered_amount": "Delivered ($)",
             })
-            data_table(display, column_config={
-                "Fulfillment %": st.column_config.ProgressColumn("Fulfillment %", format="%.1f%%", min_value=0, max_value=100),
-            })
+            data_table(
+                display.style.map(_fulfillment_styler(palette), subset=["Fulfillment %"]),
+                column_config={
+                    "Fulfillment %": st.column_config.NumberColumn("Fulfillment %", format="%.1f%%"),
+                },
+            )
 
             chart_long = summary.melt(
                 id_vars=["customer_name"], value_vars=["requested_amount", "delivered_amount"],
@@ -163,13 +186,15 @@ def detailed_sections(ctx) -> None:
                      "value": f"${abs(shorted['$ Variance'].min()):,.0f}" if not shorted.empty else "—"},
                 ], north_star=None)
 
-                styled = display_df.style.map(_variance_styler(palette), subset=["Qty Variance", "$ Variance"])
+                styled = (
+                    display_df.style
+                    .map(_variance_styler(palette), subset=["Qty Variance", "$ Variance"])
+                    .map(_fulfillment_styler(palette), subset=["Fulfillment %"])
+                )
                 data_table(
                     styled,
                     column_config={
-                        "Fulfillment %": st.column_config.ProgressColumn(
-                            "Fulfillment %", format="%.1f%%", min_value=0, max_value=100,
-                        ),
+                        "Fulfillment %": st.column_config.NumberColumn("Fulfillment %", format="%.1f%%"),
                     },
                 )
                 st.caption(

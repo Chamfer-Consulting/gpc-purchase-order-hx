@@ -12,9 +12,17 @@ Streamlit installed there), since it's used by a plain CLI script / GitHub Actio
 not the dashboard.
 """
 
+import os
+import re
 from collections import defaultdict
 
 import psycopg2.extras
+
+_SCHEMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
+_CLOUD_SCHEMA_MARKERS = re.compile(
+    r"-- =====\s*CLOUD-THREAD-SCHEMA \(start\)\s*=====(.*?)-- =====\s*CLOUD-THREAD-SCHEMA \(end\)\s*=====",
+    re.DOTALL,
+)
 
 _HEADER_COLUMNS = (
     "source_file", "file_hash", "extraction_method", "error",
@@ -130,34 +138,19 @@ def is_known(conn, source_file: str, file_hash: str) -> bool:
     return row[0] is None or row[0] == NOT_A_PO_ERROR
 
 
-# The slice of schema.sql the cloud run's thread loop touches before it reaches
-# the publish step (which applies the *full* schema.sql via
-# sync_dashboard.apply_schema). Applying the whole file at startup instead was
-# measurably slower against a cold serverless DB for no benefit. Keep in sync with
-# schema.sql's gmail_thread_id / gmail_thread_meta / gmail_thread_state blocks.
-_CLOUD_SCHEMA_DDL = """
-ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS gmail_thread_id TEXT;
+def _cloud_schema_ddl() -> str:
+    """The slice of schema.sql the cloud run's thread loop touches before it reaches
+    the publish step (which applies the *full* schema.sql via
+    sync_dashboard.apply_schema). Applying the whole file at startup instead was
+    measurably slower against a cold serverless DB for no benefit.
 
-CREATE TABLE IF NOT EXISTS gmail_thread_meta (
-    thread_id         TEXT PRIMARY KEY,
-    subject           TEXT,
-    from_addrs        TEXT,
-    first_message_at  TIMESTAMPTZ,
-    last_message_at   TIMESTAMPTZ,
-    message_count     INTEGER,
-    attachment_names  TEXT,
-    url               TEXT,
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS gmail_thread_state (
-    thread_id       TEXT PRIMARY KEY,
-    message_count   INTEGER NOT NULL,
-    last_file_hash  TEXT NOT NULL,
-    was_po          BOOLEAN NOT NULL,
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-"""
+    Read straight out of schema.sql (between the CLOUD-THREAD-SCHEMA markers) rather
+    than hand-copied, so there is exactly one source of truth for those DDL blocks."""
+    with open(_SCHEMA_PATH) as f:
+        m = _CLOUD_SCHEMA_MARKERS.search(f.read())
+    if not m:
+        raise RuntimeError(f"CLOUD-THREAD-SCHEMA markers not found in {_SCHEMA_PATH}")
+    return m.group(1)
 
 
 def ensure_cloud_schema(conn) -> None:
@@ -166,7 +159,7 @@ def ensure_cloud_schema(conn) -> None:
     'gmail-thread:<id>', 13-char prefix). Idempotent; the backfill matches nothing
     once done. Committed immediately."""
     with conn.cursor() as cur:
-        cur.execute(_CLOUD_SCHEMA_DDL)
+        cur.execute(_cloud_schema_ddl())
         cur.execute(
             "UPDATE purchase_orders SET gmail_thread_id = substring(source_file FROM 14) "
             "WHERE gmail_thread_id IS NULL AND source_file LIKE 'gmail-thread:%'"

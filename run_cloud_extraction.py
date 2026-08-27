@@ -560,8 +560,23 @@ def main():
         combined.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
         annotate_revisions(combined)
 
-        print("💾 Publishing to Postgres...")
-        bad_dates = _publish_to_postgres(combined, database_url)
+        # annotate_revisions needs the whole history in memory (a new result can be a
+        # revision of an old PO), but only PO-number groups a new result actually
+        # touched can have *changed* annotations — every other group's inputs
+        # (members + sort order) are identical to last run, so DELETE+reinserting its
+        # rows is pure write churn. Publish just the touched groups on an incremental
+        # run; --full-backlog still re-publishes everything (its job is a full resync).
+        if args.full_backlog:
+            to_publish = combined
+        else:
+            def _po_key(r):
+                return r.get("po_number") or r.get("_source_file")
+
+            touched = {_po_key(r) for r in new_results}
+            to_publish = [r for r in combined if _po_key(r) in touched]
+
+        print(f"💾 Publishing {len(to_publish)} of {len(combined)} row(s) to Postgres...")
+        bad_dates = _publish_to_postgres(to_publish, database_url)
         if bad_dates:
             print(f"⚠️  {len(bad_dates)} invalid date(s) were nulled out:")
             for source_file, field, value in bad_dates:

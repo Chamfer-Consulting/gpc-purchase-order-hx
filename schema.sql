@@ -229,6 +229,12 @@ CREATE TABLE IF NOT EXISTS gmail_connection (
     last_synced_at           TIMESTAMPTZ
 );
 
+-- ===== CLOUD-THREAD-SCHEMA (start) =====
+-- Everything between these markers is also applied on its own, up front, by
+-- postgres_store.ensure_cloud_schema() (the cloud run's thread loop touches these
+-- before the full-schema apply at publish time). That function slices this exact
+-- region out of this file at runtime — do not copy it elsewhere; edit it here only.
+
 -- Links a purchase_orders row back to the Gmail thread it came from — set for
 -- BOTH cloud paths (the text-only thread extraction, where source_file is already
 -- "gmail-thread:<id>", and each PDF attachment, where source_file is just the
@@ -279,6 +285,7 @@ CREATE TABLE IF NOT EXISTS gmail_thread_state (
     was_po          BOOLEAN NOT NULL,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- ===== CLOUD-THREAD-SCHEMA (end) =====
 
 -- Named, reusable dashboard configurations (redesign Phase F). `kind` scopes a
 -- view to a page (e.g. "explore"); `config` is that page's control state. Created
