@@ -387,16 +387,20 @@ def _process_thread(
         result["source_received_at"] = _thread_received_at(messages)
         result["gmail_thread_id"] = thread_id
         results.append(result)
-        # Record thread state only for a *settled* disposition — a clean extraction
-        # or a "not a purchase order" classification. A real failure (credit/API
-        # error, timeout) must NOT be recorded, or the state's last_file_hash would
-        # make this thread skip its own retry next run even though is_known() now
-        # allows it.
-        settled = "error" not in result or result["error"] == postgres_store.NOT_A_PO_ERROR
-        if settled:
-            postgres_store.upsert_thread_state(
-                pg_conn, thread_id, message_count, file_hash, was_po=("error" not in result),
-            )
+        if "error" not in result:
+            # A successful extraction's thread-state write is DEFERRED to after the
+            # publish (carried on the result as _thread_state, applied by _flush) —
+            # writing it now would let a crash between here and the publish leave a
+            # state row whose last_file_hash makes the next run skip an unpublished
+            # PO, losing it silently.
+            result["_thread_state"] = (thread_id, message_count, file_hash, True)
+        elif result["error"] == postgres_store.NOT_A_PO_ERROR:
+            # No purchase_orders row will exist for this — the state row IS the whole
+            # record of "checked, not an order", and there's no result to lose, so
+            # it's safe (and useful for the cheap re-check path) to write it now.
+            postgres_store.upsert_thread_state(pg_conn, thread_id, message_count, file_hash, was_po=False)
+        # A real failure (credit/API error, timeout): write nothing — is_known() now
+        # allows the retry, and no state row must block it.
 
     return results
 
@@ -538,6 +542,12 @@ def main():
             touched = {_po_key(r) for r in deduped}
             to_publish = [r for r in combined if _po_key(r) in touched]
             all_bad_dates.extend(_publish_to_postgres(to_publish, database_url))
+            # Now that these are persisted, record the deferred thread-state rows for
+            # the successful text-thread extractions (see _process_thread).
+            for r in deduped:
+                ts = r.pop("_thread_state", None)
+                if ts is not None:
+                    postgres_store.upsert_thread_state(pg_conn, *ts)
             published_total += len(deduped)
             error_total += sum(1 for r in deduped if "error" in r)
             pending = []
