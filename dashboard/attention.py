@@ -27,24 +27,33 @@ class AttentionItem:
 
 
 def _math_check_items(ctx) -> list[AttentionItem]:
-    failed = ctx.f_po[ctx.f_po["math_check_failed"]]
-    if failed.empty:
+    # Line-level flag (line_items.math_mismatch) — the PO header flag isn't populated
+    # in Postgres. Count distinct in-scope POs with at least one flagged line.
+    ai = ctx.all_items
+    pos = ai.loc[
+        ai["po_id"].isin(ctx.f_po["id"]) & ai["math_mismatch"].notna()
+        & (~ai["is_removed"].fillna(False)), "po_id"
+    ].nunique()
+    if not pos:
         return []
     return [AttentionItem(
         severity="critical", category="math_check",
-        title=f"{len(failed)} order(s) failed the math check",
-        magnitude=len(failed), page="data_quality", count=len(failed),
+        title=f"{pos} order(s) have a line that fails the math check",
+        magnitude=pos, page="data_quality", count=int(pos),
     )]
 
 
 def _extraction_error_items(ctx) -> list[AttentionItem]:
+    # A source classified "not a purchase order" is the extractor working correctly —
+    # only genuine failures (parse errors, API errors, timeouts) are attention-worthy.
     errored = ctx.po_df[ctx.po_df["error"].notna()]
-    if errored.empty:
+    real = errored[errored["error"] != "not a purchase order"]
+    if real.empty:
         return []
     return [AttentionItem(
         severity="critical", category="extraction_error",
-        title=f"{len(errored)} source(s) failed extraction or weren't a purchase order",
-        magnitude=len(errored), page="data_quality", count=len(errored),
+        title=f"{len(real)} source(s) failed extraction",
+        magnitude=len(real), page="data_quality", count=len(real),
     )]
 
 

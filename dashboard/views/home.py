@@ -167,12 +167,24 @@ def render(ctx) -> None:
                     with ic3:
                         st.page_link(target_page, label="Review →")
 
-    needs_review = int(f_po["math_check_failed"].sum())
-    extraction_errors = int(po_df["error"].notna().sum())
+    # Math check reads the line-level flag (line_items.math_mismatch), which is
+    # populated — the PO header flag is not, in Postgres. "not a purchase order" is a
+    # correct classification, not an extraction failure.
+    _ai = ctx.all_items
+    needs_review = int(
+        _ai.loc[
+            _ai["po_id"].isin(f_po["id"]) & _ai["math_mismatch"].notna()
+            & (~_ai["is_removed"].fillna(False)), "po_id"
+        ].nunique()
+    )
+    _errored = po_df[po_df["error"].notna()]
+    extraction_errors = int((_errored["error"] != "not a purchase order").sum())
+    not_po = int((_errored["error"] == "not a purchase order").sum())
     with section_card("PO extraction data quality", "Only covers the subset of orders with a formal PO document — not the metrics above."):
         kpi_strip([
             {"label": "Needs review (math check)", "value": f"{needs_review:,}"},
-            {"label": "Extraction errors", "value": f"{extraction_errors:,}"},
+            {"label": "Extraction failures", "value": f"{extraction_errors:,}",
+             "delta_help": f"+{not_po} classified 'not a PO'" if not_po else None},
         ], north_star=None)
         if needs_review or extraction_errors:
             st.caption("See the **Data Quality** page (under Fulfillment) for details on flagged orders.")
