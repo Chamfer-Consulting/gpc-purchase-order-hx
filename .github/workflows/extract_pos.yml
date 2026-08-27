@@ -35,7 +35,12 @@ concurrency:
 jobs:
   extract:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The daily incremental run finishes in minutes; this headroom is for a manual
+    # --full-backlog (thousands of threads, hours). run_cloud_extraction.py
+    # checkpoints its results every CHECKPOINT_EVERY threads, so even a run that
+    # hits this limit loses no paid extraction work and the next run resumes.
+    # GitHub's hard cap for a hosted-runner job is 360 minutes.
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 

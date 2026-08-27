@@ -67,6 +67,13 @@ logger = logging.getLogger("run_cloud_extraction")
 # into an order?" re-check.
 CLOUD_EXTRACTION_MODEL = "claude-sonnet-5"
 
+# Publish accumulated results this often (threads processed, not results), so a
+# job timeout / kill / out-of-credits pause mid-run doesn't discard paid
+# extraction work — a --full-backlog run over thousands of threads can easily
+# outlast a CI job's time limit, and everything since the last publish would be
+# lost and re-extracted (re-paid for) next run.
+CHECKPOINT_EVERY = 50
+
 MAX_SEARCH_RESULTS = 3000  # per label, per run — customer labels are general
 # correspondence (every email exchanged with that customer, not just POs), and
 # real per-label volume has been observed as high as ~2,470 for one customer.
@@ -465,6 +472,19 @@ def main():
             thread_ids.extend(new_thread_ids)
             print(f"🔎 {label}: {len(matches)} message(s) across {len(new_thread_ids)} new thread(s)")
 
+        # A --full-backlog run ignores the time cursor, so a re-run after a timeout
+        # would otherwise re-scan every thread from the top. Skip threads already
+        # fully handled under the current schema (a Gmail fetch each, no Claude call,
+        # but still minutes over thousands) so the backfill is resumable. A thread
+        # that gained messages since is caught by the daily incremental run's cursor.
+        if args.full_backlog:
+            pg_conn = _ensure_connection(pg_conn, database_url)
+            handled = postgres_store.handled_thread_ids(pg_conn)
+            before = len(thread_ids)
+            thread_ids = [t for t in thread_ids if t not in handled]
+            if before != len(thread_ids):
+                print(f"⏭️  Skipping {before - len(thread_ids)} thread(s) already processed — {len(thread_ids)} left")
+
         if args.limit:
             thread_ids = thread_ids[: args.limit]
 
@@ -481,10 +501,48 @@ def main():
         reference_prices = postgres_store.get_reference_prices(pg_conn)
         stop_event = threading.Event()
 
-        new_results = []
-        errors = 0
+        pending = []          # results extracted since the last publish
+        published_total = 0
+        error_total = 0
+        all_bad_dates = []
         skipped = 0
-        for thread_id in tqdm(thread_ids, unit="thread", ncols=80):
+
+        def _flush() -> None:
+            """Annotate + publish everything accumulated in `pending` (against the
+            current full dataset), then clear it. Called every CHECKPOINT_EVERY
+            threads and once at the end, so a mid-run kill loses at most one
+            checkpoint's worth of paid extraction rather than the whole run."""
+            nonlocal pending, published_total, error_total, pg_conn
+            if not pending:
+                return
+            # Dedupe by (source_file, file_hash) — the same attachment can show up on
+            # two threads; two such rows crash the batch publish's ON CONFLICT.
+            deduped, seen_keys = [], set()
+            for r in pending:
+                key = (r.get("_source_file"), r.get("_file_hash"))
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    deduped.append(r)
+
+            pg_conn = _ensure_connection(pg_conn, database_url)
+            combined = postgres_store.get_full_dataset(pg_conn) + deduped
+            combined.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
+            annotate_revisions(combined)
+            # annotate_revisions needs the full history in memory (a new result can
+            # be a revision of an old PO), but only PO-number groups a new result
+            # touched can have *changed* annotations — publish just those; every
+            # other group's DELETE+reinsert would be pure churn.
+            def _po_key(r):
+                return r.get("po_number") or r.get("_source_file")
+
+            touched = {_po_key(r) for r in deduped}
+            to_publish = [r for r in combined if _po_key(r) in touched]
+            all_bad_dates.extend(_publish_to_postgres(to_publish, database_url))
+            published_total += len(deduped)
+            error_total += sum(1 for r in deduped if "error" in r)
+            pending = []
+
+        for i, thread_id in enumerate(tqdm(thread_ids, unit="thread", ncols=80), start=1):
             if stop_event.is_set():
                 break
             try:
@@ -503,91 +561,38 @@ def main():
                 logger.error(f"{thread_id}: unexpected error — {e}")
                 skipped += 1
                 continue
-            for r in results:
-                if "error" in r:
-                    errors += 1
-                new_results.append(r)
+            pending.extend(results)
+            if i % CHECKPOINT_EVERY == 0 and pending:
+                _flush()
+                print(f"  💾 checkpoint — {published_total} result(s) published so far")
 
-        # Defensive: dedupe by (source_file, file_hash) across the whole run, not
-        # just within one thread's own attachment loop — the identical attachment
-        # could in principle appear on two separate threads (e.g. a customer
-        # resending the same file in a new conversation). Two rows sharing a
-        # (source_file, file_hash) crash the batch publish's single ON CONFLICT
-        # statement (confirmed live), and since a hash match means identical
-        # content, dropping the extra copy loses nothing.
-        deduped, seen_keys = [], set()
-        for r in new_results:
-            key = (r.get("_source_file"), r.get("_file_hash"))
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            deduped.append(r)
-        if len(deduped) < len(new_results):
-            print(f"ℹ️  Dropped {len(new_results) - len(deduped)} duplicate (source_file, file_hash) result(s) this run")
-        new_results = deduped
-        errors = sum(1 for r in new_results if "error" in r)  # recomputed post-dedup —
-        # the running count above included the dropped duplicate(s) too
+        _flush()  # the tail
 
-        # A skipped thread's messages are necessarily before sync_started_at (it
-        # was already found by this run's "after: <old cursor>" search) — advancing
-        # the cursor to sync_started_at anyway would permanently drop it from every
-        # future incremental search. Only advance when nothing was skipped; a
-        # persistently-failing thread just means the same (cheap-to-re-search)
-        # window gets rescanned next run too, which is safe, not silent data loss.
+        for source_file, field, value in all_bad_dates:
+            print(f"⚠️  {source_file}: {field} = '{value}' (invalid date nulled out)")
+
+        # A skipped thread's messages are necessarily before sync_started_at (it was
+        # already found by this run's search) — advancing the cursor anyway would
+        # permanently drop it from every future incremental search. Only advance when
+        # nothing was skipped; a persistently-failing thread just means the same
+        # (cheap-to-re-search) window gets rescanned next run, which is safe.
         cursor_safe_to_advance = skipped == 0
         if skipped:
             print(f"⚠️  {skipped} thread(s) failed before extraction (see log) — cursor NOT advanced, will retry next run")
 
         if stop_event.is_set():
-            print(f"\n⏸️  Paused: ran out of API credits after {len(new_results)} result(s) this run.")
+            print(f"\n⏸️  Paused: ran out of API credits — {published_total} result(s) published this run before the pause.")
             print("   Add credits and rerun the same command — already-processed messages are skipped automatically.")
             sys.exit(3)
 
-        if not new_results:
-            if cursor_safe_to_advance:
-                pg_conn = _ensure_connection(pg_conn, database_url)
-                gmail_client.mark_synced(pg_conn, sync_started_at)
-                print("No new extractable content found — cursor updated, exiting.")
-            else:
-                print("No successful extractions this run — cursor left as-is, exiting.")
-            return
-
-        print(f"📈 {len(new_results) - errors} extracted successfully, {errors} error(s)")
-
-        print("🔄 Re-annotating revisions across the full dataset...")
-        pg_conn = _ensure_connection(pg_conn, database_url)
-        combined = postgres_store.get_full_dataset(pg_conn) + new_results
-        combined.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
-        annotate_revisions(combined)
-
-        # annotate_revisions needs the whole history in memory (a new result can be a
-        # revision of an old PO), but only PO-number groups a new result actually
-        # touched can have *changed* annotations — every other group's inputs
-        # (members + sort order) are identical to last run, so DELETE+reinserting its
-        # rows is pure write churn. Publish just the touched groups on an incremental
-        # run; --full-backlog still re-publishes everything (its job is a full resync).
-        if args.full_backlog:
-            to_publish = combined
-        else:
-            def _po_key(r):
-                return r.get("po_number") or r.get("_source_file")
-
-            touched = {_po_key(r) for r in new_results}
-            to_publish = [r for r in combined if _po_key(r) in touched]
-
-        print(f"💾 Publishing {len(to_publish)} of {len(combined)} row(s) to Postgres...")
-        bad_dates = _publish_to_postgres(to_publish, database_url)
-        if bad_dates:
-            print(f"⚠️  {len(bad_dates)} invalid date(s) were nulled out:")
-            for source_file, field, value in bad_dates:
-                print(f"   {source_file}: {field} = '{value}'")
+        print(f"📈 {published_total - error_total} extracted successfully, {error_total} error(s); {published_total} published.")
 
         if cursor_safe_to_advance:
             pg_conn = _ensure_connection(pg_conn, database_url)
             gmail_client.mark_synced(pg_conn, sync_started_at)
-            print(f"✅ Done — {len(new_results)} new/updated result(s) published.")
+            print("✅ Done — cursor advanced.")
         else:
-            print(f"✅ Done — {len(new_results)} new/updated result(s) published, but cursor left as-is ({skipped} thread(s) to retry next run).")
+            print(f"✅ Done — cursor left as-is ({skipped} thread(s) to retry next run).")
     finally:
         pg_conn.close()
 
