@@ -160,6 +160,11 @@ def _connect(database_url: str):
         keepalives_idle=30,
         keepalives_interval=10,
         keepalives_count=3,
+        # Bounds how long the socket may wait on unacknowledged data mid-query
+        # before erroring — keepalives only cover an *idle* socket, this covers an
+        # active one. Without it a mid-query drop blocks on the OS default (~5 min,
+        # observed live) instead of failing fast enough for a retry to matter.
+        tcp_user_timeout=45000,
     )
 
 
@@ -632,7 +637,7 @@ def main():
             is only cleared on success, so if every attempt fails the results stay
             queued for the next flush (and the exception still propagates, failing the
             run loudly rather than silently dropping paid work)."""
-            nonlocal pending, published_total, error_total, pg_conn
+            nonlocal pending, published_total, error_total
             if not pending:
                 return
             # Dedupe by (source_file, file_hash) — the same attachment can show up on
@@ -652,57 +657,64 @@ def main():
             def _po_key(r):
                 return r.get("po_number") or r.get("_source_file")
 
-            # The held connection has sat idle for the whole checkpoint window (~15
-            # min of Gmail/Claude calls) and Neon's serverless compute will have
-            # dropped it — a SELECT 1 probe can still race (alive at probe, gone by
-            # the time the big get_full_dataset() query runs). Reconnect up front so
-            # attempt 1 isn't a guaranteed "SSL connection has been closed
-            # unexpectedly" every checkpoint.
-            try:
-                pg_conn.close()
-            except Exception:
-                pass
-            pg_conn = _connect(database_url)
+            batch_po_numbers = [r.get("po_number") for r in deduped]
+            batch_source_files = [r.get("_source_file") for r in deduped]
 
             for attempt in range(1, FLUSH_MAX_ATTEMPTS + 1):
+                conn = None
                 try:
-                    pg_conn = _ensure_connection(pg_conn, database_url)
-                    # Drop any stored row a fresh result supersedes: a prior attempt
-                    # that committed server-side but died before the client saw the
-                    # ack (an SSL drop during/after COMMIT) leaves those rows in
-                    # get_full_dataset() AND still in `deduped` — combining both gives
-                    # _publish_to_postgres two rows with the same (source_file,
-                    # file_hash), which its ON CONFLICT ... DO UPDATE cannot touch
-                    # twice in one execute_values batch. The fresh copy is
-                    # authoritative; keep only it.
+                    # Every DB touch in this flush uses a freshly-opened, immediately-
+                    # used, promptly-closed connection — the pattern _publish_to_postgres
+                    # uses and the one that survives the GitHub Actions -> Neon link.
+                    # A connection held across the checkpoint window (or even across the
+                    # CPU-bound annotate_revisions below) reliably dies with "SSL
+                    # connection has been closed unexpectedly".
+                    conn = _connect(database_url)
+                    # Only the revision history for POs in THIS batch — not the whole
+                    # table. Drop any stored row a fresh result supersedes: a prior
+                    # attempt that committed server-side but died before the client saw
+                    # the ack leaves those rows here AND still in `deduped`; combining
+                    # both would hand _publish_to_postgres two rows with the same
+                    # (source_file, file_hash), which ON CONFLICT ... DO UPDATE cannot
+                    # touch twice in one batch. The fresh copy is authoritative.
                     existing = [
-                        r for r in postgres_store.get_full_dataset(pg_conn)
+                        r for r in postgres_store.get_related_dataset(
+                            conn, batch_po_numbers, batch_source_files
+                        )
                         if (r.get("_source_file"), r.get("_file_hash")) not in fresh_keys
                     ]
+                    conn.close()
+                    conn = None
                     # annotate_revisions() mutates line_items in place and is NOT
                     # idempotent (re-running over its own output re-injects "Removed"
                     # ghost rows). Work on a deep copy each attempt so the originals in
-                    # `deduped` stay pristine for a retry and for the post-publish
-                    # thread-state bookkeeping below.
+                    # `deduped` stay pristine for a retry and for the thread-state
+                    # bookkeeping below.
                     batch = copy.deepcopy(deduped)
                     combined = existing + batch
                     combined.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
                     annotate_revisions(combined)
-                    # annotate_revisions needs the full history in memory (a new result
-                    # can be a revision of an old PO), but only PO-number groups a new
-                    # result touched can have *changed* annotations — publish just
-                    # those; every other group's DELETE+reinsert would be pure churn.
+                    # Publish only the PO groups this batch touched; every other group's
+                    # DELETE+reinsert would be pure churn.
                     touched = {_po_key(r) for r in batch}
                     to_publish = [r for r in combined if _po_key(r) in touched]
                     flush_bad_dates = _publish_to_postgres(to_publish, database_url)
                     # Now that these are persisted, record the deferred thread-state
                     # rows for the successful text-thread extractions. upsert is
                     # idempotent, so re-running these on a retry is harmless.
+                    conn = _connect(database_url)
                     for ts in thread_states:
-                        postgres_store.upsert_thread_state(pg_conn, *ts)
+                        postgres_store.upsert_thread_state(conn, *ts)
+                    conn.close()
+                    conn = None
                     all_bad_dates.extend(flush_bad_dates)  # only on the success path
                     break
                 except Exception as e:
+                    if conn is not None:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
                     if attempt == FLUSH_MAX_ATTEMPTS:
                         logger.error(f"checkpoint publish failed after {attempt} attempt(s) — {e}")
                         raise

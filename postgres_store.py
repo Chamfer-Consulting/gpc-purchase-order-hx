@@ -116,6 +116,58 @@ def get_full_dataset(conn) -> list:
     return [_row_to_result(h, items_by_po.get(h["id"], [])) for h in headers]
 
 
+def get_related_dataset(conn, po_numbers, source_files) -> list:
+    """Like get_full_dataset() but only the purchase_orders rows that could be a
+    prior version of something in the current flush batch — those sharing a
+    po_number or a source_file with it. annotate_revisions() groups by
+    `po_number or _source_file`, so this is exactly the history it needs to label
+    "Rev N" correctly; every other group in the table is untouched by this flush
+    and pulling it would be pure churn.
+
+    Matters operationally, not just for speed: get_full_dataset() streams the whole
+    purchase_orders + line_items tables, and a large streamed result over the
+    GitHub Actions -> Neon link is what was dying mid-transfer every checkpoint
+    ("SSL connection has been closed unexpectedly"). This query returns a handful
+    of rows.
+
+    Ghost 'Removed' line items (is_removed = TRUE) are excluded, same as
+    get_full_dataset()."""
+    po_numbers = sorted({x for x in po_numbers if x})
+    source_files = sorted({x for x in source_files if x})
+    clauses, params = [], {}
+    if po_numbers:
+        clauses.append("po_number = ANY(%(pos)s)")
+        params["pos"] = po_numbers
+    if source_files:
+        clauses.append("source_file = ANY(%(srcs)s)")
+        params["srcs"] = source_files
+    if not clauses:
+        return []
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"SELECT id, {', '.join(_HEADER_COLUMNS)} FROM purchase_orders "
+            f"WHERE {' OR '.join(clauses)} ORDER BY id",
+            params,
+        )
+        headers = cur.fetchall()
+        if not headers:
+            return []
+
+        ids = [h["id"] for h in headers]
+        cur.execute(
+            f"SELECT po_id, {', '.join(_LINE_ITEM_COLUMNS)} FROM line_items "
+            f"WHERE is_removed = FALSE AND po_id = ANY(%s)",
+            (ids,),
+        )
+        line_rows = cur.fetchall()
+
+    items_by_po = defaultdict(list)
+    for row in line_rows:
+        items_by_po[row["po_id"]].append(row)
+
+    return [_row_to_result(h, items_by_po.get(h["id"], [])) for h in headers]
+
+
 NOT_A_PO_ERROR = "not a purchase order"
 
 
