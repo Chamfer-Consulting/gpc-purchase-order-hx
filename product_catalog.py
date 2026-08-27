@@ -16,7 +16,7 @@ PRODUCT_PATTERNS = [
     (re.compile(r"rainbow|rbw", re.I),           "Rainbow Mix"),
     (re.compile(r"arugula|rugula",    re.I),      "Arugula"),
     (re.compile(r"cilantro",          re.I),      "Cilantro"),
-    (re.compile(r"bull.*blood|bulls.*blood|bull.?s", re.I), "Bulls Blood Beets"),
+    (re.compile(r"bull.*blood|bull'?s?\s*blood", re.I), "Bulls Blood Beets"),
     (re.compile(r"basil|genovese",    re.I),      "Genovese Basil"),
     (re.compile(r"broccoli",          re.I),      "Broccoli"),
 ]

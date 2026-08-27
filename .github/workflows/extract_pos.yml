@@ -24,6 +24,14 @@ on:
         type: string
         default: ""
 
+# Never let two runs overlap: a slow scheduled run + a manual dispatch (or the next
+# day's schedule) would both read the same Gmail cursor, re-process overlapping
+# threads, and pay Claude twice for them. Queue the second run rather than killing
+# the first mid-flight (which could strand a thread / leave partial state).
+concurrency:
+  group: extract-pos
+  cancel-in-progress: false
+
 jobs:
   extract:
     runs-on: ubuntu-latest
