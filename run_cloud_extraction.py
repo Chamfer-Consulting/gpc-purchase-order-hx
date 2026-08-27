@@ -113,15 +113,31 @@ def configure_logging(log_path: str) -> None:
     )
 
 
+def _connect(database_url: str):
+    """psycopg2.connect with a bounded connect timeout and TCP keepalives. Keepalives
+    don't stop Neon's serverless compute from autosuspending an idle connection, but
+    they make the kernel notice the dead peer in ~30-60s — without them a query (or
+    even a `SELECT 1` probe) on a silently-dropped socket blocks on the OS TCP
+    timeout, which is minutes. Observed live: a ~5-minute stall before a checkpoint
+    flush finally raised "SSL connection has been closed unexpectedly"."""
+    return psycopg2.connect(
+        database_url,
+        connect_timeout=30,
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=3,
+    )
+
+
 def _ensure_connection(pg_conn, database_url: str):
     """Returns a working Postgres connection — the same one if it's still alive, or
     a fresh one if it's been dropped. A single run can span many minutes of mostly
     Gmail/Claude API calls with the DB connection sitting idle in between; confirmed
     live that a connection held that way can die mid-run ("SSL connection has been
     closed unexpectedly") — most likely Neon's serverless compute autosuspending
-    after an idle gap, which no client-side keepalive setting prevents. Called
-    before each significant DB touch point rather than once, so a mid-run drop
-    costs at most one cheap reconnect, not the whole run."""
+    after an idle gap. Called before each significant DB touch point rather than
+    once, so a mid-run drop costs at most one cheap reconnect, not the whole run."""
     try:
         with pg_conn.cursor() as cur:
             cur.execute("SELECT 1")
@@ -131,7 +147,7 @@ def _ensure_connection(pg_conn, database_url: str):
             pg_conn.close()
         except Exception:
             pass
-        return psycopg2.connect(database_url)
+        return _connect(database_url)
 
 
 def _require_env(name: str) -> str:
@@ -450,7 +466,7 @@ def main():
     gmail_client_secret = _require_env("GMAIL_CLIENT_SECRET")
     labels = _parse_labels(_require_env("GMAIL_LABELS"))
 
-    pg_conn = psycopg2.connect(database_url)
+    pg_conn = _connect(database_url)
     try:
         # The thread loop reads gmail_thread_state / writes gmail_thread_meta before
         # the publish step (which applies the full schema.sql) runs — ensure just
@@ -593,6 +609,18 @@ def main():
 
             def _po_key(r):
                 return r.get("po_number") or r.get("_source_file")
+
+            # The held connection has sat idle for the whole checkpoint window (~15
+            # min of Gmail/Claude calls) and Neon's serverless compute will have
+            # dropped it — a SELECT 1 probe can still race (alive at probe, gone by
+            # the time the big get_full_dataset() query runs). Reconnect up front so
+            # attempt 1 isn't a guaranteed "SSL connection has been closed
+            # unexpectedly" every checkpoint.
+            try:
+                pg_conn.close()
+            except Exception:
+                pass
+            pg_conn = _connect(database_url)
 
             for attempt in range(1, FLUSH_MAX_ATTEMPTS + 1):
                 try:
