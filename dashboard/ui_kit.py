@@ -418,14 +418,18 @@ def _column_config_for(cols) -> dict:
 
 
 def data_grid(df, columns: list[str] | None = None, *, key: str,
-              download_name: str | None = None, height=None) -> None:
+              download_name: str | None = None, height=None, extra_config: dict | None = None) -> None:
     """A dataframe rendered the standard way: columns picked (and ordered) via
     `columns`, relabelled through labels.COLUMN_LABELS, auto-formatted ($ / % / qty
     / date) via labels.COLUMN_KIND, then a bottom-right "Export this table (CSV)"
-    button. Replaces every per-view rename map + ad-hoc download button."""
+    button. Replaces every per-view rename map + ad-hoc download button.
+    `extra_config` (keyed by the *display* label) is merged over the auto config for
+    columns COLUMN_KIND doesn't cover (e.g. a view's own computed column names)."""
     show = df if columns is None else df[[c for c in columns if c in df.columns]]
     cfg = _column_config_for(show.columns)
     show = show.rename(columns={c: col_label(c) for c in show.columns})
+    if extra_config:
+        cfg.update(extra_config)
     data_table(show, column_config=cfg, height=height)
     if download_name:
         st.download_button(

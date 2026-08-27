@@ -192,8 +192,8 @@ def compare_periods_by_group(
 ) -> pd.DataFrame | None:
     """Like month_over_month_movers, but for two arbitrary custom date ranges instead
     of the two most recent calendar months — range_a/range_b are (start_ts, end_ts)
-    tuples. Returns a DataFrame with columns [group_col, "A", "B", "delta"], the
-    top_n rows by |delta|, or None if there's no data in either range."""
+    tuples. Returns a DataFrame with columns [group_col, "period_a", "period_b",
+    "delta"], the top_n rows by |delta|, or None if there's no data in either range."""
     a_start, a_end = range_a
     b_start, b_end = range_b
     d = df.dropna(subset=[date_col, group_col])
@@ -201,8 +201,8 @@ def compare_periods_by_group(
     b = d[(d[date_col] >= b_start) & (d[date_col] <= b_end)].groupby(group_col)[value_col].sum()
     if a.empty and b.empty:
         return None
-    merged = pd.DataFrame({"A": a, "B": b}).fillna(0.0)
-    merged["delta"] = merged["B"] - merged["A"]
+    merged = pd.DataFrame({"period_a": a, "period_b": b}).fillna(0.0)
+    merged["delta"] = merged["period_b"] - merged["period_a"]
     merged = merged.reindex(merged["delta"].abs().sort_values(ascending=False).index).head(top_n)
     return merged.reset_index().rename(columns={"index": group_col})
 
@@ -242,6 +242,10 @@ def yoy_annual_chart(df: pd.DataFrame, date_col: str, agg_col: str, agg_fn: str,
         return None
 
     year_colors = color_map_for(grouped["year"].unique().tolist(), palette)
+    # color_map_for runs out of palette after 8 categories; with >8 years of history
+    # the current year would fall through to the muted grey, defeating the whole
+    # "this year stands out" design. Pin it to the primary accent.
+    year_colors[current_year] = palette["categorical"][0]
     fig = px.line(
         grouped, x="moy", y="value", color="year", markers=True,
         color_discrete_map=year_colors, labels={"moy": "", "value": y_label, "year": "Year"},
@@ -739,7 +743,9 @@ def prepare(po_df: pd.DataFrame, items_df: pd.DataFrame):
 
     valid_po = po[po["error"].isna()].copy()
     latest_po = (
-        valid_po.sort_values(["po_key", "effective_date", "id"])
+        # na_position="first" so a version with a real effective_date always beats an
+        # undated one for "latest" (a mix of dated/undated versions is possible).
+        valid_po.sort_values(["po_key", "effective_date", "id"], na_position="first")
         .groupby("po_key", as_index=False)
         .tail(1)
         .copy()

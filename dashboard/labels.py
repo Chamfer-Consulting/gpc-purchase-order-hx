@@ -93,6 +93,8 @@ COLUMN_LABELS: dict[str, str] = {
     "curr": "Current",
     "delta": "Change",
     "Change": "Change",
+    "period_a": "Period A",
+    "period_b": "Period B",
     # reference prices
     "price": "Reference price",
     "source": "Source",
@@ -116,6 +118,7 @@ COLUMN_KIND: dict[str, str] = {
     "line_items_sum": "currency", "difference": "currency",
     "revenue": "currency", "avg_order_value": "currency", "avg_invoice_value": "currency",
     "prev": "currency", "curr": "currency", "delta": "currency",
+    "period_a": "currency", "period_b": "currency",
     "po_total": "currency",
     "fulfillment_pct": "percent", "match_score": "percent",
     "quantity": "qty", "requested_qty": "qty", "delivered_qty": "qty",

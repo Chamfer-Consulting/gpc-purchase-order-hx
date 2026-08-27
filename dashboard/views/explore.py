@@ -259,6 +259,6 @@ def render(ctx) -> None:
         if movers is not None and not movers.empty:
             st.caption("Customers with the biggest revenue change from A to B:")
             data_grid(
-                movers.rename(columns={"A": "Period A $", "B": "Period B $", "delta": "Change $"}),
+                movers, ["customer_name", "period_a", "period_b", "delta"],
                 key="xp_movers", download_name="period_compare.csv",
             )
