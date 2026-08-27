@@ -42,8 +42,10 @@ import hashlib
 import logging
 import os
 import re
+import signal
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 
 import anthropic
@@ -71,8 +73,16 @@ CLOUD_EXTRACTION_MODEL = "claude-sonnet-5"
 # job timeout / kill / out-of-credits pause mid-run doesn't discard paid
 # extraction work — a --full-backlog run over thousands of threads can easily
 # outlast a CI job's time limit, and everything since the last publish would be
-# lost and re-extracted (re-paid for) next run.
-CHECKPOINT_EVERY = 50
+# lost and re-extracted (re-paid for) next run. Each flush re-reads the whole
+# dataset and re-runs annotate_revisions over it, so this is a balance: smaller =
+# less re-extraction risk on a kill, larger = less repeated full-dataset churn.
+CHECKPOINT_EVERY = 150
+
+# _flush()'s publish step (full-dataset read + annotate + batched upsert) can hit a
+# transient DB error mid-run; retry a few times before giving up so one blip
+# doesn't abort a multi-hour backlog and strand the in-flight checkpoint.
+FLUSH_MAX_ATTEMPTS = 3
+FLUSH_RETRY_SLEEP_SECONDS = 5
 
 MAX_SEARCH_RESULTS = 3000  # per label, per run — customer labels are general
 # correspondence (every email exchanged with that customer, not just POs), and
@@ -273,6 +283,7 @@ def _process_thread(
     pg_conn,
     stop_event: threading.Event,
     mailbox_email: str,
+    extracted_keys: set,
 ) -> list[dict]:
     """Returns extraction result dict(s) for one Gmail thread, routed by whether
     any message in it carries a PDF attachment:
@@ -285,7 +296,10 @@ def _process_thread(
       most customers negotiate orders this way with no PO document at all (see the
       plan this was built from).
     Already-extracted content is skipped without calling Claude — see
-    postgres_store.is_known()."""
+    postgres_store.is_known() for content already in Postgres, plus `extracted_keys`
+    (a run-scoped set of (source_file, file_hash) already handled this run) for
+    content extracted-but-not-yet-published, e.g. the same attachment riding on two
+    different threads within one checkpoint window."""
     thread = gmail_client.get_thread(access_token, thread_id)
     messages = thread.get("messages") or []
     if not messages:
@@ -334,6 +348,9 @@ def _process_thread(
             if postgres_store.is_known(pg_conn, source_label, file_hash):
                 logger.info(f"{source_label}: unchanged since last run — skipping")
                 continue
+            if (source_label, file_hash) in extracted_keys:
+                logger.info(f"{source_label}: already extracted earlier this run — skipping")
+                continue
 
             text = extract_pdf_text(pdf_bytes)
             pdf_b64 = None if text else pdf_to_base64(pdf_bytes)
@@ -346,6 +363,7 @@ def _process_thread(
                 result["source_received_at"] = _received_at(m)
                 result["gmail_thread_id"] = thread_id
                 results.append(result)
+                extracted_keys.add((source_label, file_hash))
         return results
 
     combined_text = _build_thread_text(messages)
@@ -362,8 +380,10 @@ def _process_thread(
     # lost by skipping. For was_po=True the authoritative signal is is_known() (a
     # published purchase_orders row); an unchanged hash with no published PO means a
     # prior run extracted it but died before publishing, so it must be re-processed.
-    if postgres_store.is_known(pg_conn, source_label, file_hash) or (
-        state is not None and not state["was_po"] and state["last_file_hash"] == file_hash
+    if (
+        postgres_store.is_known(pg_conn, source_label, file_hash)
+        or (source_label, file_hash) in extracted_keys
+        or (state is not None and not state["was_po"] and state["last_file_hash"] == file_hash)
     ):
         logger.info(f"{source_label}: unchanged since last run — skipping")
         return []
@@ -392,6 +412,7 @@ def _process_thread(
         result["source_received_at"] = _thread_received_at(messages)
         result["gmail_thread_id"] = thread_id
         results.append(result)
+        extracted_keys.add((source_label, file_hash))
         if "error" not in result:
             # A successful extraction's thread-state write is DEFERRED to after the
             # publish (carried on the result as _thread_state, applied by _flush) —
@@ -465,6 +486,10 @@ def main():
                 continue
             extra_query = f"after:{since_epoch}" if since_epoch is not None else None
             matches = gmail_client.search_messages(access_token, label_id, extra_query, max_results=MAX_SEARCH_RESULTS)
+            if len(matches) >= MAX_SEARCH_RESULTS:
+                print(f"⚠️  {label}: hit the {MAX_SEARCH_RESULTS}-message search cap — "
+                      "older threads under this label may be missing from this run "
+                      "(raise MAX_SEARCH_RESULTS or narrow with the incremental cursor)")
             # Dedupe by thread, not message — multiple matched messages from the
             # same thread collapse into one unit of work (_process_thread fetches
             # the whole thread anyway). Must update `seen` as we go: a single
@@ -509,18 +534,42 @@ def main():
         client = anthropic.Anthropic(api_key=anthropic_api_key)
         reference_prices = postgres_store.get_reference_prices(pg_conn)
         stop_event = threading.Event()
+        term_event = threading.Event()  # set by SIGTERM only — distinguishes a job
+        # timeout / cancellation from the out-of-credits pause (both stop the loop).
+
+        # A GitHub Actions job timeout (or a manual cancel) sends SIGTERM, whose
+        # default handler exits immediately — skipping the tail _flush() and losing
+        # the current un-checkpointed batch. Instead, flip the same stop flags the
+        # out-of-credits path uses: the loop breaks at the next iteration boundary
+        # (~one thread), the tail _flush() still runs, then we exit non-zero.
+        def _on_sigterm(signum, frame):
+            logger.warning("SIGTERM received (job timeout / cancellation) — will flush and exit after the current thread")
+            term_event.set()
+            stop_event.set()
+
+        if hasattr(signal, "SIGTERM"):
+            signal.signal(signal.SIGTERM, _on_sigterm)
 
         pending = []          # results extracted since the last publish
         published_total = 0
         error_total = 0
         all_bad_dates = []
         skipped = 0
+        # (source_file, file_hash) already extracted this run — guards against paying
+        # twice when the same attachment rides on two different threads in one
+        # checkpoint window (neither is_known yet, since neither is published).
+        extracted_keys = set()
 
         def _flush() -> None:
             """Annotate + publish everything accumulated in `pending` (against the
             current full dataset), then clear it. Called every CHECKPOINT_EVERY
             threads and once at the end, so a mid-run kill loses at most one
-            checkpoint's worth of paid extraction rather than the whole run."""
+            checkpoint's worth of paid extraction rather than the whole run.
+
+            A transient DB failure here is retried FLUSH_MAX_ATTEMPTS times; `pending`
+            is only cleared on success, so if every attempt fails the results stay
+            queued for the next flush (and the exception still propagates, failing the
+            run loudly rather than silently dropping paid work)."""
             nonlocal pending, published_total, error_total, pg_conn
             if not pending:
                 return
@@ -533,38 +582,54 @@ def main():
                     seen_keys.add(key)
                     deduped.append(r)
 
-            pg_conn = _ensure_connection(pg_conn, database_url)
-            combined = postgres_store.get_full_dataset(pg_conn) + deduped
-            combined.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
-            annotate_revisions(combined)
-            # annotate_revisions needs the full history in memory (a new result can
-            # be a revision of an old PO), but only PO-number groups a new result
-            # touched can have *changed* annotations — publish just those; every
-            # other group's DELETE+reinsert would be pure churn.
             def _po_key(r):
                 return r.get("po_number") or r.get("_source_file")
 
-            touched = {_po_key(r) for r in deduped}
-            to_publish = [r for r in combined if _po_key(r) in touched]
-            all_bad_dates.extend(_publish_to_postgres(to_publish, database_url))
-            # Now that these are persisted, record the deferred thread-state rows for
-            # the successful text-thread extractions (see _process_thread).
-            for r in deduped:
-                ts = r.pop("_thread_state", None)
-                if ts is not None:
-                    postgres_store.upsert_thread_state(pg_conn, *ts)
+            for attempt in range(1, FLUSH_MAX_ATTEMPTS + 1):
+                try:
+                    pg_conn = _ensure_connection(pg_conn, database_url)
+                    combined = postgres_store.get_full_dataset(pg_conn) + deduped
+                    combined.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
+                    annotate_revisions(combined)
+                    # annotate_revisions needs the full history in memory (a new result
+                    # can be a revision of an old PO), but only PO-number groups a new
+                    # result touched can have *changed* annotations — publish just
+                    # those; every other group's DELETE+reinsert would be pure churn.
+                    touched = {_po_key(r) for r in deduped}
+                    to_publish = [r for r in combined if _po_key(r) in touched]
+                    all_bad_dates.extend(_publish_to_postgres(to_publish, database_url))
+                    # Now that these are persisted, record the deferred thread-state
+                    # rows for the successful text-thread extractions (see
+                    # _process_thread).
+                    for r in deduped:
+                        ts = r.pop("_thread_state", None)
+                        if ts is not None:
+                            postgres_store.upsert_thread_state(pg_conn, *ts)
+                    break
+                except Exception as e:
+                    if attempt == FLUSH_MAX_ATTEMPTS:
+                        logger.error(f"checkpoint publish failed after {attempt} attempt(s) — {e}")
+                        raise
+                    logger.warning(
+                        f"checkpoint publish failed (attempt {attempt}/{FLUSH_MAX_ATTEMPTS}) — {e}; retrying"
+                    )
+                    time.sleep(FLUSH_RETRY_SLEEP_SECONDS)
+
             published_total += len(deduped)
             error_total += sum(1 for r in deduped if "error" in r)
             pending = []
 
-        for i, thread_id in enumerate(tqdm(thread_ids, unit="thread", ncols=80), start=1):
+        # mininterval=30: on a non-TTY (the Actions log) tqdm can't rewrite a line
+        # with \r, so every update is its own line — throttle to ~one per 30s
+        # instead of one per thread.
+        for i, thread_id in enumerate(tqdm(thread_ids, unit="thread", ncols=80, mininterval=30), start=1):
             if stop_event.is_set():
                 break
             try:
                 pg_conn = _ensure_connection(pg_conn, database_url)
                 access_token = gmail_client.get_valid_access_token(pg_conn, gmail_client_id, gmail_client_secret)
                 results = _process_thread(
-                    client, access_token, thread_id, reference_prices, pg_conn, stop_event, mailbox_email
+                    client, access_token, thread_id, reference_prices, pg_conn, stop_event, mailbox_email, extracted_keys
                 )
             except Exception as e:
                 # Nothing stable to key a Postgres row on here (the failure may have
@@ -594,6 +659,14 @@ def main():
         cursor_safe_to_advance = skipped == 0
         if skipped:
             print(f"⚠️  {skipped} thread(s) failed before extraction (see log) — cursor NOT advanced, will retry next run")
+
+        if term_event.is_set():
+            # Cursor deliberately NOT advanced (we exit before mark_synced): the next
+            # run re-scans the same window and skips what this run already published.
+            print(f"\n⏹️  Stopped early on SIGTERM (job timeout / cancellation) — "
+                  f"{published_total} result(s) published this run before stopping.")
+            print("   Re-run the same command — already-processed threads are skipped automatically.")
+            sys.exit(1)
 
         if stop_event.is_set():
             print(f"\n⏸️  Paused: ran out of API credits — {published_total} result(s) published this run before the pause.")
