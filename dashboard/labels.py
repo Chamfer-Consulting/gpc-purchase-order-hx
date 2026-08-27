@@ -122,6 +122,8 @@ COLUMN_KIND: dict[str, str] = {
     "quantity_total": "qty",
     "orders": "int", "invoices": "int", "n_lines": "int", "gmail_message_count": "int",
     "revision_number": "int",
+    # Explore's computed pivot columns (named by the measure's display label)
+    "Revenue ($)": "currency", "Quantity": "qty", "Orders": "int", "Period": "date",
     "effective_date": "date", "po_date": "date", "sent_date": "date",
     "delivery_date": "date", "txn_date": "date", "ship_date": "date", "due_date": "date",
     "document_printed_at": "date", "source_received_at": "date", "edited_at": "date",

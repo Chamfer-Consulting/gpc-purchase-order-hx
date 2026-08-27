@@ -35,6 +35,7 @@ from ui_kit import (
 
 _GRAIN_FREQ = {"Day": "D", "Week": "W", "Month": "M", "Quarter": "Q", "Year": "Y"}
 _VIEW_KEYS = {"xp_measure": "measure", "xp_grain": "grain", "xp_dims": "dims", "xp_chart": "chart"}
+_TOP_N_SERIES = 12   # colour cap on the pivot chart; the rest roll into "Other"
 
 
 def _saved_views_bar() -> None:
@@ -136,6 +137,11 @@ def render(ctx) -> None:
             "The Overview page's **Invoices** KPI counts every invoice, including "
             "services-only and donation-only ones with no product line."
         )
+        if any(d in ("Product", "Size") for d in dims):
+            st.caption(
+                "Broken down by product/size, an invoice is counted once in **every** cell it "
+                "has a line in — so the table's order counts sum to more than the Total orders above."
+            )
 
     # ── chart ────────────────────────────────────────────────────────────────
     with section_card(f"{measure} by {grain.lower()}"):
@@ -143,10 +149,28 @@ def render(ctx) -> None:
             st.caption("Pick a time grain other than **All time** to chart this over time — see the table below for the flat totals.")
         else:
             color_dim = _DIM_COL[dims[0]] if dims else None
-            plot = detail.groupby(
+            n_other = 0
+            detail_plot = detail
+            if color_dim is not None:
+                # Cap the number of coloured series so a break-down by Customer (~70)
+                # or Product isn't an unreadable wall. Bucket at the row level (not
+                # after aggregating) so an "Orders" (nunique) measure stays correct.
+                by_series = (
+                    detail.groupby(color_dim)[val_col].nunique() if agg == "nunique"
+                    else detail.groupby(color_dim)[val_col].agg(agg)
+                )
+                keep = by_series.abs().nlargest(_TOP_N_SERIES).index
+                n_other = detail[color_dim].dropna().nunique() - len(keep)
+                if n_other > 0:
+                    detail_plot = detail.assign(
+                        **{color_dim: detail[color_dim].where(detail[color_dim].isin(keep), "Other")}
+                    )
+            plot = detail_plot.groupby(
                 ["Period"] + ([color_dim] if color_dim else []), as_index=False,
             ).agg(**{val_label: (val_col, agg)})
             colors = color_map_for(plot[color_dim].dropna().unique().tolist(), palette) if color_dim else None
+            if colors is not None:
+                colors["Other"] = palette["ink_muted"]
             common = dict(x="Period", y=val_label, labels={"Period": "", val_label: val_label})
             if chart_kind == "Line":
                 fig = px.line(plot, markers=True, color=color_dim, color_discrete_map=colors, **common)
@@ -162,6 +186,9 @@ def render(ctx) -> None:
                 [(d, _DIM_COL[d]) for d in dims] or [("Customer", "customer_name")],
                 {val_label: (val_col, agg)}, palette,
             )
+            if n_other > 0:
+                st.caption(f"Top {_TOP_N_SERIES} {dims[0].lower()}s coloured; {n_other} more grouped as 'Other'. "
+                           "Click a point for the full breakdown.")
 
     # ── table ────────────────────────────────────────────────────────────────
     with section_card("Result table"):
@@ -192,15 +219,20 @@ def render(ctx) -> None:
         if pd.isna(dmin) or pd.isna(dmax):
             st.caption("Not enough dated invoices to compare periods.")
             return
+        _lo, _hi = dmin.date(), dmax.date()
+
+        def _clamp(d):
+            return min(max(d, _lo), _hi)
+
         pc1, pc2 = st.columns(2)
         range_a = pc1.date_input(
-            "Period A", value=(max(dmin.date(), (dmax - pd.Timedelta(days=29)).date()), dmax.date()),
-            min_value=dmin.date(), max_value=dmax.date(), key="xp_cmp_a",
+            "Period A", value=(_clamp((dmax - pd.Timedelta(days=29)).date()), _hi),
+            min_value=_lo, max_value=_hi, key="xp_cmp_a",
         )
         range_b = pc2.date_input(
             "Period B",
-            value=(max(dmin.date(), (dmax - pd.Timedelta(days=59)).date()), (dmax - pd.Timedelta(days=30)).date()),
-            min_value=dmin.date(), max_value=dmax.date(), key="xp_cmp_b",
+            value=(_clamp((dmax - pd.Timedelta(days=59)).date()), _clamp((dmax - pd.Timedelta(days=30)).date())),
+            min_value=_lo, max_value=_hi, key="xp_cmp_b",
         )
         if not (isinstance(range_a, tuple) and len(range_a) == 2 and isinstance(range_b, tuple) and len(range_b) == 2):
             st.caption("Pick a full start/end range for both periods.")
