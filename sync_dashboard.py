@@ -28,21 +28,49 @@ MAX_ATTEMPTS = 3       # retries on a dropped/reset connection mid-sync
 RETRY_DELAY = 5         # seconds between attempts
 
 
-def _safe_date(value):
-    """Returns value if it's a real calendar date in YYYY-MM-DD form, else None.
+# Garfield's data starts in 2016; anything before this or more than a year past
+# today is almost certainly a misparsed MM/DD/YY date from extraction (e.g. the
+# model turning "04/11/26" into "2004-11-26" or "2005-10-26"), not a real order.
+_MIN_PLAUSIBLE_YEAR = 2015
 
-    Extraction sometimes yields malformed dates (e.g. '2004-13-26' — invalid
-    month) since the source field is free text; SQLite accepts anything, but
-    Postgres's DATE column correctly rejects it. Null it out rather than
-    failing the whole sync.
+
+def _safe_date(value):
+    """Returns value if it's a real calendar date in YYYY-MM-DD form AND falls in a
+    plausible range, else None.
+
+    Extraction yields two kinds of bad date, both from the source field being free
+    text: malformed (e.g. '2004-13-26' — invalid month), and valid-but-implausible
+    (a MM/DD/YY misparse landing in 2004/2005). SQLite accepts either; Postgres's
+    DATE column rejects the first and silently stores the second, where it then
+    corrupts every time-series chart. Null both rather than failing the sync or
+    keeping a phantom 2004 data point — the row still syncs, just without the date,
+    and the nulling is reported in main()'s bad-dates summary.
     """
     if not value:
         return None
     try:
-        datetime.strptime(value, "%Y-%m-%d")
-        return value
+        d = datetime.strptime(value, "%Y-%m-%d")
     except ValueError:
         return None
+    if d.year < _MIN_PLAUSIBLE_YEAR or d.year > datetime.now().year + 1:
+        return None
+    return value
+
+
+def _safe_sent_date(value):
+    """sent_date is a free-text TEXT column, but the dashboard date-parses it — so a
+    YYYY-MM-DD value with an implausible year gets nulled (same MM/DD/YY-misparse
+    guard as _safe_date); anything else (real free text, a plausible date) passes
+    through unchanged."""
+    if not value:
+        return value
+    try:
+        d = datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return value
+    if d.year < _MIN_PLAUSIBLE_YEAR or d.year > datetime.now().year + 1:
+        return None
+    return value
 
 
 def get_database_url() -> str:
@@ -72,13 +100,16 @@ def _publish_to_postgres(results: list, database_url: str) -> list:
     for r in results:
         po_date = _safe_date(r.get("po_date"))
         delivery_date = _safe_date(r.get("delivery_date"))
+        sent_date = _safe_sent_date(r.get("sent_date"))
         if r.get("po_date") and po_date is None:
             bad_dates.append((r.get("_source_file"), "po_date", r.get("po_date")))
         if r.get("delivery_date") and delivery_date is None:
             bad_dates.append((r.get("_source_file"), "delivery_date", r.get("delivery_date")))
+        if r.get("sent_date") and sent_date is None:
+            bad_dates.append((r.get("_source_file"), "sent_date", r.get("sent_date")))
         header_rows.append((
             r.get("_source_file"), r.get("_file_hash"), r.get("_extraction_method"), r.get("error"),
-            r.get("po_number"), po_date, r.get("sent_date"), delivery_date,
+            r.get("po_number"), po_date, sent_date, delivery_date,
             r.get("document_printed_at"), r.get("source_received_at"),
             r.get("revision_number"), r.get("revision_label"),
             bool(r.get("_is_revision", False)), r.get("_version_label"),
@@ -192,6 +223,7 @@ def _publish_reference_prices(sqlite_path: str, database_url: str) -> int:
     if not rows:
         return 0
 
+    keys = [(r["customer_name"], r["product_name"], r["container_size"]) for r in rows]
     pg_conn = psycopg2.connect(database_url)
     try:
         with pg_conn.cursor() as cur:
@@ -209,6 +241,26 @@ def _publish_reference_prices(sqlite_path: str, database_url: str) -> int:
                 [(r["customer_name"], r["product_name"], r["container_size"], r["price"], r["source"]) for r in rows],
                 page_size=500,
             )
+            # Drop 'auto' rows whose (customer, product, size) no longer exists locally
+            # — a product that stopped being ordered would otherwise keep a stale
+            # reference price forever. Manual overrides (edited=TRUE) are never touched;
+            # skipped for a suspiciously small batch so a partial local DB can't wipe
+            # the table.
+            if len(keys) >= 10:
+                execute_values(
+                    cur,
+                    """
+                    DELETE FROM reference_prices r
+                    WHERE r.edited = FALSE
+                      AND NOT EXISTS (
+                        SELECT 1 FROM (VALUES %s) AS keep(c, p, s)
+                        WHERE keep.c = r.customer_name
+                          AND keep.p = r.product_name
+                          AND keep.s = r.container_size
+                      )
+                    """,
+                    keys,
+                )
         pg_conn.commit()
     finally:
         pg_conn.close()
