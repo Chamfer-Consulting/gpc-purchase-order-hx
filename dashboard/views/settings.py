@@ -11,7 +11,7 @@ API calls) on every visit.
 
 import streamlit as st
 
-from ui_kit import page_scaffold
+from ui_kit import page_scaffold, suppress_page_titles
 from views import (
     datamgmt_edit,
     datamgmt_raw,
@@ -25,7 +25,7 @@ _SECTIONS = {
     "Reference prices": reports_pricing.render,
     "Correct an order": datamgmt_edit.render,
     "Raw line items": datamgmt_raw.render,
-    "Products": reports_products.render,   # hosts the product-visibility toggle
+    "Product visibility": reports_products.render_manage_only,
     "QuickBooks": quickbooks_connection.render,
     "Email ingestion": email_ingestion.render,
 }
@@ -38,4 +38,8 @@ def render(ctx) -> None:
         selection_mode="single",
     ) or "Reference prices"
     st.divider()
-    _SECTIONS[choice](ctx)
+    suppress_page_titles(True)
+    try:
+        _SECTIONS[choice](ctx)
+    finally:
+        suppress_page_titles(False)

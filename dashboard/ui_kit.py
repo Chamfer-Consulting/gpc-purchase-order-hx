@@ -275,12 +275,30 @@ _STATE_CHIP = {
 }
 
 
+_suppress_page_titles = False
+
+
+def suppress_page_titles(on: bool) -> None:
+    """Toggle for lazy wrapper pages (Settings & Connections, Match & Reconcile)
+    that render a sub-page's body under their own title — with this on, the
+    sub-page's page_scaffold()/page_header() skips its <h1> but still renders the
+    purpose line, so there aren't two stacked titles."""
+    global _suppress_page_titles
+    _suppress_page_titles = on
+
+
 def page_scaffold(title: str, purpose: str | None = None, actions=None) -> None:
     """Canonical page top: title, one-line purpose, optional right-aligned actions.
     Supersedes page_header() — same behaviour, plus the purpose line is styled via
     the .gpc-purpose class from dashboard/theme.py. Call scope_bar() next, then
     kpi_strip(), then the page's headline chart, then supporting section_card()s,
     then the detail table — that fixed order is the whole point (spec §04)."""
+    if _suppress_page_titles:
+        if purpose:
+            st.markdown(f'<p class="gpc-purpose">{purpose}</p>', unsafe_allow_html=True)
+        if actions is not None:
+            actions()
+        return
     if actions is not None:
         head = st.container(horizontal=True, horizontal_alignment="right")
         with head:

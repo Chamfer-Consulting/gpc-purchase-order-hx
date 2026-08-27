@@ -27,6 +27,13 @@ TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 SCOPE = "com.intuit.quickbooks.accounting"
 
 
+class QBOReauthRequired(RuntimeError):
+    """The stored refresh token can no longer be exchanged (expired after ~100 days
+    of no sync, revoked, or environment switched) — the user must reconnect. Raised
+    instead of a bare RuntimeError so the UI can show a Reconnect button rather than
+    a raw HTTP 400."""
+
+
 def is_production() -> bool:
     return st.secrets.get("qbo_environment", "sandbox") == "production"
 
@@ -114,7 +121,10 @@ def _refresh(conn, realm_id: str, refresh_token: str) -> str:
         timeout=30,
     )
     if not resp.ok:
-        raise RuntimeError(f"QuickBooks token refresh failed {resp.status_code}: {resp.text}")
+        raise QBOReauthRequired(
+            f"QuickBooks token refresh failed ({resp.status_code}) — the connection has "
+            "expired or been revoked. Disconnect and connect again, then run a full resync."
+        )
     tokens = resp.json()
     _store_tokens(conn, realm_id, tokens)
     return tokens["access_token"]
@@ -263,7 +273,7 @@ def sync_items(conn) -> int:
     return len(items)
 
 
-def sync_invoices(conn, full_resync: bool = False) -> int:
+def sync_invoices(conn, full_resync: bool = False) -> dict:
     """Pulls invoices from QuickBooks and upserts them into qbo_invoices.
 
     Incremental by default: only invoices updated since the last successful sync are
@@ -277,6 +287,7 @@ def sync_invoices(conn, full_resync: bool = False) -> int:
 
     access_token, realm_id = get_valid_access_token(conn)
     invoices = fetch_all_invoices(access_token, realm_id, since=since)
+    deleted_count = 0
 
     if invoices:
         rows = [
@@ -313,6 +324,17 @@ def sync_invoices(conn, full_resync: bool = False) -> int:
                 fetch=True,
             )
             id_lookup = dict(returned)
+
+            # A full resync pulls every non-deleted invoice, so anything still local
+            # that isn't in this pull was deleted in QuickBooks — drop it (cascades to
+            # its line items) so it stops feeding Revenue / gross. Only safe for a full
+            # resync; an incremental pull is partial by design.
+            if full_resync:
+                pulled_ids = [inv.get("Id") for inv in invoices]
+                cur.execute(
+                    "DELETE FROM qbo_invoices WHERE qbo_invoice_id <> ALL(%s)", (pulled_ids,)
+                )
+                deleted_count = cur.rowcount
 
             # Product master catalog (see sync_items()) — matching by QBO's stable
             # Item ID instead of re-parsing text. {qbo_item_id: (category, product_name,
@@ -381,4 +403,4 @@ def sync_invoices(conn, full_resync: bool = False) -> int:
     with conn.cursor() as cur:
         cur.execute("UPDATE qbo_connection SET last_synced_at = %s WHERE realm_id = %s", (sync_started_at, realm_id))
     conn.commit()
-    return len(invoices)
+    return {"synced": len(invoices), "deleted": deleted_count}

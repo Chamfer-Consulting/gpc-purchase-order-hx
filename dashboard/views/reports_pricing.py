@@ -8,7 +8,14 @@ and the Reference Prices save-diff-against-snapshot logic are unchanged from Pha
 import plotly.express as px
 import streamlit as st
 
-from data import PLOTLY_CONFIG, color_map_for, load_reference_prices, save_reference_prices, style
+from data import (
+    PLOTLY_CONFIG,
+    color_map_for,
+    delete_reference_prices,
+    load_reference_prices,
+    save_reference_prices,
+    style,
+)
 from ui_kit import data_table, page_scaffold, scope_bar
 
 
@@ -41,6 +48,8 @@ def _render_price_history(ctx) -> None:
         (~all_items["is_sample"].fillna(False)) & all_items["unit_price"].notna()
         & (all_items["product_name"] != "UNKNOWN")
         & (~all_items["product_name"].isin(ctx.hidden_products))
+        & (~all_items["is_removed"].fillna(False))
+        & all_items["po_id"].isin(ctx.latest_po["id"])
     ]
 
     if priced_all.empty:
@@ -121,18 +130,34 @@ def _render_reference_prices(ctx) -> None:
             for r in editor_seed.to_dict("records")
         }
         rows = []
+        edited_keys = set()
         for r in edited_prices.to_dict("records"):
             cust, prod, size, price = r.get("customer_name"), r.get("product_name"), r.get("container_size"), r.get("price")
             if not (cust and prod and size) or price is None:
                 continue
             key = (cust, prod, size)
-            if key in seed_key_price and float(seed_key_price[key]) == float(price):
-                continue  # unchanged — leave alone so it can still auto-refresh later
-            rows.append({"customer_name": cust, "product_name": prod, "container_size": size, "price": price})
-        if rows:
-            save_reference_prices(rows)
+            edited_keys.add(key)
+            try:
+                if key in seed_key_price and float(seed_key_price[key]) == float(price):
+                    continue  # unchanged — leave alone so it can still auto-refresh later
+                rows.append({"customer_name": cust, "product_name": prod, "container_size": size, "price": float(price)})
+            except (TypeError, ValueError):
+                st.warning(f"Skipped {cust} / {prod} / {size}: '{price}' isn't a valid price.")
+        # Rows in the DB that were deleted from the editor -> issue an actual DELETE
+        # (the dynamic editor's delete control otherwise silently no-ops).
+        deleted_keys = [k for k in seed_key_price if k not in edited_keys]
+        if rows or deleted_keys:
+            if rows:
+                save_reference_prices(rows)
+            if deleted_keys:
+                delete_reference_prices(deleted_keys)
             load_reference_prices.clear()
-            st.success(f"Saved {len(rows)} changed/added reference price(s).")
+            parts = []
+            if rows:
+                parts.append(f"{len(rows)} changed/added")
+            if deleted_keys:
+                parts.append(f"{len(deleted_keys)} deleted")
+            st.success("Saved " + " · ".join(parts) + " reference price(s).")
             st.rerun()
         else:
             st.info("No changes to save.")

@@ -17,6 +17,9 @@ from data import get_database_url
 from ui_kit import page_header, section_card
 
 
+_REQUIRED_SECRETS = ("gmail_client_id", "gmail_client_secret", "gmail_redirect_uri")
+
+
 def _creds():
     return st.secrets["gmail_client_id"], st.secrets["gmail_client_secret"], st.secrets["gmail_redirect_uri"]
 
@@ -28,6 +31,15 @@ def render(ctx) -> None:
         "attachments and body text alike. This page only covers the one-time connection "
         "and confirming label names; see GMAIL_SETUP.md for automatic/manual run setup.",
     )
+
+    missing = [k for k in _REQUIRED_SECRETS if not st.secrets.get(k)]
+    if missing:
+        st.info(
+            "Gmail isn't configured. Add "
+            + ", ".join(f"`{k}`" for k in missing)
+            + " to `.streamlit/secrets.toml` to enable this section."
+        )
+        return
 
     client_id, client_secret, redirect_uri = _creds()
 
@@ -58,13 +70,16 @@ def render(ctx) -> None:
             st.caption(f"Last synced: {connection['last_synced_at']}")
         else:
             st.caption("Never synced yet.")
-        if st.button("Disconnect"):
-            dc_conn = psycopg2.connect(get_database_url())
-            try:
-                gmail_client.disconnect(dc_conn)
-            finally:
-                dc_conn.close()
-            st.rerun()
+        with st.popover("Disconnect"):
+            st.caption("Disconnecting clears the stored tokens — the cloud pipeline can't read email until you reconnect.")
+            if st.checkbox("Yes, disconnect Gmail", key="gmail_disconnect_confirm"):
+                if st.button("Disconnect now", type="primary", key="gmail_disconnect_go"):
+                    dc_conn = psycopg2.connect(get_database_url())
+                    try:
+                        gmail_client.disconnect(dc_conn)
+                    finally:
+                        dc_conn.close()
+                    st.rerun()
 
     with section_card("Labels", "Confirm the exact label name(s) Gmail's API sees — use these for GMAIL_LABELS config."):
         if st.button("List labels"):
@@ -95,6 +110,7 @@ def render(ctx) -> None:
             if not label:
                 st.warning("Enter a label name first.")
             else:
+              with st.spinner("Searching Gmail and fetching message details…"):
                 token_conn = psycopg2.connect(get_database_url())
                 try:
                     access_token = gmail_client.get_valid_access_token(token_conn, client_id, client_secret)

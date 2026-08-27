@@ -33,6 +33,8 @@ def render(ctx) -> None:
         row = latest_po[latest_po["id"] == selected_id].iloc[0]
         if bool(row.get("edited")):
             st.info(f"This record was already manually edited (at {row.get('edited_at')}).")
+        if bool(row.get("math_check_failed")) and row.get("math_check_detail"):
+            st.warning(f"Math check: {row.get('math_check_detail')}")
 
         with section_card():
             with st.form(f"edit_form_{selected_id}"):
@@ -61,18 +63,26 @@ def render(ctx) -> None:
                 notes = st.text_area("Notes", value=row["notes"] or "", key=f"notes_{selected_id}")
 
                 st.markdown("**Line items**")
-                items_seed = all_items[all_items["po_id"] == selected_id][
-                    ["product_name", "container_size", "quantity", "unit_price", "line_total", "is_sample"]
-                ].reset_index(drop=True)
+                _po_lines = all_items[all_items["po_id"] == selected_id]
+                _cols = ["product_name", "container_size", "quantity", "unit_price",
+                         "line_total", "additional_cost", "is_sample"]
+                # Seed from active lines only — a previously-removed line shown here as a
+                # normal row would be re-activated on save. Removed rows are preserved
+                # separately (see save_po_edit's removed_items).
+                items_seed = _po_lines[~_po_lines["is_removed"].fillna(False)][_cols].reset_index(drop=True)
+                _removed_seed = _po_lines[_po_lines["is_removed"].fillna(False)]
                 edited_items = st.data_editor(
                     items_seed, num_rows="dynamic", use_container_width=True, key=f"items_editor_{selected_id}",
                     column_config={
                         "quantity": st.column_config.NumberColumn("Qty"),
                         "unit_price": st.column_config.NumberColumn("Unit Price ($)", format="%.2f"),
                         "line_total": st.column_config.NumberColumn("Line Total ($)", format="%.2f"),
+                        "additional_cost": st.column_config.NumberColumn("Add'l Cost ($)", format="%.2f"),
                         "is_sample": st.column_config.CheckboxColumn("Sample"),
                     },
                 )
+                if not _removed_seed.empty:
+                    st.caption(f"{len(_removed_seed)} previously-removed line(s) are kept as-is and not shown here.")
 
                 submitted = st.form_submit_button("Save changes")
 
@@ -91,7 +101,16 @@ def render(ctx) -> None:
                 "total": total,
                 "notes": notes or None,
             }
-            save_po_edit(selected_id, header, items)
-            load_data.clear()
-            st.success("Saved.")
-            st.rerun()
+            try:
+                math_failed, math_detail = save_po_edit(
+                    selected_id, header, items, removed_items=_removed_seed.to_dict("records"),
+                )
+            except Exception as e:
+                st.error(f"Save failed: {e}")
+            else:
+                load_data.clear()
+                if math_failed:
+                    st.warning(f"Saved, but the math doesn't check out: {math_detail}")
+                else:
+                    st.success("Saved.")
+                st.rerun()

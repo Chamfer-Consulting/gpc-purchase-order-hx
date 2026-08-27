@@ -59,6 +59,17 @@ def _manage_products(ctx) -> None:
         )
 
 
+def render_manage_only(ctx) -> None:
+    """Just the product-visibility toggle — for the Settings & Connections wrapper,
+    which shouldn't run the whole analytics page's queries/charts."""
+    page_scaffold("Product visibility", "Hide a product to exclude it from every report, chart, filter, and export app-wide.")
+    with section_card(
+        "Manage products",
+        "Persists for everyone until turned back on. Edit PO and the QuickBooks pages are unaffected.",
+    ):
+        _manage_products(ctx)
+
+
 def render(ctx) -> None:
     f_inv_items, palette = ctx.f_inv_items, ctx.palette
     by_product_inv, product_colors = ctx.by_product_inv, ctx.product_colors

@@ -266,9 +266,17 @@ def get_database_url() -> str:
     return url
 
 
-def save_po_edit(po_id: int, header: dict, items: list[dict]) -> None:
+def save_po_edit(po_id: int, header: dict, items: list[dict],
+                 removed_items: list[dict] | None = None) -> tuple[bool, str]:
     """Writes a manual edit straight to Postgres and marks the PO as edited so
-    sync_dashboard.py never overwrites it again (see its ON CONFLICT ... WHERE clause)."""
+    sync_dashboard.py never overwrites it again (see its ON CONFLICT ... WHERE clause).
+
+    `items` are the active line items from the editor; `removed_items` are the PO's
+    previously is_removed=TRUE rows, re-persisted verbatim so an edit doesn't
+    resurrect them. `additional_cost` / `sku` are carried through — dropping
+    additional_cost would make math_check flag lines with a legitimate per-unit
+    surcharge. Returns (math_check_failed, math_check_detail) for the caller to show.
+    """
     data = {"subtotal": header["subtotal"], "tax": header["tax"], "total": header["total"], "line_items": items}
     validate_math(data)
 
@@ -294,25 +302,78 @@ def save_po_edit(po_id: int, header: dict, items: list[dict]) -> None:
                     """
                     INSERT INTO line_items (
                         po_id, product_raw, product_name, container_size,
-                        quantity, unit_price, line_total, is_sample,
+                        quantity, unit_price, line_total, additional_cost, sku, is_sample,
                         math_mismatch, revision_status, is_removed
                     ) VALUES (
                         %(po_id)s, %(product_raw)s, %(product_name)s, %(container_size)s,
-                        %(quantity)s, %(unit_price)s, %(line_total)s, %(is_sample)s,
+                        %(quantity)s, %(unit_price)s, %(line_total)s, %(additional_cost)s, %(sku)s, %(is_sample)s,
                         %(math_mismatch)s, 'Edited', FALSE
                     )
                     """,
                     {
                         "po_id": po_id,
-                        "product_raw": item.get("product_name"),
+                        "product_raw": item.get("product_raw") or item.get("product_name"),
                         "product_name": item.get("product_name"),
                         "container_size": item.get("container_size"),
                         "quantity": item.get("quantity"),
                         "unit_price": item.get("unit_price"),
                         "line_total": item.get("line_total"),
+                        "additional_cost": item.get("additional_cost"),
+                        "sku": item.get("sku"),
                         "is_sample": bool(item.get("is_sample", False)),
                         "math_mismatch": item.get("math_mismatch"),
                     },
+                )
+            for item in removed_items or []:
+                cur.execute(
+                    """
+                    INSERT INTO line_items (
+                        po_id, product_raw, product_name, container_size,
+                        quantity, unit_price, line_total, additional_cost, sku, is_sample,
+                        math_mismatch, price_anomaly, revision_status, is_removed
+                    ) VALUES (
+                        %(po_id)s, %(product_raw)s, %(product_name)s, %(container_size)s,
+                        %(quantity)s, %(unit_price)s, %(line_total)s, %(additional_cost)s, %(sku)s, %(is_sample)s,
+                        %(math_mismatch)s, %(price_anomaly)s, %(revision_status)s, TRUE
+                    )
+                    """,
+                    {
+                        "po_id": po_id,
+                        "product_raw": item.get("product_raw") or item.get("product_name"),
+                        "product_name": item.get("product_name"),
+                        "container_size": item.get("container_size"),
+                        "quantity": item.get("quantity"),
+                        "unit_price": item.get("unit_price"),
+                        "line_total": item.get("line_total"),
+                        "additional_cost": item.get("additional_cost"),
+                        "sku": item.get("sku"),
+                        "is_sample": bool(item.get("is_sample", False)),
+                        "math_mismatch": item.get("math_mismatch"),
+                        "price_anomaly": item.get("price_anomaly"),
+                        "revision_status": item.get("revision_status"),
+                    },
+                )
+        conn.commit()
+    finally:
+        conn.close()
+    return bool(data["math_check_failed"]), data["math_check_detail"] or ""
+
+
+def delete_reference_prices(keys: list[tuple[str, str, str]]) -> None:
+    """Removes reference-price rows by (customer_name, product_name, container_size).
+    Used when a row is deleted in the Reference Prices editor — without this the
+    editor's delete control silently no-ops. An 'auto' row deleted here will be
+    re-created by the next extraction sync if a price is still being paid."""
+    if not keys:
+        return
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn.cursor() as cur:
+            for cust, prod, size in keys:
+                cur.execute(
+                    "DELETE FROM reference_prices WHERE customer_name = %s AND product_name = %s "
+                    "AND container_size = %s",
+                    (cust, prod, size),
                 )
         conn.commit()
     finally:

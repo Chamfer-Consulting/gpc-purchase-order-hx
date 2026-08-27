@@ -7,7 +7,7 @@ don't run when you just want to look at invoices.
 
 import streamlit as st
 
-from ui_kit import page_scaffold
+from ui_kit import page_scaffold, suppress_page_titles
 from views import fulfillment_match, quickbooks_invoices
 
 _SECTIONS = {
@@ -23,4 +23,8 @@ def render(ctx) -> None:
         selection_mode="single",
     ) or "Match & review"
     st.divider()
-    _SECTIONS[choice](ctx)
+    suppress_page_titles(True)
+    try:
+        _SECTIONS[choice](ctx)
+    finally:
+        suppress_page_titles(False)

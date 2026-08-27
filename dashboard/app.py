@@ -58,11 +58,24 @@ st.set_page_config(page_title="Garfield Produce — PO Dashboard", layout="wide"
 # Handled before the password gate: a full-page browser redirect back from Intuit may
 # or may not preserve session_state["authed"], and completing a token exchange that
 # only the account owner could have triggered (by clicking Connect from inside the
-# password-gated app) isn't a meaningful security exposure either way.
+# password-gated app) isn't a meaningful security exposure either way. The `state`
+# nonce is still checked when it survived in session_state (the common same-tab case)
+# — a mismatch is rejected; a missing stored nonce (session lost on the redirect)
+# falls through, best-effort, rather than blocking a legitimate reconnect.
+
 
 _qp = st.query_params
+
+
+def _state_ok(session_key: str) -> bool:
+    expected = st.session_state.get(session_key)
+    return (not expected) or _qp.get("state") == expected
+
+
 if "code" in _qp and "realmId" in _qp:
     try:
+        if not _state_ok("qbo_oauth_state"):
+            raise RuntimeError("OAuth state mismatch — start the connection again from the QuickBooks page.")
         _conn = psycopg2.connect(get_database_url())
         try:
             qbo_client.exchange_code_for_tokens(_conn, _qp["code"], _qp["realmId"])
@@ -80,6 +93,8 @@ elif "code" in _qp and _qp.get("state", "").startswith("gmail_connect"):
     # Google's callback never carries realmId, so this can't collide with the QBO
     # branch above — see email_ingestion.py's state prefixing.
     try:
+        if not _state_ok("gmail_oauth_state"):
+            raise RuntimeError("OAuth state mismatch — start the connection again from the Email Ingestion page.")
         _conn = psycopg2.connect(get_database_url())
         try:
             gmail_client.exchange_code_for_tokens(
