@@ -104,6 +104,29 @@ MAX_SEARCH_RESULTS = 3000  # per label, per run — customer labels are general
 GARFIELD_DOMAIN = "@garfieldproduce.com"  # used to label each message in a
 # text-only thread as "us" vs "the customer" — see _sender_label().
 
+# PDF attachments on customer threads are mostly NOT purchase orders — compliance
+# and reference docs (food-safety certs, USDA audits, insurance COIs, W-9s, safety
+# data sheets, spec/price sheets, packing lists, BOLs). Each one otherwise costs a
+# full paid Claude extraction call just to come back is_po: false. This filename
+# check skips the unambiguous ones before any API call. Kept deliberately tight —
+# only terms that are never a PO — so a genuinely oddly-named PO isn't dropped;
+# anything not matched still goes to the model as before. The text-thread path is
+# unaffected (a customer who types an order into the email body still extracts).
+_NON_PO_FILENAME_PATTERN = re.compile(
+    r"""
+      certificat | \bcert\b | \bcoi\b            # certificates of X / insurance
+    | audit | \bgap\b | \bgfsi\b | \bsqf\b | haccp | \bfsma\b   # food-safety audits
+    | usda | \busda\b
+    | insurance | liabilit
+    | \bw-?9\b | \bw-?8\b | \b1099\b | \bach\b | credit\s*app | remittance
+    | \bsds\b | \bmsds\b | safety\s*data
+    | spec\s*sheet | specification | data\s*sheet
+    | price\s*list | pricelist | \bcatalog
+    | packing\s*(list|slip) | (?<![a-z])bol(?![a-z]) | bill\s*of\s*lading
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
 
 def configure_logging(log_path: str) -> None:
     logging.basicConfig(
@@ -370,6 +393,9 @@ def _process_thread(
                 continue
             if (source_label, file_hash) in extracted_keys:
                 logger.info(f"{source_label}: already extracted earlier this run — skipping")
+                continue
+            if _NON_PO_FILENAME_PATTERN.search(source_label):
+                logger.info(f"{source_label}: filename is a non-PO document type — skipping (no API call)")
                 continue
 
             text = extract_pdf_text(pdf_bytes)
