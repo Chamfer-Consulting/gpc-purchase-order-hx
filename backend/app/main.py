@@ -9,7 +9,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from . import reuse  # noqa: F401 — sys.path shim for the reused repo modules
 from .config import get_settings
 from .db import close_pool, init_pool
-from .routers import overview
+from .routers import analytics, connections, oauth, overview
 
 
 @asynccontextmanager
@@ -38,6 +38,9 @@ app.add_middleware(
 )
 
 app.include_router(overview.router)
+app.include_router(analytics.router)
+app.include_router(connections.router)
+app.include_router(oauth.router)
 
 
 @app.get("/health", tags=["meta"])

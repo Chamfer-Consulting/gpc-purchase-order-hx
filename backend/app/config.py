@@ -24,6 +24,9 @@ class Settings(BaseSettings):
 
     # CORS — comma-separated list of allowed frontend origins.
     allowed_origins: str = Field("http://localhost:5173", alias="ALLOWED_ORIGINS")
+    # Where OAuth callbacks redirect the browser back to once tokens are stored.
+    # Defaults to the first allowed origin.
+    frontend_base: str = Field("", alias="FRONTEND_BASE")
 
     # Shared with the pipeline (used by the reused modules / OAuth callbacks).
     anthropic_api_key: str = Field("", alias="ANTHROPIC_API_KEY")
@@ -40,6 +43,10 @@ class Settings(BaseSettings):
     @property
     def origins(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+    @property
+    def frontend(self) -> str:
+        return (self.frontend_base or (self.origins[0] if self.origins else "")).rstrip("/")
 
 
 @lru_cache

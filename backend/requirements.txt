@@ -5,6 +5,10 @@ uvicorn[standard]==0.34.0
 pydantic==2.10.4
 pydantic-settings==2.7.1
 psycopg[binary,pool]==3.2.3
+# psycopg2 too: the reused repo modules (gmail_client, qbo_client, qbo_matcher,
+# sync_dashboard) are written against it (Json / execute_values). New service-layer
+# code uses psycopg3 via the pool. See app/reused_db.py.
+psycopg2-binary==2.9.10
 PyJWT==2.10.1
 python-dateutil==2.9.0.post0
 pandas==2.2.3

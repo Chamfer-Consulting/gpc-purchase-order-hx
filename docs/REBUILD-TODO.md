@@ -53,12 +53,15 @@ account owner / a browser · **(code)** = doable in the repo.
 ## Phase 1 — Skeleton, auth & first deploy  ·  ~1 week
 
 ### 1.1 Backend
-- [ ] `backend/app/main.py` — FastAPI app, CORS, `/health`, router registration. *(scaffolded)*
-- [ ] `backend/app/config.py` — env settings via `pydantic-settings`. *(scaffolded)*
-- [ ] `backend/app/db.py` — `psycopg_pool` connection pool (transaction pooler). *(scaffolded)*
-- [ ] `backend/app/auth.py` — verify Supabase JWT (`SUPABASE_JWT_SECRET`, HS256) as a FastAPI dependency. *(scaffolded)*
-- [ ] `backend/app/routers/overview.py` — `GET /api/overview` returning real KPI numbers + data series.
-- [ ] `backend/tests/` — a test client hitting `/health` and `/api/overview` with a signed test JWT.
+- [x] `backend/app/main.py` — FastAPI app, CORS, gzip, `/health`, lifespan opens the pool, all routers registered.
+- [x] `backend/app/config.py` — env settings (`pydantic-settings`), incl. `frontend_base` for callback redirects.
+- [x] `backend/app/db.py` — `psycopg_pool` (transaction pooler) + `backend/app/reused_db.py` (psycopg2 for the reused repo modules).
+- [x] `backend/app/auth.py` — verify Supabase JWT (HS256, `aud=authenticated`) → `AuthedUser` dependency.
+- [x] `backend/app/schemas.py` — the `PageResponse` API contract (scope + KPIs + charts + named tables).
+- [x] `backend/app/deps.py` (`FilterParams`), `backend/app/cache.py` (`@cached` TTL), `backend/app/oauth_state.py` (signed state).
+- [x] `backend/app/routers/overview.py` — `GET /api/overview` (PageResponse; real numbers land with `services/overview.py`).
+- [x] `backend/app/routers/analytics.py` — `GET /api/{customers,products,explore,lifecycle}` stubs on the contract.
+- [x] `backend/tests/` — `/health`, auth guards, analytics stub shape, OAuth state guard. `pytest` green (7).
 
 ### 1.2 Supabase Auth
 - [ ] **(you)** Create the team's user accounts (Auth → Users), or enable email magic-link.
@@ -82,10 +85,10 @@ account owner / a browser · **(code)** = doable in the repo.
 - [ ] Set `web/` build env vars; deploy; SPA loads.
 - [ ] Wire CORS: backend `ALLOWED_ORIGINS` ← the Pages URL.
 
-### 1.5 Move the OAuth callbacks
-- [ ] `backend/app/routers/auth_gmail.py` — `GET /auth/gmail/callback` (adapt `dashboard/app.py`'s handler).
-- [ ] `backend/app/routers/auth_qbo.py` — `GET /auth/qbo/callback` (adapt `qbo_client.exchange_code_for_tokens`).
-- [ ] **(you)** Add the new redirect URIs in Google Cloud Console + the Intuit app (keep the Streamlit ones during overlap).
+### 1.5 OAuth callbacks + connections
+- [x] `backend/app/routers/oauth.py` — `GET /auth/gmail/callback` + `GET /auth/qbo/callback`: verify the signed state, exchange the code (reused `gmail_client` / `qbo_client`), 302 back to `/settings?connect=...`.
+- [x] `backend/app/routers/connections.py` — `GET /api/connections` (status), `/{provider}/authorize`, `/{provider}/disconnect`, `/qbo/sync`.
+- [ ] **(you)** Add the new redirect URIs in Google Cloud Console + the Intuit app (keep the Streamlit ones during overlap). — SETUP §7
 
 **Exit:** a teammate logs in at the production URL, sees the live Overview page, < 1s warm.
 
@@ -110,12 +113,9 @@ account owner / a browser · **(code)** = doable in the repo.
 - [x] `backend/app/cache.py` — `@cached(key_fn)` TTL cache (5 min), the `st.cache_data(ttl=)` counterpart.
 - [ ] Per-request `context` builder wired to `FilterParams` (needs the service layer).
 
-### 2.3 Pages (each: 1 endpoint file + 1 React page)
-- [ ] Customer 360 — `routers/customers.py` + `pages/Customer360Page.tsx`
-- [ ] Products & Sizes — `routers/products.py` + `pages/ProductsPage.tsx`
-- [ ] Explore — `routers/explore.py` + `pages/ExplorePage.tsx`
-- [ ] Order Lifecycle — `routers/lifecycle.py` + `pages/LifecyclePage.tsx`
-- [ ] Overview — upgrade to the full chart theme
+### 2.3 Pages
+- [x] Frontend for all read-only pages is done: `pages/AnalyticsPage.tsx` (generic — FilterBar + `usePage` + `PageRenderer`), routed for `/customers` `/products` `/explore` `/lifecycle`; `OverviewPage` on the same renderer; `components/PageRenderer.tsx` turns a `PageResponse` into scope bar → KPI grid → charts → tables.
+- [ ] **Backend service bodies** (the account owner's `data.py` → `services/` work): fill `services/{overview,customers,products,explore,lifecycle}.py` and swap each stub in `routers/analytics.py` / `routers/overview.py` for the real call + `@cached`.
 
 ### 2.4 Client caching
 - [ ] TanStack Query `staleTime` per endpoint; stale-while-revalidate.
@@ -132,7 +132,7 @@ account owner / a browser · **(code)** = doable in the repo.
 - [ ] Supabase Realtime subscription on the review queue table → live updates
 - [ ] Edit PO — `routers/po_edit.py` (`GET /api/po/{id}`, `POST /api/po/{id}` wrapping `save_po_edit` **unchanged**) + AG Grid editor + optimistic mutation
 - [ ] Reference Prices — `routers/pricing.py` + editable grid
-- [ ] Settings & Connections — `routers/settings.py` + `routers/connections.py` (QBO/Gmail connect+disconnect, sync buttons, product hiding, saved views)
+- [x] Settings — connections part done (`routers/connections.py` + `pages/SettingsPage.tsx`: QBO/Gmail connect/disconnect, QBO sync-now/full-resync, auto-sync heartbeat, callback toast). Still to add: product hiding, saved views, reference prices.
 - [ ] Port `dashboard/attention.py` digest → `routers/overview.py` "needs attention" block
 
 **Exit:** every Streamlit page has an equivalent; a full day's real work needs no Streamlit.

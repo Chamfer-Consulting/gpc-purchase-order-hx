@@ -1,5 +1,5 @@
-"""Smoke tests. Run: `pytest` from backend/ (needs a .env with a DB it can reach,
-or set DATABASE_URL + SUPABASE_JWT_SECRET in the environment)."""
+"""Smoke tests. `pytest` from backend/. No DB needed for these — the analytics
+stubs and auth checks don't touch Postgres."""
 
 import datetime as dt
 import os
@@ -16,27 +16,8 @@ from app.main import app  # noqa: E402
 client = TestClient(app)
 
 
-def test_health():
-    r = client.get("/health")
-    assert r.status_code == 200
-    assert r.json()["status"] == "ok"
-
-
-def test_overview_requires_auth():
-    assert client.get("/api/overview").status_code == 403  # no bearer
-
-
-def test_overview_rejects_bad_token():
-    r = client.get("/api/overview", headers={"Authorization": "Bearer garbage"})
-    assert r.status_code == 401
-
-
-@pytest.mark.skipif(
-    "postgresql://localhost/nonexistent" in os.environ.get("DATABASE_URL", ""),
-    reason="no real database configured",
-)
-def test_overview_with_valid_token():
-    token = jwt.encode(
+def _token() -> str:
+    return jwt.encode(
         {
             "sub": "test-user",
             "email": "test@example.com",
@@ -46,6 +27,34 @@ def test_overview_with_valid_token():
         os.environ["SUPABASE_JWT_SECRET"],
         algorithm="HS256",
     )
-    r = client.get("/api/overview", headers={"Authorization": f"Bearer {token}"})
+
+
+def test_health():
+    r = client.get("/health")
+    assert r.status_code == 200 and r.json()["status"] == "ok"
+
+
+def test_auth_required():
+    assert client.get("/api/overview").status_code == 403  # no bearer
+    assert client.get("/api/customers", headers={"Authorization": "Bearer nope"}).status_code == 401
+
+
+@pytest.mark.parametrize("page", ["customers", "products", "explore", "lifecycle"])
+def test_analytics_stub_shape(page):
+    r = client.get(f"/api/{page}", headers={"Authorization": f"Bearer {_token()}"})
     assert r.status_code == 200
-    assert "kpis" in r.json()
+    body = r.json()
+    assert body["stub"] is True
+    assert {"scope", "kpis", "charts", "tables", "notes"} <= body.keys()
+    assert body["scope"]["start"] is None
+    r2 = client.get(
+        f"/api/{page}?start=2026-01-01&end=2026-03-31&customers=Get%20Fresh",
+        headers={"Authorization": f"Bearer {_token()}"},
+    )
+    assert r2.json()["scope"]["start"] == "2026-01-01"
+
+
+def test_oauth_callback_state_guard():
+    # no valid signed state -> bounced back to the SPA, not a 500
+    r = client.get("/auth/qbo/callback?code=x&realmId=1&state=bad", follow_redirects=False)
+    assert r.status_code == 302 and "connect=qbo_state_mismatch" in r.headers["location"]
