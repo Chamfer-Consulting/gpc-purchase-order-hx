@@ -138,11 +138,36 @@ def _stale_unmatched_items(unlinked_pos: list[dict], stale_days: int = 30) -> li
     )]
 
 
+def _review_queue_items(review_queue_df) -> list[AttentionItem]:
+    """review_queue_df: data.load_review_queue()'s return value. Splits out stale
+    decisions (content changed under a settled call — higher urgency) from the
+    plain 'never reviewed, looks off' backlog."""
+    if review_queue_df is None or review_queue_df.empty:
+        return []
+    stale = int(review_queue_df["stale"].sum()) if "stale" in review_queue_df.columns else 0
+    fresh = len(review_queue_df) - stale
+    items = []
+    if stale:
+        items.append(AttentionItem(
+            severity="serious", category="review_stale",
+            title=f"{stale} extraction review(s) went stale — the email changed since the call",
+            magnitude=stale, page="extraction_review", count=stale,
+        ))
+    if fresh:
+        items.append(AttentionItem(
+            severity="warning", category="review_queue",
+            title=f"{fresh} extraction(s) flagged for review (is it a PO? a revision?)",
+            magnitude=fresh, page="extraction_review", count=fresh,
+        ))
+    return items
+
+
 def collect_attention_items(
     ctx,
     matched_line_items_df=None,
     needs_review_rows=None,
     unlinked_pos=None,
+    review_queue_df=None,
     max_items: int = 8,
 ) -> list[AttentionItem]:
     """Aggregates every category above, ranked by severity first, then magnitude
@@ -159,6 +184,7 @@ def collect_attention_items(
         items += _needs_review_items(needs_review_rows)
     if unlinked_pos is not None:
         items += _stale_unmatched_items(unlinked_pos)
+    items += _review_queue_items(review_queue_df)
 
     items.sort(key=lambda it: (_SEVERITY_RANK.get(it.severity, 9), -it.magnitude))
     return items[:max_items]

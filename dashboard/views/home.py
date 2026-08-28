@@ -17,6 +17,7 @@ from data import (
     get_database_url,
     load_donation_totals,
     load_matched_line_items,
+    load_review_queue,
     strip_tz,
     yoy_annual_chart,
 )
@@ -153,6 +154,7 @@ def render(ctx) -> None:
         attention_items = attention.collect_attention_items(
             ctx, matched_line_items_df=load_matched_line_items(),
             needs_review_rows=needs_review_rows, unlinked_pos=unlinked_pos,
+            review_queue_df=load_review_queue(),
         )
         if not attention_items:
             st.caption("Nothing needs attention right now. ")
