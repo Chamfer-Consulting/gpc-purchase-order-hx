@@ -265,10 +265,12 @@ def _build_thread_text(messages: list) -> str:
 
 
 def _gmail_thread_url(mailbox_email: str, thread_id: str) -> str:
-    """Deep link to the thread in the connected mailbox's web UI. The /u/<email>/
-    form pins it to the right account even when the viewer is signed into several
-    Google accounts; #all/ opens the thread regardless of which label it lives in."""
-    return f"https://mail.google.com/mail/u/{mailbox_email}/#all/{thread_id}"
+    """Deep link to the thread in the connected mailbox's web UI. `authuser=<email>`
+    pins it to the right account across multi-account sign-in — the older
+    /mail/u/<email>/ path form makes Gmail throw error #6446 when the browser can't
+    map the address to a signed-in session slot. #all/ opens the thread whatever
+    label it lives under."""
+    return f"https://mail.google.com/mail/?authuser={mailbox_email}#all/{thread_id}"
 
 
 def _thread_meta(mailbox_email: str, thread_id: str, messages: list) -> dict:
