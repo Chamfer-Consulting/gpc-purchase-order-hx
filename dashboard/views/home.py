@@ -11,6 +11,7 @@ import psycopg2
 import streamlit as st
 
 import attention
+import qbo_client
 import qbo_matcher
 from data import (
     fmt_delta,
@@ -149,12 +150,13 @@ def render(ctx) -> None:
         try:
             needs_review_rows = qbo_matcher.get_needs_review(_conn)
             unlinked_pos = qbo_matcher.get_unlinked_pos(_conn)
+            qbo_connection = qbo_client.get_connection(_conn)
         finally:
             _conn.close()
         attention_items = attention.collect_attention_items(
             ctx, matched_line_items_df=load_matched_line_items(),
             needs_review_rows=needs_review_rows, unlinked_pos=unlinked_pos,
-            review_queue_df=load_review_queue(),
+            review_queue_df=load_review_queue(), qbo_connection=qbo_connection,
         )
         if not attention_items:
             st.caption("Nothing needs attention right now. ")

@@ -57,6 +57,23 @@ def render(ctx) -> None:
         else:
             st.caption("Never synced yet — the next sync pulls everything.")
 
+        # Scheduled headless sync heartbeat (run_qbo_sync.py / qbo_sync.yml).
+        auto_at = connection.get("auto_synced_at")
+        auto_err = connection.get("auto_sync_error")
+        if auto_err:
+            st.error(
+                f"Automatic daily sync is failing: {auto_err}\n\n"
+                "If this is a reauthorisation error, reconnect below and run a full resync."
+            )
+        elif auto_at:
+            age_h = (datetime.now(timezone.utc) - auto_at).total_seconds() / 3600
+            if age_h > 36:
+                st.warning(f"Automatic daily sync last succeeded {age_h:.0f}h ago — the schedule may be stalled.")
+            else:
+                st.caption(f"✅ Automatic daily sync: last ran {auto_at:%Y-%m-%d %H:%M UTC} ({age_h:.0f}h ago).")
+        else:
+            st.caption("Automatic daily sync: not yet run (enable the `Sync QuickBooks` GitHub Action).")
+
         # Warn before the refresh token actually expires (~100 days from issue; it also
         # rotates on every successful refresh, so an active connection keeps extending).
         refresh_exp = connection.get("refresh_token_expires_at")

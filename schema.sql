@@ -118,6 +118,13 @@ CREATE TABLE IF NOT EXISTS qbo_connection (
 -- Sync cursor for incremental invoice pulls — NULL means "never synced, pull everything".
 ALTER TABLE qbo_connection ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMPTZ;
 
+-- Heartbeat for the scheduled headless sync (run_qbo_sync.py / .github/workflows/
+-- qbo_sync.yml). auto_synced_at is set on every successful run; auto_sync_error
+-- holds the last failure message (cleared on the next success) so the dashboard
+-- can show "auto-sync failing since ..." and prompt a reconnect.
+ALTER TABLE qbo_connection ADD COLUMN IF NOT EXISTS auto_synced_at TIMESTAMPTZ;
+ALTER TABLE qbo_connection ADD COLUMN IF NOT EXISTS auto_sync_error TEXT;
+
 CREATE TABLE IF NOT EXISTS qbo_invoices (
     id             SERIAL PRIMARY KEY,
     qbo_invoice_id TEXT NOT NULL UNIQUE,

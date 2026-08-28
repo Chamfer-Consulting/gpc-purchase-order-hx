@@ -1,0 +1,85 @@
+name: Sync QuickBooks
+
+# Keeps qbo_invoices / qbo_invoice_items / qbo_items and the PO<->invoice match
+# links current with no manual clicks. Daily incremental; a full resync (which
+# also prunes invoices deleted in QuickBooks) runs automatically on Sundays via
+# --weekly-full, or on demand from the "Run workflow" button.
+#
+# The Intuit refresh token rotates on every use and lasts ~100 days — a daily run
+# keeps the connection alive. If it can no longer be exchanged the job exits 3
+# and someone must reconnect from the dashboard.
+
+on:
+  schedule:
+    - cron: "30 12 * * *"  # ~7:30am US Central daily (30 min after the Gmail extract)
+  workflow_dispatch:
+    inputs:
+      full_resync:
+        description: "Full resync (ignore the cursor, re-pull everything, prune deletes)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One sync at a time; queue a second rather than racing the token refresh.
+concurrency:
+  group: qbo-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run QuickBooks sync
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          QBO_CLIENT_ID: ${{ secrets.QBO_CLIENT_ID }}
+          QBO_CLIENT_SECRET: ${{ secrets.QBO_CLIENT_SECRET }}
+          QBO_REDIRECT_URI: ${{ secrets.QBO_REDIRECT_URI }}
+          QBO_ENVIRONMENT: ${{ secrets.QBO_ENVIRONMENT }}
+          FULL_RESYNC: ${{ github.event.inputs.full_resync }}
+        run: |
+          args="--weekly-full"
+          if [ "$FULL_RESYNC" = "true" ]; then
+            args="--full-resync"
+          fi
+          python run_qbo_sync.py $args
+
+      # Exit 3 = the QuickBooks connection needs reauthorising; any non-zero exit
+      # surfaces as a job failure so it's visible.
+      - name: Upload log
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-qbo-sync-log
+          path: run_qbo_sync.log
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Flag failed run on the job summary
+        if: failure() || cancelled()
+        run: |
+          {
+            echo "### ⚠️ QuickBooks sync did not finish cleanly"
+            echo ""
+            echo "Status: **${{ job.status }}**"
+            echo ""
+            echo "If the log shows a reauthorisation error, reconnect from the dashboard:"
+            echo "QuickBooks → Connection & Sync → Reconnect, then run a full resync."
+            echo "Otherwise download the \`run-qbo-sync-log\` artifact for details."
+          } >> "$GITHUB_STEP_SUMMARY"

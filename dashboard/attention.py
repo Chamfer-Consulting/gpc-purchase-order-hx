@@ -162,12 +162,39 @@ def _review_queue_items(review_queue_df) -> list[AttentionItem]:
     return items
 
 
+def _qbo_sync_items(qbo_connection) -> list[AttentionItem]:
+    """qbo_connection: qbo_client.get_connection()'s dict, or None. Flags a failing
+    or stalled scheduled QuickBooks sync so invoice/Revenue data going stale is
+    visible on Home, not just buried on the Connection page."""
+    if not qbo_connection:
+        return []
+    from datetime import datetime, timezone
+
+    if qbo_connection.get("auto_sync_error"):
+        return [AttentionItem(
+            severity="serious", category="qbo_sync",
+            title="QuickBooks auto-sync is failing — invoice & revenue data is going stale",
+            magnitude=1e9, page="settings", count=1,
+        )]
+    auto_at = qbo_connection.get("auto_synced_at")
+    if auto_at is not None:
+        age_h = (datetime.now(timezone.utc) - auto_at).total_seconds() / 3600
+        if age_h > 36:
+            return [AttentionItem(
+                severity="warning", category="qbo_sync",
+                title=f"QuickBooks auto-sync last ran {age_h:.0f}h ago — the schedule may be stalled",
+                magnitude=age_h, page="settings", count=1,
+            )]
+    return []
+
+
 def collect_attention_items(
     ctx,
     matched_line_items_df=None,
     needs_review_rows=None,
     unlinked_pos=None,
     review_queue_df=None,
+    qbo_connection=None,
     max_items: int = 8,
 ) -> list[AttentionItem]:
     """Aggregates every category above, ranked by severity first, then magnitude
@@ -185,6 +212,7 @@ def collect_attention_items(
     if unlinked_pos is not None:
         items += _stale_unmatched_items(unlinked_pos)
     items += _review_queue_items(review_queue_df)
+    items += _qbo_sync_items(qbo_connection)
 
     items.sort(key=lambda it: (_SEVERITY_RANK.get(it.severity, 9), -it.magnitude))
     return items[:max_items]

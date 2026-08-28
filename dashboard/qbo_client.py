@@ -12,12 +12,17 @@ environment's credentials won't authenticate against the other's API base, so re
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import requests
-import streamlit as st
 from psycopg2.extras import Json, execute_values
+
+try:  # available in the dashboard; absent in the headless GitHub Action venv
+    import streamlit as st
+except ImportError:  # pragma: no cover
+    st = None
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from product_catalog import normalize_product, classify_qbo_item  # noqa: E402 — needs the sys.path insert above
@@ -25,6 +30,41 @@ from product_catalog import normalize_product, classify_qbo_item  # noqa: E402 �
 AUTHORIZE_URL = "https://appcenter.intuit.com/connect/oauth2"
 TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 SCOPE = "com.intuit.quickbooks.accounting"
+
+_API_MAX_ATTEMPTS = 4
+_API_BASE_SLEEP = 3  # seconds; exponential: 3, 6, 12
+
+
+def _cfg(secret_key: str, env_key: str, default: str | None = None) -> str | None:
+    """Config value from st.secrets (dashboard) or an env var (headless job)."""
+    if st is not None:
+        val = st.secrets.get(secret_key)
+        if val:
+            return val
+    return os.environ.get(env_key, default)
+
+
+def _qbo_get(url: str, headers: dict, params: dict) -> dict:
+    """GET a QBO API endpoint with retry/backoff and QBO-specific error handling:
+    QBO throttles (429) and occasionally 5xxs, and — critically — sometimes returns
+    HTTP 200 with a {"Fault": ...} body instead of the data, which must not be
+    treated as an empty result."""
+    last = None
+    for attempt in range(1, _API_MAX_ATTEMPTS + 1):
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        if resp.status_code in (429, 500, 502, 503, 504):
+            last = f"{resp.status_code}: {resp.text[:300]}"
+            if attempt < _API_MAX_ATTEMPTS:
+                time.sleep(_API_BASE_SLEEP * (2 ** (attempt - 1)))
+                continue
+            raise RuntimeError(f"QuickBooks API error after {attempt} attempts — {last}")
+        if not resp.ok:
+            raise RuntimeError(f"QuickBooks API error {resp.status_code}: {resp.text}")
+        body = resp.json()
+        if isinstance(body, dict) and body.get("Fault"):
+            raise RuntimeError(f"QuickBooks API returned a Fault: {json.dumps(body['Fault'])[:500]}")
+        return body
+    raise RuntimeError(f"QuickBooks API error — {last}")
 
 
 class QBOReauthRequired(RuntimeError):
@@ -35,7 +75,7 @@ class QBOReauthRequired(RuntimeError):
 
 
 def is_production() -> bool:
-    return st.secrets.get("qbo_environment", "sandbox") == "production"
+    return (_cfg("qbo_environment", "QBO_ENVIRONMENT", "sandbox") or "sandbox") == "production"
 
 
 def api_base() -> str:
@@ -49,7 +89,13 @@ def invoice_url(qbo_invoice_id: str) -> str:
 
 
 def _creds():
-    return st.secrets["qbo_client_id"], st.secrets["qbo_client_secret"], st.secrets["qbo_redirect_uri"]
+    cid = _cfg("qbo_client_id", "QBO_CLIENT_ID")
+    csec = _cfg("qbo_client_secret", "QBO_CLIENT_SECRET")
+    ruri = _cfg("qbo_redirect_uri", "QBO_REDIRECT_URI")
+    missing = [n for n, v in (("client_id", cid), ("client_secret", csec), ("redirect_uri", ruri)) if not v]
+    if missing:
+        raise RuntimeError(f"QuickBooks not configured — missing {', '.join(missing)}")
+    return cid, csec, ruri
 
 
 def build_authorize_url(state: str) -> str:
@@ -121,6 +167,17 @@ def _refresh(conn, realm_id: str, refresh_token: str) -> str:
         timeout=30,
     )
     if not resp.ok:
+        # A refresh token is single-use and rotates on every exchange. If a
+        # concurrent process (the scheduled sync + a dashboard user) refreshed a
+        # moment ago, our token is now stale and this 400s — re-read the stored
+        # row; if it now holds a fresh access token, that race is benign.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        latest = get_connection(conn)
+        if latest and latest["access_token_expires_at"] > datetime.now(timezone.utc) + timedelta(minutes=2):
+            return latest["access_token"]
         raise QBOReauthRequired(
             f"QuickBooks token refresh failed ({resp.status_code}) — the connection has "
             "expired or been revoked. Disconnect and connect again, then run a full resync."
@@ -135,7 +192,8 @@ def get_connection(conn) -> dict | None:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT realm_id, access_token, refresh_token, access_token_expires_at, "
-            "refresh_token_expires_at, connected_at, last_synced_at "
+            "refresh_token_expires_at, connected_at, last_synced_at, "
+            "auto_synced_at, auto_sync_error "
             "FROM qbo_connection ORDER BY id DESC LIMIT 1"
         )
         row = cur.fetchone()
@@ -145,6 +203,7 @@ def get_connection(conn) -> dict | None:
         "realm_id": row[0], "access_token": row[1], "refresh_token": row[2],
         "access_token_expires_at": row[3], "refresh_token_expires_at": row[4],
         "connected_at": row[5], "last_synced_at": row[6],
+        "auto_synced_at": row[7], "auto_sync_error": row[8],
     }
 
 
@@ -177,15 +236,11 @@ def fetch_all_invoices(access_token: str, realm_id: str, since: datetime | None 
     where = f" WHERE Metadata.LastUpdatedTime > '{since.isoformat()}'" if since else ""
     while True:
         query = f"SELECT * FROM Invoice{where} STARTPOSITION {start_position} MAXRESULTS {page_size}"
-        resp = requests.get(
+        body = _qbo_get(
             f"{api_base()}/v3/company/{realm_id}/query",
-            headers=headers,
-            params={"query": query, "minorversion": "65"},
-            timeout=30,
+            headers, {"query": query, "minorversion": "65"},
         )
-        if not resp.ok:
-            raise RuntimeError(f"QuickBooks API error {resp.status_code}: {resp.text}")
-        batch = resp.json().get("QueryResponse", {}).get("Invoice", [])
+        batch = body.get("QueryResponse", {}).get("Invoice", [])
         invoices.extend(batch)
         if len(batch) < page_size:
             break
@@ -212,15 +267,11 @@ def fetch_all_items(access_token: str, realm_id: str) -> list[dict]:
             f"SELECT * FROM Item WHERE Active IN (true, false) "
             f"STARTPOSITION {start_position} MAXRESULTS {page_size}"
         )
-        resp = requests.get(
+        body = _qbo_get(
             f"{api_base()}/v3/company/{realm_id}/query",
-            headers=headers,
-            params={"query": query, "minorversion": "65"},
-            timeout=30,
+            headers, {"query": query, "minorversion": "65"},
         )
-        if not resp.ok:
-            raise RuntimeError(f"QuickBooks API error {resp.status_code}: {resp.text}")
-        batch = resp.json().get("QueryResponse", {}).get("Item", [])
+        batch = body.get("QueryResponse", {}).get("Item", [])
         items.extend(batch)
         if len(batch) < page_size:
             break
