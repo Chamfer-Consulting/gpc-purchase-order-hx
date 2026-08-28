@@ -11,6 +11,7 @@ environment's credentials won't authenticate against the other's API base, so re
 
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -31,8 +32,33 @@ AUTHORIZE_URL = "https://appcenter.intuit.com/connect/oauth2"
 TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 SCOPE = "com.intuit.quickbooks.accounting"
 
+# Intuit Accounting API minor version — bump in ONE place. 75 is current/stable and
+# only adds fields; the ones this integration reads (Id, DocNumber, CustomerRef,
+# Txn/Ship/DueDate, TotalAmt, PrivateNote, Line/SalesItemLineDetail,
+# Metadata.LastUpdatedTime) are long-stable core fields unaffected by the bump.
+# https://developer.intuit.com/app/developer/qbo/docs/learn/explore-the-quickbooks-online-api/minor-versions
+QBO_MINOR_VERSION = "75"
+
 _API_MAX_ATTEMPTS = 4
 _API_BASE_SLEEP = 3  # seconds; exponential: 3, 6, 12
+
+# QBO's Query API takes a query-language STRING, not bind params — the incremental
+# cursor is formatted into it. It's our own Postgres timestamp so injection isn't a
+# real risk, but format it explicitly and assert the shape so a malformed value
+# can never reach the wire.
+_QBO_TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$")
+
+
+def _qbo_timestamp(dt: datetime) -> str:
+    if not isinstance(dt, datetime):
+        raise TypeError(f"expected datetime for the QBO cursor, got {type(dt).__name__}")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    s = dt.strftime("%Y-%m-%dT%H:%M:%S%z")
+    s = f"{s[:-2]}:{s[-2:]}"  # +0000 -> +00:00
+    if not _QBO_TS_RE.match(s):
+        raise ValueError(f"refusing to build a QBO query with a malformed timestamp: {s!r}")
+    return s
 
 
 def _cfg(secret_key: str, env_key: str, default: str | None = None) -> str | None:
@@ -233,12 +259,12 @@ def fetch_all_invoices(access_token: str, realm_id: str, since: datetime | None 
     start_position = 1
     page_size = 1000
     headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
-    where = f" WHERE Metadata.LastUpdatedTime > '{since.isoformat()}'" if since else ""
+    where = f" WHERE Metadata.LastUpdatedTime > '{_qbo_timestamp(since)}'" if since else ""
     while True:
         query = f"SELECT * FROM Invoice{where} STARTPOSITION {start_position} MAXRESULTS {page_size}"
         body = _qbo_get(
             f"{api_base()}/v3/company/{realm_id}/query",
-            headers, {"query": query, "minorversion": "65"},
+            headers, {"query": query, "minorversion": QBO_MINOR_VERSION},
         )
         batch = body.get("QueryResponse", {}).get("Invoice", [])
         invoices.extend(batch)
@@ -269,7 +295,7 @@ def fetch_all_items(access_token: str, realm_id: str) -> list[dict]:
         )
         body = _qbo_get(
             f"{api_base()}/v3/company/{realm_id}/query",
-            headers, {"query": query, "minorversion": "65"},
+            headers, {"query": query, "minorversion": QBO_MINOR_VERSION},
         )
         batch = body.get("QueryResponse", {}).get("Item", [])
         items.extend(batch)
