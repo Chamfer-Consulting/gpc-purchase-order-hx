@@ -194,22 +194,28 @@ def apply_group_override(result: dict, override: dict) -> None:
 
 # ── few-shot ─────────────────────────────────────────────────────────────────
 
-def build_fewshot_block(conn, limit: int = 12, max_chars: int = 6_000) -> str:
+def build_fewshot_block(
+    conn, limit: int = 12, max_chars: int = 6_000, exclude: set | None = None
+) -> str:
     """A compact block of verified examples for the extraction / gate prompts.
     Newest decisions first (they reflect the most recent corrections). Returns ""
-    when there's nothing to show yet."""
+    when there's nothing to show yet. `exclude` is a set of (target_kind,
+    target_key) tuples to leave out — the eval passes the row under test so it
+    can't see its own answer."""
+    exclude = exclude or set()
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
-            SELECT verdict, revision_of, standalone, content_snapshot, note
+            SELECT target_kind, target_key, verdict, revision_of, standalone, content_snapshot, note
             FROM extraction_reviews
             WHERE fewshot = TRUE AND content_snapshot IS NOT NULL AND content_snapshot <> ''
             ORDER BY updated_at DESC
             LIMIT %s
             """,
-            (limit,),
+            (limit + len(exclude),),
         )
-        rows = [dict(r) for r in cur.fetchall()]
+        rows = [dict(r) for r in cur.fetchall()
+                if (r["target_kind"], r["target_key"]) not in exclude][:limit]
     if not rows:
         return ""
 
