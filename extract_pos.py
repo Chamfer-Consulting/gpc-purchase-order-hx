@@ -512,6 +512,7 @@ def _extract_from_source(
     pdf_b64: str | None = None,
     extraction_method: str = "text",
     model: str = MODEL,
+    extra_guidance: str = "",
 ) -> dict | None:
     """
     Core Claude-calling extraction logic, decoupled from where the document content
@@ -532,6 +533,11 @@ def _extract_from_source(
     reference_prices, if given, is a read-only {(customer, product, size): price} dict
     used to flag line items whose price looks anomalous — safe to share across worker
     threads since it's never mutated after being built.
+
+    extra_guidance, if given, is prepended to the user message — the caller uses it
+    to feed in few-shot examples built from human review decisions
+    (extraction_reviews.build_fewshot_block). Kept out of SYSTEM_BLOCK so the cached
+    system prompt stays stable across a run while this can vary.
     """
     text_truncated = bool(text) and len(text) > MAX_TEXT_CHARS
     if text_truncated:
@@ -546,30 +552,29 @@ def _extract_from_source(
         if stop_event is not None and stop_event.is_set():
             return None
         try:
+            guidance_prefix = f"{extra_guidance}\n\n---\n\n" if extra_guidance else ""
             if text:
                 messages = [
                     {
                         "role": "user",
-                        "content": f"Document text:\n{text[:MAX_TEXT_CHARS]}"
+                        "content": f"{guidance_prefix}Document text:\n{text[:MAX_TEXT_CHARS]}"
                     }
                 ]
             else:
-                messages = [
+                doc_blocks = [
                     {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "document",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": "application/pdf",
-                                    "data": pdf_b64
-                                }
-                            },
-                            {"type": "text", "text": "Extract the purchase order data from this document."}
-                        ]
-                    }
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": pdf_b64
+                        }
+                    },
                 ]
+                if extra_guidance:
+                    doc_blocks.append({"type": "text", "text": extra_guidance})
+                doc_blocks.append({"type": "text", "text": "Extract the purchase order data from this document."})
+                messages = [{"role": "user", "content": doc_blocks}]
 
             response = client.messages.create(
                 model=model,

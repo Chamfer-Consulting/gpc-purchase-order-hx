@@ -314,16 +314,20 @@ def _is_customer_message(message: dict) -> bool:
     return GARFIELD_DOMAIN not in frm
 
 
-def _yes_no_gate(client: anthropic.Anthropic, source_label: str, question: str, body: str) -> bool:
+def _yes_no_gate(
+    client: anthropic.Anthropic, source_label: str, question: str, body: str, examples: str = ""
+) -> bool:
     """One tiny YES/NO classification call, biased to YES. Returns True on YES or on
     any API error — a wrong True just costs the full extraction we'd have done
-    anyway, a wrong False would drop a real PO."""
+    anyway, a wrong False would drop a real PO. `examples`, if given, is a few-shot
+    block from human review decisions, inserted ahead of the content."""
+    preamble = f"{examples}\n\n---\n\n" if examples else ""
     try:
         resp = client.messages.create(
             model=GATE_MODEL,
             max_tokens=5,
             system="You answer with exactly one word: YES or NO.",
-            messages=[{"role": "user", "content": f"{question}\n\n{body}\n\nAnswer YES or NO. If unsure, answer YES."}],
+            messages=[{"role": "user", "content": f"{question}\n\n{preamble}{body}\n\nAnswer YES or NO. If unsure, answer YES."}],
         )
     except anthropic.APIError as e:
         logger.warning(f"{source_label}: YES/NO gate call failed ({e}) — proceeding with full extraction")
@@ -346,7 +350,9 @@ def _looks_like_new_order(client: anthropic.Anthropic, source_label: str, new_te
     )
 
 
-def _thread_looks_like_order(client: anthropic.Anthropic, source_label: str, thread_text: str) -> bool:
+def _thread_looks_like_order(
+    client: anthropic.Anthropic, source_label: str, thread_text: str, examples: str = ""
+) -> bool:
     """Pre-extraction gate for a brand-new thread: does the conversation anywhere
     contain a customer placing or confirming a concrete produce order (specific
     product(s) AND quantities)? A cheap Haiku call in front of the Sonnet
@@ -359,6 +365,7 @@ def _thread_looks_like_order(client: anthropic.Anthropic, source_label: str, thr
         "concrete order — specific produce product(s) AND quantities? Pricing questions, "
         "availability chatter, logistics, invoices, and relationship email are NOT orders.",
         thread_text[:6000],
+        examples=examples,
     )
 
 
@@ -371,6 +378,7 @@ def _process_thread(
     stop_event: threading.Event,
     mailbox_email: str,
     extracted_keys: set,
+    fewshot_block: str = "",
 ) -> list[dict]:
     """Returns extraction result dict(s) for one Gmail thread, routed by whether
     any message in it carries a PDF attachment:
@@ -475,6 +483,7 @@ def _process_thread(
             result = _extract_from_source(
                 client, source_label, stop_event, reference_prices,
                 text=text, pdf_b64=pdf_b64, extraction_method="text" if text else "vision",
+                extra_guidance=fewshot_block,
             )
             if result is not None:
                 result["_file_hash"] = file_hash
@@ -562,7 +571,7 @@ def _process_thread(
     # ambiguous thread still gets the full extraction. Threads with prior state are
     # already covered: unchanged ones short-circuited above, grown not-a-PO ones by
     # the new-messages gate, and prior POs must re-extract fully on any change.
-    if state is None and not _thread_looks_like_order(client, source_label, combined_text):
+    if state is None and not _thread_looks_like_order(client, source_label, combined_text, examples=fewshot_block):
         logger.info(f"{source_label}: pre-extraction gate — no concrete customer order — skipping full extraction")
         postgres_store.upsert_thread_state(pg_conn, thread_id, message_count, file_hash, was_po=False)
         return []
@@ -570,6 +579,7 @@ def _process_thread(
     result = _extract_from_source(
         client, source_label, stop_event, reference_prices,
         text=combined_text, extraction_method="text", model=CLOUD_EXTRACTION_MODEL,
+        extra_guidance=fewshot_block,
     )
     if result is not None:
         result["_file_hash"] = file_hash
@@ -697,6 +707,12 @@ def main():
 
         client = anthropic.Anthropic(api_key=anthropic_api_key)
         reference_prices = postgres_store.get_reference_prices(pg_conn)
+        # Few-shot examples from human review decisions, fed into every extraction
+        # and pre-extraction gate this run. Rebuilt each run so new corrections take
+        # effect on the next run with no code change.
+        fewshot_block = extraction_reviews.build_fewshot_block(pg_conn)
+        if fewshot_block:
+            print(f"🎓 Few-shot: {fewshot_block.count(chr(10)) } line(s) from human review decisions")
         stop_event = threading.Event()
         term_event = threading.Event()  # set by SIGTERM only — distinguishes a job
         # timeout / cancellation from the out-of-credits pause (both stop the loop).
@@ -843,7 +859,8 @@ def main():
                 pg_conn = _ensure_connection(pg_conn, database_url)
                 access_token = gmail_client.get_valid_access_token(pg_conn, gmail_client_id, gmail_client_secret)
                 results = _process_thread(
-                    client, access_token, thread_id, reference_prices, pg_conn, stop_event, mailbox_email, extracted_keys
+                    client, access_token, thread_id, reference_prices, pg_conn, stop_event,
+                    mailbox_email, extracted_keys, fewshot_block,
                 )
             except Exception as e:
                 # Nothing stable to key a Postgres row on here (the failure may have
