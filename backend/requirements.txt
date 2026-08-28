@@ -1,0 +1,19 @@
+# PO Dashboard rebuild — FastAPI backend.
+# Python 3.12. Pinned to match the pipeline where they overlap (psycopg2, anthropic).
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+psycopg[binary,pool]==3.2.3
+PyJWT==2.10.1
+python-dateutil==2.9.0.post0
+pandas==2.2.3
+plotly==5.24.1
+cachetools==5.5.0
+httpx==0.28.1
+
+# Reused from the repo root / dashboard (extraction, matching, catalog logic).
+# The backend adds the repo root + dashboard/ to sys.path and imports them directly
+# during the strangler-fig migration; these are their deps.
+anthropic==0.111.0
+requests==2.32.3

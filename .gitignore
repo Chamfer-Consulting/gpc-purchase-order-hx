@@ -1,9 +1,9 @@
-# Virtual environment
-bin/
-lib/
-lib64
-include/
-pyvenv.cfg
+# Virtual environment (root-anchored so they don't catch web/src/lib etc.)
+/bin/
+/lib/
+/lib64
+/include/
+/pyvenv.cfg
 .venv/
 .venv*/
 venv/
@@ -27,4 +27,15 @@ files/
 
 # Secrets
 .env
+.env.local
+.env.*.local
+backend/.env
+web/.env
+web/.env.local
 .streamlit/secrets.toml
+
+# Rebuild (po-dashboard-rebuild): node + build output
+node_modules/
+web/dist/
+web/.vite/
+*.tsbuildinfo

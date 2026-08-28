@@ -1,0 +1,33 @@
+# Fly.io config for the PO Dashboard API.
+# The Dockerfile needs the REPO ROOT as build context, so deploy from the repo root:
+#   fly deploy --config backend/fly.toml --dockerfile backend/Dockerfile
+# Secrets: `fly secrets set ...` (see docs/REBUILD-SETUP.md §4).
+app = "gpc-po-dashboard-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "backend/Dockerfile"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1   # always on — no cold start
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 40
+    hard_limit = 60
+
+[[http_service.checks]]
+  method = "get"
+  path = "/health"
+  interval = "15s"
+  timeout = "3s"
+  grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
