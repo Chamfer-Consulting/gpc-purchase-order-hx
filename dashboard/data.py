@@ -1084,6 +1084,9 @@ def load_review_queue(limit: int = 300) -> pd.DataFrame:
     reasons, prio = [], []
     for _, r in df.iterrows():
         why, p = [], 0
+        err = str(r["error"] or "")
+        if err.startswith("modification"):
+            why.append("unresolved modification — link it to a PO"); p += 7
         if is_clean[r.name] and r["n_items"] == 0:
             why.append("0 line items"); p += 5
         if is_clean[r.name] and not r["customer_name"]:

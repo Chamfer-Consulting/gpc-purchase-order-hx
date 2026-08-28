@@ -158,6 +158,17 @@ def has_authoritative_result(decision: dict) -> bool:
     )
 
 
+def wants_modification_extract(decision: dict) -> bool:
+    """True when a reviewer said 'this thread is a revision of <PO>' without
+    supplying the corrected line items — the pipeline should re-extract the thread
+    as a modification seeded with that PO's current state, and group it there."""
+    return (
+        decision["verdict"] == "is_po"
+        and bool(decision.get("revision_of"))
+        and not _corrected_dict(decision)
+    )
+
+
 def synthesized_result(decision: dict, source_label: str, extraction_method: str) -> dict:
     """Build an extraction-result dict straight from the reviewer's decision, for
     the cases has_authoritative_result() covers. `_review_locked` marks it so the

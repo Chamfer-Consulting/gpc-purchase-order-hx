@@ -371,6 +371,168 @@ def _thread_looks_like_order(
     )
 
 
+# ── Text modifications to an existing PO ──────────────────────────────────────
+#
+# A customer can change an order they've already placed (by PDF or by earlier
+# email) without sending a revised PDF — a plain message in the same thread, or a
+# whole new email. We never store the change as a delta: on detecting one, we
+# re-extract the COMPLETE resulting order by handing the model the order's current
+# structured state plus the change messages. It then lands as an ordinary full
+# revision row (distinct _source_file so it can't collide with the PDF/thread row),
+# grouped under the same PO by annotate_revisions via _group_override.
+
+MODIFICATION_INSTRUCTION = (
+    "The block below headed CURRENT PURCHASE ORDER is an order the customer has "
+    "ALREADY placed. The messages after it, headed LATER CUSTOMER MESSAGES, are "
+    "newer messages from that customer. Apply every change they request "
+    "(quantities, products, sizes, delivery date) to the current order and output "
+    "the COMPLETE resulting purchase order via the extract_po tool — every line, "
+    "not only the changed ones, with the changes applied. Keep every line they did "
+    "not mention exactly as it is. If the later messages request no change to order "
+    "content, output the current order unchanged. If the later messages are not "
+    "about this order at all, set is_po to false."
+)
+
+MODIFICATION_SOURCE_SUFFIX = "#mod"  # appended to gmail-thread:<id> for a text-mod row
+
+# Words that, in a thread with no PDF, suggest the customer is changing an order
+# placed elsewhere rather than placing a fresh one.
+_MODIFICATION_HINT = re.compile(
+    r"\b(revis|amend|update the (order|po)|change (the )?(order|po|qty|quantity)|"
+    r"instead of|scratch that|correction|add to (the |my |our )?(order|po)|"
+    r"remove from|cancel the|make it|bump (it|the))\b",
+    re.IGNORECASE,
+)
+
+
+def _render_prior_order(prior: dict) -> str:
+    """A stored PO result dict rendered as compact readable text, to seed a
+    modification re-extraction."""
+    lines = [
+        f"CURRENT PURCHASE ORDER"
+        f"  (PO {prior.get('po_number') or '—'}, customer {prior.get('customer_name') or '—'}"
+        f", PO date {prior.get('po_date') or '—'}, delivery {prior.get('delivery_date') or '—'})"
+    ]
+    for it in prior.get("line_items") or []:
+        if it.get("is_removed"):
+            continue
+        name = it.get("product_name") or it.get("product_raw") or "?"
+        size = f" {it['container_size']}" if it.get("container_size") else ""
+        price = f" @ {it['unit_price']}" if it.get("unit_price") is not None else ""
+        lines.append(f"  - {it.get('quantity') or '?'} x {name}{size}{price}")
+    if prior.get("subtotal") is not None or prior.get("total") is not None:
+        lines.append(f"  (subtotal {prior.get('subtotal')}, tax {prior.get('tax')}, total {prior.get('total')})")
+    return "\n".join(lines)
+
+
+def _thread_modifies_order(client, source_label, mod_text, prior_summary, examples="") -> bool:
+    return _yes_no_gate(
+        client, source_label,
+        "A customer has already placed the order below (CURRENT ORDER). After it are later "
+        "messages from that same customer (LATER MESSAGES). Do the later messages ask to "
+        "CHANGE that order — different quantities, products, sizes, or delivery date?",
+        f"CURRENT ORDER:\n{prior_summary[:2500]}\n\nLATER MESSAGES:\n{mod_text[:3500]}",
+        examples=examples,
+    )
+
+
+def _line_multiset(items) -> dict:
+    """{(product, size): total_qty} — for comparing two orders' content."""
+    out = {}
+    for it in items or []:
+        if it.get("is_removed"):
+            continue
+        k = (it.get("product_name") or it.get("product_raw") or "?", it.get("container_size") or "")
+        try:
+            out[k] = out.get(k, 0) + float(it.get("quantity") or 0)
+        except (TypeError, ValueError):
+            out[k] = out.get(k, 0)
+    return out
+
+
+def _orders_equivalent(a_items, b_items) -> bool:
+    return _line_multiset(a_items) == _line_multiset(b_items)
+
+
+def _extract_modification(client, source_label, prior, mod_text, fewshot_block, stop_event) -> dict | None:
+    """Seeded re-extraction: prior order state + the change messages -> the complete
+    revised order. Returns the result dict, or None if the model says it's not a
+    change / not about this order, or if the result is content-equivalent to prior
+    (no real modification -> no spurious revision row)."""
+    prior_block = _render_prior_order(prior)
+    payload = (
+        f"{MODIFICATION_INSTRUCTION}\n\n{prior_block}\n\n"
+        f"=== LATER CUSTOMER MESSAGES ===\n{mod_text}"
+    )
+    result = _extract_from_source(
+        client, source_label, stop_event, None,
+        text=payload, extraction_method="text-mod", model=CLOUD_EXTRACTION_MODEL,
+        extra_guidance=fewshot_block,
+    )
+    if result is None or "error" in result:
+        return result if (result and "error" in result) else None
+    if _orders_equivalent(result.get("line_items"), prior.get("line_items")):
+        logger.info(f"{source_label}: modification re-extraction matches the current order — no revision written")
+        return None
+    # Carry forward identity fields the mod text may not restate.
+    for k in ("po_number", "customer_name", "customer_id", "delivery_date"):
+        if not result.get(k) and prior.get(k):
+            result[k] = prior[k]
+    return result
+
+
+def _thread_modification(
+    client, thread_id, messages, attachments_by_message, pg_conn, fewshot_block, stop_event, extracted_keys
+) -> dict | None:
+    """Case A — a thread that carries a PDF PO and also has customer messages AFTER
+    the latest PDF that change the order. Returns a full revised-order result keyed
+    'gmail-thread:<id>#mod', grouped under the PDF's PO, or None."""
+    pdf_times = [t for t in (_received_at(m) for m, _ in attachments_by_message) if t]
+    if not pdf_times:
+        return None
+    latest_pdf_ts = max(pdf_times)
+
+    later_msgs = [
+        m for m in messages
+        if _is_customer_message(m) and (_received_at(m) or "") > latest_pdf_ts
+    ]
+    if not later_msgs:
+        return None
+
+    mod_text = _build_thread_text(later_msgs)
+    if not mod_text.strip():
+        return None
+
+    mod_source = f"gmail-thread:{thread_id}{MODIFICATION_SOURCE_SUFFIX}"
+    mod_hash = hashlib.sha256(mod_text.encode("utf-8")).hexdigest()
+    if (mod_source, mod_hash) in extracted_keys or postgres_store.is_known(pg_conn, mod_source, mod_hash):
+        return None
+
+    prior = postgres_store.latest_thread_po(pg_conn, thread_id)
+    if prior is None:
+        return None  # nothing stored to modify (the PDF itself may have failed)
+
+    if not _thread_modifies_order(
+        client, mod_source, mod_text, _render_prior_order(prior), examples=fewshot_block
+    ):
+        return None
+
+    result = _extract_modification(client, mod_source, prior, mod_text, fewshot_block, stop_event)
+    if result is None:
+        return None
+
+    result["_file_hash"] = mod_hash
+    result["_source_file"] = mod_source
+    result["source_received_at"] = max(t for t in (_received_at(m) for m in later_msgs) if t)
+    result["gmail_thread_id"] = thread_id
+    result["_group_override"] = prior.get("po_number") or prior.get("_source_file")
+    extracted_keys.add((mod_source, mod_hash))
+    logger.info(
+        f"{mod_source}: text modification to PO {prior.get('po_number')} — revised order re-extracted"
+    )
+    return result
+
+
 def _process_thread(
     client: anthropic.Anthropic,
     access_token: str,
@@ -495,6 +657,19 @@ def _process_thread(
                 result["gmail_thread_id"] = thread_id
                 results.append(result)
                 extracted_keys.add((source_label, file_hash))
+
+        # The customer may have changed the order in a later message without sending
+        # a revised PDF — pick that up as a full revised-order revision. Runs even
+        # when every PDF was is_known (an incremental run over a thread that just
+        # gained a change message).
+        if not stop_event.is_set():
+            mod_result = _thread_modification(
+                client, thread_id, messages, attachments_by_message,
+                pg_conn, fewshot_block, stop_event, extracted_keys,
+            )
+            if mod_result is not None:
+                results.append(mod_result)
+
         if results:
             return results
         # Every attachment was skipped or filtered out as a non-PO document. If the
@@ -543,6 +718,31 @@ def _process_thread(
         logger.info(f"{source_label}: applied human review decision ({decision['verdict']}) — no model call")
         return results
 
+    # A reviewer said "this thread is a revision of PO X" without giving the lines —
+    # re-extract the thread as a modification seeded with PO X's current state and
+    # group it there.
+    if (
+        decision
+        and not extraction_reviews.is_stale(decision, file_hash)
+        and extraction_reviews.wants_modification_extract(decision)
+    ):
+        prior = (postgres_store.clean_po_by_number(pg_conn, decision["revision_of"])
+                 or postgres_store.latest_thread_po(pg_conn, thread_id))
+        if prior is not None:
+            mres = _extract_modification(client, source_label, prior, combined_text, fewshot_block, stop_event)
+            if mres is not None and "error" not in mres:
+                mres["_file_hash"] = file_hash
+                mres["_source_file"] = source_label
+                mres["source_received_at"] = _thread_received_at(messages)
+                mres["gmail_thread_id"] = thread_id
+                mres["_group_override"] = decision["revision_of"]
+                mres["_thread_state"] = (thread_id, message_count, file_hash, True)
+                results.append(mres)
+                extracted_keys.add((source_label, file_hash))
+                logger.info(f"{source_label}: reviewer-directed revision of {decision['revision_of']} — revised order extracted")
+                return results
+        logger.warning(f"{source_label}: reviewer marked it a revision of {decision['revision_of']} but that PO wasn't found — extracting normally")
+
     state = postgres_store.get_thread_state(pg_conn, thread_id)
     # The last_file_hash short-circuit is only trusted for a thread recorded as NOT an
     # order (was_po=False) — there the state row IS the whole record and nothing can be
@@ -588,6 +788,35 @@ def _process_thread(
         text=combined_text, extraction_method="text", model=CLOUD_EXTRACTION_MODEL,
         extra_guidance=fewshot_block,
     )
+    if result is not None and "error" not in result:
+        # Case B: this text thread names a PO that was captured elsewhere (a PDF, or
+        # another thread) — it's a modification of that order, not a new one.
+        other = postgres_store.clean_po_by_number(
+            pg_conn, result.get("po_number"), exclude_source_file=source_label
+        ) if result.get("po_number") else None
+        if other is not None:
+            group_key = other.get("po_number") or other.get("_source_file")
+            if len(_line_multiset(result.get("line_items"))) < len(_line_multiset(other.get("line_items"))):
+                # Fewer lines than the order it revises -> the customer restated
+                # only the changes. Re-extract the COMPLETE revised order seeded
+                # with the prior state so annotate_revisions doesn't read every
+                # unrestated line as "Removed".
+                seeded = _extract_modification(client, source_label, other, combined_text, fewshot_block, stop_event)
+                if seeded is not None and "error" not in seeded:
+                    result = seeded
+                    result["_extraction_method"] = "text-mod"
+            result["_group_override"] = group_key
+            logger.info(f"{source_label}: references PO {result.get('po_number')} captured elsewhere — grouped as its revision")
+        elif not result.get("po_number") and _MODIFICATION_HINT.search(combined_text or ""):
+            # Talks like a change to an existing order but names no PO we can
+            # resolve — don't write a guessy fragment. Surface it for a human to
+            # link on the Extraction Review page ("Revision of another PO").
+            logger.info(f"{source_label}: looks like a modification but no resolvable target PO — flagging for review")
+            result = {
+                "_source_file": source_label, "_extraction_method": "text",
+                "error": "modification — target PO unresolved",
+            }
+
     if result is not None:
         result["_file_hash"] = file_hash
         result["source_received_at"] = _thread_received_at(messages)
@@ -601,10 +830,11 @@ def _process_thread(
             # state row whose last_file_hash makes the next run skip an unpublished
             # PO, losing it silently.
             result["_thread_state"] = (thread_id, message_count, file_hash, True)
-        elif result["error"] == postgres_store.NOT_A_PO_ERROR:
-            # No purchase_orders row will exist for this — the state row IS the whole
-            # record of "checked, not an order", and there's no result to lose, so
-            # it's safe (and useful for the cheap re-check path) to write it now.
+        elif result["error"] in (postgres_store.NOT_A_PO_ERROR, "modification — target PO unresolved"):
+            # Settled outcomes for this thread content: 'not a purchase order', or a
+            # modification we can't attach yet (a human links it on the review
+            # page). Record the state so we don't re-pay every run — a new message
+            # changes the hash and re-opens it.
             postgres_store.upsert_thread_state(pg_conn, thread_id, message_count, file_hash, was_po=False)
         # A real failure (credit/API error, timeout): write nothing — is_known() now
         # allows the retry, and no state row must block it.

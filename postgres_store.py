@@ -228,6 +228,57 @@ def get_snapshot(conn, target_kind: str, target_key: str) -> dict | None:
     return dict(row) if row else None
 
 
+def latest_thread_po(conn, thread_id: str) -> dict | None:
+    """The most recently stored clean (non-error) purchase_orders row for a Gmail
+    thread, as a result-shaped dict (same as get_full_dataset entries), with its
+    line items. Used to seed a text-modification re-extraction with the order's
+    current state. 'Latest' = highest id (most recently inserted)."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"SELECT id, {', '.join(_HEADER_COLUMNS)} FROM purchase_orders "
+            "WHERE gmail_thread_id = %s AND (error IS NULL OR error = '') "
+            "ORDER BY id DESC LIMIT 1",
+            (thread_id,),
+        )
+        h = cur.fetchone()
+        if h is None:
+            return None
+        cur.execute(
+            f"SELECT po_id, {', '.join(_LINE_ITEM_COLUMNS)} FROM line_items "
+            "WHERE po_id = %s AND is_removed = FALSE",
+            (h["id"],),
+        )
+        items = cur.fetchall()
+    return _row_to_result(h, items)
+
+
+def clean_po_by_number(conn, po_number: str, exclude_source_file: str | None = None) -> dict | None:
+    """The most recent clean purchase_orders row carrying this po_number, optionally
+    from a source_file other than the given one — used to tell whether a text thread
+    that references a PO number is really a *modification* of an order captured
+    elsewhere (a PDF, another thread) rather than a brand-new order."""
+    if not po_number:
+        return None
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"SELECT id, {', '.join(_HEADER_COLUMNS)} FROM purchase_orders "
+            "WHERE po_number = %s AND (error IS NULL OR error = '') "
+            "  AND (%s::text IS NULL OR source_file <> %s) "
+            "ORDER BY id DESC LIMIT 1",
+            (po_number, exclude_source_file, exclude_source_file),
+        )
+        h = cur.fetchone()
+        if h is None:
+            return None
+        cur.execute(
+            f"SELECT po_id, {', '.join(_LINE_ITEM_COLUMNS)} FROM line_items "
+            "WHERE po_id = %s AND is_removed = FALSE",
+            (h["id"],),
+        )
+        items = cur.fetchall()
+    return _row_to_result(h, items)
+
+
 def thread_has_clean_po(conn, thread_id: str) -> bool:
     """True if this Gmail thread already has at least one successfully-extracted
     purchase_orders row (any source_file — a PDF attachment or the thread text).

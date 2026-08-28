@@ -115,6 +115,11 @@ def _decision_form(ctx, row) -> None:
                 "PO number (or gmail-thread:<id> / source_file) this revises",
                 key=f"revof_{tk}_{key}",
             ).strip() or None
+            st.caption(
+                "On the next importer run this thread is re-extracted as the COMPLETE revised "
+                "order — the model is given that PO's current line items plus this thread's "
+                "change messages — and grouped under it. No need to enter line items here."
+            )
 
         note = st.text_input("Note (optional — becomes part of the few-shot hint)", key=f"note_{tk}_{key}")
 
