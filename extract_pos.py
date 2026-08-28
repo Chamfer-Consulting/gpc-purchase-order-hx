@@ -118,6 +118,11 @@ Rules:
   never actually results in a concrete order — e.g. it's pricing, logistics, or
   relationship correspondence with no items+quantities ever agreed — set is_po to
   false.
+- A purchase order MUST contain at least one line item with a product and a
+  quantity. If you cannot identify at least one concrete product + quantity that
+  the customer requested or confirmed, set is_po to false. Never return is_po true
+  with an empty line_items list, and never return is_po true with only header
+  fields (customer, date, PO number) and no line items.
 - Set is_po to false if the document is not a purchase order, and leave the other fields empty
 """
 
@@ -580,6 +585,24 @@ def _extract_from_source(
                     "_source_file": source_label,
                     "_extraction_method": extraction_method,
                     "error": "not a purchase order"
+                }
+
+            # Guard against is_po=true with nothing in it — the model (especially on
+            # ambiguous email threads) sometimes returns an "order" that has no line
+            # items AND no identifying header at all. That's not a purchase order;
+            # publishing it just adds an empty row. Requires BOTH: no line items and
+            # no customer / PO number / total — a genuine partial PO keeps at least one.
+            _items = data.get("line_items") or []
+            _has_header = any(data.get(k) for k in ("customer_name", "po_number", "total", "subtotal"))
+            if not _items and not _has_header:
+                logger.info(
+                    f"{source_label}: is_po=true but no line items and no header fields — "
+                    "treating as not a purchase order"
+                )
+                return {
+                    "_source_file": source_label,
+                    "_extraction_method": extraction_method,
+                    "error": "not a purchase order",
                 }
 
             # Normalize each line item's product name and container size

@@ -190,6 +190,21 @@ def is_known(conn, source_file: str, file_hash: str) -> bool:
     return row[0] is None or row[0] == NOT_A_PO_ERROR
 
 
+def thread_has_clean_po(conn, thread_id: str) -> bool:
+    """True if this Gmail thread already has at least one successfully-extracted
+    purchase_orders row (any source_file — a PDF attachment or the thread text).
+    Used to decide whether a thread whose attachments were all skipped this run
+    should fall back to whole-thread text extraction: if the order was already
+    captured from an attachment, re-reading the email body would just double it."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM purchase_orders "
+            "WHERE gmail_thread_id = %s AND (error IS NULL OR error = '') LIMIT 1",
+            (thread_id,),
+        )
+        return cur.fetchone() is not None
+
+
 def _cloud_schema_ddl() -> str:
     """The slice of schema.sql the cloud run's thread loop touches before it reaches
     the publish step (which applies the *full* schema.sql via

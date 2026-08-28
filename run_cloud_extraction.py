@@ -70,6 +70,12 @@ logger = logging.getLogger("run_cloud_extraction")
 # into an order?" re-check.
 CLOUD_EXTRACTION_MODEL = "claude-sonnet-5"
 
+# Tiny YES/NO gate calls (does this thread actually contain an order?) use the
+# cheapest model — the task is trivial classification, not extraction, and a full
+# thread otherwise costs a Sonnet extraction just to come back "not a purchase
+# order" (~40% of threads under a general customer label do exactly that).
+GATE_MODEL = "claude-haiku-4-5-20251001"
+
 # Publish accumulated results this often (threads processed, not results), so a
 # job timeout / kill / out-of-credits pause mid-run doesn't discard paid
 # extraction work — a --full-backlog run over thousands of threads can easily
@@ -299,38 +305,60 @@ def _thread_meta(mailbox_email: str, thread_id: str, messages: list) -> dict:
     }
 
 
-def _looks_like_new_order(client: anthropic.Anthropic, source_label: str, new_text: str) -> bool:
-    """Cheap yes/no gate used only for a thread already classified NOT a purchase
-    order that has since gained messages: do the NEW messages alone contain a
-    customer placing or confirming a concrete order (specific products AND
-    quantities)? Deliberately biased toward True — a False here skips the full
-    whole-thread re-extraction, so a wrong False means a missed PO, while a wrong
-    True just costs the one full extraction we'd have done unconditionally before.
-    One tiny call (max_tokens=5, a few hundred input tokens) in place of resending
-    the whole thread to the model every time it gets a reply."""
+def _is_customer_message(message: dict) -> bool:
+    """True if this message was sent by someone other than Garfield Produce — i.e.
+    the customer side of the thread. A thread with no customer message at all is our
+    own outbound / an internal forward, never a customer PO."""
+    frm = (gmail_client.message_headers(message).get("from") or "").lower()
+    return GARFIELD_DOMAIN not in frm
+
+
+def _yes_no_gate(client: anthropic.Anthropic, source_label: str, question: str, body: str) -> bool:
+    """One tiny YES/NO classification call, biased to YES. Returns True on YES or on
+    any API error — a wrong True just costs the full extraction we'd have done
+    anyway, a wrong False would drop a real PO."""
     try:
         resp = client.messages.create(
-            model=CLOUD_EXTRACTION_MODEL,
+            model=GATE_MODEL,
             max_tokens=5,
             system="You answer with exactly one word: YES or NO.",
-            messages=[{
-                "role": "user",
-                "content": (
-                    "The earlier part of an email thread was already determined NOT to be a "
-                    "purchase order. Below are ONLY the new messages added to it since then.\n\n"
-                    f"{new_text[:4000]}\n\n"
-                    "Do these new messages contain a customer placing or confirming a concrete "
-                    "order — specific product(s) AND quantities? Answer YES or NO. If you are "
-                    "unsure, answer YES."
-                ),
-            }],
+            messages=[{"role": "user", "content": f"{question}\n\n{body}\n\nAnswer YES or NO. If unsure, answer YES."}],
         )
     except anthropic.APIError as e:
-        # Don't let the cheap gate swallow a thread — fall back to a full extraction.
-        logger.warning(f"{source_label}: new-message gate call failed ({e}) — doing full re-extraction")
+        logger.warning(f"{source_label}: YES/NO gate call failed ({e}) — proceeding with full extraction")
         return True
     answer = "".join(b.text for b in resp.content if b.type == "text").strip().upper()
     return not answer.startswith("NO")
+
+
+def _looks_like_new_order(client: anthropic.Anthropic, source_label: str, new_text: str) -> bool:
+    """Gate for a thread already classified NOT a purchase order that has since
+    gained messages: do the NEW messages alone contain a customer placing or
+    confirming a concrete order? Saves resending the whole thread on every reply."""
+    return _yes_no_gate(
+        client, source_label,
+        "The earlier part of an email thread was already determined NOT to be a purchase "
+        "order. Below are ONLY the new messages added to it since then. Do these new "
+        "messages contain a customer placing or confirming a concrete order — specific "
+        "product(s) AND quantities?",
+        new_text[:4000],
+    )
+
+
+def _thread_looks_like_order(client: anthropic.Anthropic, source_label: str, thread_text: str) -> bool:
+    """Pre-extraction gate for a brand-new thread: does the conversation anywhere
+    contain a customer placing or confirming a concrete produce order (specific
+    product(s) AND quantities)? A cheap Haiku call in front of the Sonnet
+    extraction, which for a general customer label comes back 'not a purchase
+    order' ~40% of the time."""
+    return _yes_no_gate(
+        client, source_label,
+        "Below is a full email thread between Garfield Produce and a customer, each message "
+        "labelled by sender. Does this thread contain the CUSTOMER placing or confirming a "
+        "concrete order — specific produce product(s) AND quantities? Pricing questions, "
+        "availability chatter, logistics, invoices, and relationship email are NOT orders.",
+        thread_text[:6000],
+    )
 
 
 def _process_thread(
@@ -382,6 +410,13 @@ def _process_thread(
         [f"gmail-thread:{thread_id}"] + [att["filename"] for _, att in attachments_by_message if att.get("filename")],
     )
 
+    # A thread with no customer-side message is our own outbound or an internal
+    # forward — it can't be a customer PO. Skip before any Gmail attachment fetch
+    # or model call. (Meta is already written above, so it's still traceable.)
+    if not any(_is_customer_message(m) for m in messages):
+        logger.info(f"gmail-thread:{thread_id}: no customer-side message in thread — skipping (no API call)")
+        return []
+
     results = []
 
     if attachments_by_message:
@@ -431,7 +466,19 @@ def _process_thread(
                 result["gmail_thread_id"] = thread_id
                 results.append(result)
                 extracted_keys.add((source_label, file_hash))
-        return results
+        if results:
+            return results
+        # Every attachment was skipped or filtered out as a non-PO document. If the
+        # thread already has a clean PO row (extracted from an attachment on an
+        # earlier run), stop — re-reading the body would just duplicate it.
+        # Otherwise the order may be in the email body itself, so fall through to
+        # whole-thread text extraction rather than returning nothing.
+        if postgres_store.thread_has_clean_po(pg_conn, thread_id):
+            return []
+        logger.info(
+            f"gmail-thread:{thread_id}: all {len(attachments_by_message)} attachment(s) "
+            "skipped/filtered — falling back to thread-text extraction"
+        )
 
     combined_text = _build_thread_text(messages)
     if not combined_text.strip():
@@ -469,6 +516,17 @@ def _process_thread(
             )
             postgres_store.upsert_thread_state(pg_conn, thread_id, message_count, file_hash, was_po=False)
             return []
+
+    # Brand-new thread (no prior state): a cheap Haiku YES/NO in front of the full
+    # Sonnet extraction. ~40% of threads under a general customer label are not
+    # orders at all — this skips the expensive call on those. Biased to YES, so an
+    # ambiguous thread still gets the full extraction. Threads with prior state are
+    # already covered: unchanged ones short-circuited above, grown not-a-PO ones by
+    # the new-messages gate, and prior POs must re-extract fully on any change.
+    if state is None and not _thread_looks_like_order(client, source_label, combined_text):
+        logger.info(f"{source_label}: pre-extraction gate — no concrete customer order — skipping full extraction")
+        postgres_store.upsert_thread_state(pg_conn, thread_id, message_count, file_hash, was_po=False)
+        return []
 
     result = _extract_from_source(
         client, source_label, stop_event, reference_prices,
