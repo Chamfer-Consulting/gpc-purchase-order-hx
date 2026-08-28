@@ -467,7 +467,7 @@ footer {
     <div class="locked">
       <span><b>Frontend:</b>&nbsp;FastAPI + React SPA</span>
       <span><b>Data &amp; auth:</b>&nbsp;Supabase</span>
-      <span><b>Charts:</b>&nbsp;ECharts + Tremor</span>
+      <span><b>Charts:</b>&nbsp;ECharts + Mantine</span>
       <span><b>Team:</b>&nbsp;solo, incremental</span>
       <span><b>Method:</b>&nbsp;strangler-fig</span>
     </div>
@@ -564,7 +564,7 @@ footer {
           <h3>Changes shape</h3>
           <ul>
             <li><b><code>dashboard/data.py</code></b> &mdash; its DB queries &amp; pandas transforms move into <code>backend/services/</code>, minus the Streamlit imports</li>
-            <li><b>Charts</b> &mdash; the backend now returns plain data series; the client draws them with <b>ECharts</b> (analytical charts) and <b>Tremor</b> (KPI cards). The existing colour-blind-safe palette becomes a shared chart theme</li>
+            <li><b>Charts</b> &mdash; the backend now returns plain data series; the client draws them with <b>ECharts</b> for every analytical chart and KPI sparkline, on a shared theme carrying the existing colour-blind-safe palette; KPI cards are Mantine</li>
             <li><b>Caching</b> &mdash; <code>st.cache_data(ttl=)</code> &rarr; TanStack Query on the client + a small TTL cache server-side</li>
             <li><b>OAuth callbacks</b> &mdash; Gmail / QBO redirect handling moves to clean FastAPI routes</li>
           </ul>
@@ -625,7 +625,7 @@ footer {
             <li><span class="h">FastAPI app</span> <span class="d">&mdash; <code>/health</code>, JWT middleware verifying Supabase tokens against its JWKS, a connection pool (<code>psycopg_pool</code>).</span></li>
             <li><span class="h">Supabase Auth</span> <span class="d">&mdash; create the team's accounts (email allowlist). All data access stays server-side through FastAPI with the service role, so no row-level-security policies are needed yet.</span></li>
             <li><span class="h">React shell</span> <span class="d">&mdash; Vite + TS, Mantine, router, TanStack Query, a Supabase auth provider, protected routes, a filter bar bound to the URL query string.</span></li>
-            <li><span class="h">Port the Overview page</span> <span class="d">&mdash; one or two endpoints returning the KPI numbers + data series; render with a first-pass ECharts / Tremor treatment (the full theme lands in Phase&nbsp;2).</span></li>
+            <li><span class="h">Port the Overview page</span> <span class="d">&mdash; one or two endpoints returning the KPI numbers + data series; render with a first-pass ECharts treatment (the full shared theme lands in Phase&nbsp;2).</span></li>
             <li><span class="h">Deploy</span> <span class="d">&mdash; FastAPI to Fly.io (min 1 machine), the SPA to Cloudflare Pages; wire CORS and the API base URL.</span></li>
             <li><span class="h">Move the OAuth callbacks</span> <span class="d">&mdash; add <code>/auth/gmail/callback</code> and <code>/auth/qbo/callback</code> FastAPI routes; register the new redirect URIs in Google Cloud Console and the Intuit app (keep the Streamlit ones during overlap).</span></li>
           </ul>
@@ -726,7 +726,7 @@ footer {
         </div>
         <div class="def">
           <dt>Charts &amp; visual polish</dt>
-          <dd>Charts are a <b>deliberate design investment</b>, not a straight port. The backend returns plain data series (labels, values, group keys); the client draws them with <b>ECharts</b> (<code>echarts-for-react</code>, tree-shaken &mdash; smooth, refined defaults, a fraction of Plotly's weight) and <b>Tremor</b> for KPI cards, deltas and sparklines. The house colour-blind-safe palette and the <code>style()</code> rules &mdash; one hairline gridline set, no tick marks, top-strip legend, tabular numerals, muted axis labels &mdash; become a <b>single ECharts theme module</b> plus a <code>&lt;Chart&gt;</code> / <code>&lt;KpiCard&gt;</code> wrapper, built once in Phase&nbsp;2 and reused by every page. Reusing Plotly via <code>react-plotly.js</code> stays available as a faster fallback if the schedule tightens.</dd>
+          <dd>Charts are a <b>deliberate design investment</b>, not a straight port. The backend returns plain data series (labels, values, group keys); the client draws them with <b>ECharts</b> (<code>echarts-for-react</code>, tree-shaken &mdash; smooth, refined defaults, a fraction of Plotly's weight) for KPI sparklines too; KPI cards themselves are Mantine (Tremor needs Tailwind, which fights Mantine). The house colour-blind-safe palette and the <code>style()</code> rules &mdash; one hairline gridline set, no tick marks, top-strip legend, tabular numerals, muted axis labels &mdash; become a <b>single ECharts theme module</b> plus a <code>&lt;Chart&gt;</code> / <code>&lt;KpiCard&gt;</code> wrapper, built once in Phase&nbsp;2 and reused by every page. Reusing Plotly via <code>react-plotly.js</code> stays available as a faster fallback if the schedule tightens.</dd>
         </div>
         <div class="def">
           <dt>Filters &amp; state</dt>
@@ -769,7 +769,7 @@ footer {
             </tr>
             <tr>
               <td>Charts must look genuinely professional, not ported</td>
-              <td>ECharts + Tremor with a single shared theme built up-front in Phase&nbsp;2 (~3&ndash;4 days). Costs more than piping Plotly figure dicts, but it's the reason the charts look considered rather than default.</td>
+              <td>ECharts + Mantine with a single shared theme built up-front in Phase&nbsp;2 (~3&ndash;4 days). Costs more than piping Plotly figure dicts, but it's the reason the charts look considered rather than default.</td>
             </tr>
             <tr>
               <td>Editable grids are the hardest part</td>

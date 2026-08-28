@@ -1,0 +1,120 @@
+import { SimpleGrid, Stack, Text, Title } from "@mantine/core";
+import { Chart } from "@/charts/Chart";
+import {
+  barOption,
+  horizontalBarOption,
+  lineOption,
+  stackedBarOption,
+} from "@/charts/options";
+import { KpiCard } from "@/components/KpiCard";
+import { DataGrid, type Column } from "@/components/DataGrid";
+import { ScopeBar } from "@/components/ScopeBar";
+import { FilterBar } from "@/filters/FilterBar";
+import { fmtCurrency, fmtInt } from "@/lib/format";
+
+const MONTHS = ["Mar", "Apr", "May", "Jun", "Jul", "Aug"];
+const PRODUCTS = ["Arugula", "Cilantro", "Rainbow Mix", "Genovese Basil", "Bulls Blood Beets"];
+
+interface DemoRow extends Record<string, unknown> {
+  customer: string;
+  orders: number;
+  revenue: number;
+  fulfilment: number;
+}
+const ROWS: DemoRow[] = [
+  { customer: "Get Fresh Produce", orders: 142, revenue: 88450, fulfilment: 98.2 },
+  { customer: "Midwest Foods", orders: 96, revenue: 61200, fulfilment: 95.7 },
+  { customer: "Testa Produce", orders: 54, revenue: 33900, fulfilment: 99.1 },
+  { customer: "Anthony Marano", orders: 31, revenue: 12750, fulfilment: 91.4 },
+];
+const COLS: Column<DemoRow>[] = [
+  { key: "customer", label: "Customer" },
+  { key: "orders", label: "Orders", kind: "int" },
+  { key: "revenue", label: "Revenue", kind: "currency" },
+  { key: "fulfilment", label: "Fulfilment %", kind: "percent" },
+];
+
+export function KitchenSink() {
+  return (
+    <Stack gap="xl">
+      <div>
+        <Title order={2}>Component gallery</Title>
+        <Text size="sm" c="dimmed">
+          Every shared chart + component through the house theme. Toggle the OS colour
+          scheme to check both.
+        </Text>
+      </div>
+
+      <FilterBar
+        customerOptions={ROWS.map((r) => r.customer)}
+        productOptions={PRODUCTS}
+        sizeOptions={["1oz", "2oz", "4oz", "8oz"]}
+      />
+      <ScopeBar count={323} noun="POs" start="2026-03-01" end="2026-08-31" />
+
+      <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }}>
+        <KpiCard label="Revenue" value={fmtCurrency(196300)} delta="+8.4%" spark={[120, 128, 119, 141, 150, 163]} />
+        <KpiCard label="Orders" value={fmtInt(323)} delta="+11" spark={[41, 44, 39, 52, 55, 48]} />
+        <KpiCard label="Fulfilment" value="96.5%" delta="−0.7%" spark={[97, 98, 96, 95, 97, 96.5]} />
+        <KpiCard label="Open POs" value={fmtInt(18)} delta="+3" deltaDirection="down" spark={[9, 11, 14, 12, 16, 18]} />
+      </SimpleGrid>
+
+      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="lg">
+        <Panel title="Revenue by month (line)">
+          <Chart
+            option={lineOption(MONTHS, [
+              { name: "2026", data: [120, 128, 119, 141, 150, 163] },
+              { name: "2025", data: [98, 104, 110, 121, 118, 130] },
+            ])}
+          />
+        </Panel>
+        <Panel title="Orders by customer (bar)">
+          <Chart
+            option={barOption(ROWS.map((r) => r.customer), [
+              { name: "Orders", data: ROWS.map((r) => r.orders) },
+            ])}
+          />
+        </Panel>
+        <Panel title="Product mix over time (stacked)">
+          <Chart
+            option={stackedBarOption(
+              MONTHS,
+              PRODUCTS.map((p, i) => ({
+                name: p,
+                data: MONTHS.map((_, m) => 20 + ((i * 7 + m * 3) % 30)),
+              })),
+            )}
+          />
+        </Panel>
+        <Panel title="Top products by revenue (horizontal)">
+          <Chart
+            option={horizontalBarOption(
+              PRODUCTS,
+              [42000, 31500, 28800, 19400, 14100],
+              "Revenue",
+            )}
+          />
+        </Panel>
+      </SimpleGrid>
+
+      <Panel title="Data grid">
+        <DataGrid rows={ROWS} columns={COLS} exportName="demo" />
+      </Panel>
+
+      <Panel title="Empty state">
+        <Chart option={{}} empty emptyLabel="No orders in this range" height={160} />
+      </Panel>
+    </Stack>
+  );
+}
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Stack gap={6}>
+      <Text size="sm" fw={600} c="dimmed">
+        {title}
+      </Text>
+      {children}
+    </Stack>
+  );
+}

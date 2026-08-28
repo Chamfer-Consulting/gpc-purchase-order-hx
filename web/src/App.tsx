@@ -5,6 +5,7 @@ import { LoginPage } from "@/auth/LoginPage";
 import { RequireAuth } from "@/auth/RequireAuth";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { Placeholder } from "@/pages/Placeholder";
+import { KitchenSink } from "@/pages/KitchenSink";
 
 const P2 = "Phase 2 — read-only pages";
 const P3 = "Phase 3 — interactive pages";
@@ -30,6 +31,7 @@ export default function App() {
                     <Route path="/match" element={<Placeholder name="Match & Reconcile" phase={P3} />} />
                     <Route path="/review" element={<Placeholder name="Extraction Review" phase={P3} />} />
                     <Route path="/settings" element={<Placeholder name="Settings & Connections" phase={P3} />} />
+                    <Route path="/_kitchen-sink" element={<KitchenSink />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Routes>
                 </AppShell>

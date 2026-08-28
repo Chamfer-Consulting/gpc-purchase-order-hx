@@ -15,7 +15,6 @@
     "@mantine/hooks": "^7.15.1",
     "@supabase/supabase-js": "^2.47.10",
     "@tanstack/react-query": "^5.62.7",
-    "@tremor/react": "^3.18.7",
     "dayjs": "^1.11.13",
     "echarts": "^5.5.1",
     "echarts-for-react": "^3.0.2",
@@ -30,5 +29,9 @@
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "fsevents@2.3.3": true
   }
 }

@@ -65,14 +65,14 @@ account owner / a browser · **(code)** = doable in the repo.
 - [ ] **(you)** Restrict sign-ups (allowlist domain or disable public sign-up).
 
 ### 1.3 Frontend
-- [ ] `web/` — Vite + React + TS scaffold. *(scaffolded)*
-- [ ] `npm install` and `npm run dev` runs locally.
-- [ ] `src/lib/supabase.ts` — Supabase client. *(scaffolded)*
-- [ ] `src/lib/api.ts` — fetch wrapper attaching the Supabase access token. *(scaffolded)*
-- [ ] `src/auth/` — `AuthProvider`, `LoginPage`, `RequireAuth`. *(scaffolded)*
-- [ ] `src/components/AppShell.tsx` — nav rail + header (Mantine). *(scaffolded)*
-- [ ] `src/components/FilterBar.tsx` — date range + customer/product/size, state bound to the URL query string.
-- [ ] `src/pages/OverviewPage.tsx` — real page: KPI cards (Tremor) + first-pass ECharts.
+- [x] `web/` — Vite + React + TS scaffold. Installs, typechecks, builds.
+- [x] `src/lib/supabase.ts` — Supabase client.
+- [x] `src/lib/api.ts` — fetch wrapper attaching the Supabase access token.
+- [x] `src/lib/format.ts` — currency / int / percent / delta formatters (labels.py counterpart).
+- [x] `src/auth/` — `AuthProvider`, `LoginPage`, `RequireAuth`.
+- [x] `src/components/AppShell.tsx` — nav rail + header (Mantine).
+- [x] `src/filters/useFilters.ts` + `src/filters/FilterBar.tsx` — scope bound to the URL query string.
+- [ ] `src/pages/OverviewPage.tsx` — upgrade the stub to real KPI cards + the first live ECharts (needs the `/api/overview` service).
 
 ### 1.4 Deploy
 - [ ] **(you)** Create the Fly.io app; set backend secrets. — see SETUP §4
@@ -93,18 +93,22 @@ account owner / a browser · **(code)** = doable in the repo.
 
 ## Phase 2 — Read-only analytics pages  ·  ~2.5 weeks
 
-### 2.1 Chart & shell layer *(the design investment — do first, ~3–4 days)*
-- [ ] `web/src/charts/theme.ts` — ECharts theme: the colour-blind-safe palette (light + dark), one hairline gridline set, no tick marks, top-strip legend, `tabular-nums`, muted axis labels. Port from `dashboard/data.py:style()` / `LIGHT` / `DARK`.
-- [ ] `web/src/charts/Chart.tsx` — wrapper around `echarts-for-react` (theme, responsive, empty state, download).
-- [ ] `web/src/components/KpiCard.tsx` — Tremor KPI card: value, delta, sparkline.
-- [ ] `web/src/components/DataGrid.tsx` — table wrapper (sorting, column formatting from a `labels`-style map, CSV export).
-- [ ] `web/src/components/ScopeBar.tsx` — "N orders in scope" strip.
-- [ ] Storybook-style demo route `/_kitchen-sink` exercising every chart + component.
+### 2.1 Chart & shell layer *(the design investment — done up-front)*
+- [x] `web/src/charts/palette.ts` — the colour-blind-safe `LIGHT` / `DARK` sets + `colorMapFor`, ported verbatim from `dashboard/data.py`.
+- [x] `web/src/charts/echartsCore.ts` — tree-shaken ECharts (line/bar/pie + grid/tooltip/legend/title/dataZoom/markLine/markArea + Canvas). ~200 KB gzip vs Plotly's ~1 MB.
+- [x] `web/src/charts/theme.ts` — the house style from `data.py:style()` as two registered ECharts themes: hairline horizontal gridlines only, no ticks/spines, top-strip legend, dashed cursor spike, unified hover, brand colourway.
+- [x] `web/src/charts/Chart.tsx` — the one chart component: takes a plain option, applies the theme for the active colour scheme, responsive, empty state.
+- [x] `web/src/charts/options.ts` — `lineOption` / `barOption` / `stackedBarOption` / `horizontalBarOption` / `sparklineOption` so pages pass data, not raw config.
+- [x] `web/src/components/KpiCard.tsx` — Mantine card + ECharts sparkline (value, delta with semantic colour). *(Tremor dropped — needs Tailwind, conflicts with Mantine.)*
+- [x] `web/src/components/DataGrid.tsx` — click-to-sort, right-aligned numerics, per-column formatting, CSV export.
+- [x] `web/src/components/ScopeBar.tsx` — "N POs in scope · date range" strip.
+- [x] `web/src/components/EmptyState.tsx`.
+- [x] `/_kitchen-sink` route — exercises every chart + component; toggle the OS colour scheme to check both themes.
 
 ### 2.2 Endpoint pattern
-- [ ] Decide the shared query params: `?start=&end=&customers=&products=&sizes=&include_samples=`.
-- [ ] `backend/app/deps.py` — a `FilterParams` dependency + a per-request cached `context` builder.
-- [ ] TTL cache (`cachetools`) on the expensive context build.
+- [x] Shared query params: `?start=&end=&customers=&products=&sizes=&include_samples=` — `backend/app/deps.py:FilterParams` + `filter_params` dependency (mirrors `web/src/filters/useFilters.ts`).
+- [x] `backend/app/cache.py` — `@cached(key_fn)` TTL cache (5 min), the `st.cache_data(ttl=)` counterpart.
+- [ ] Per-request `context` builder wired to `FilterParams` (needs the service layer).
 
 ### 2.3 Pages (each: 1 endpoint file + 1 React page)
 - [ ] Customer 360 — `routers/customers.py` + `pages/Customer360Page.tsx`
