@@ -1,0 +1,827 @@
+<title>PO Dashboard Rebuild</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+:root {
+  --ground: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #eef0f4;
+  --ink: #191d27;
+  --ink-soft: #565f6d;
+  --ink-faint: #8a929f;
+  --line: #e2e5ec;
+  --line-strong: #cfd4dd;
+  --accent: #1f6f68;
+  --accent-ink: #16514c;
+  --accent-soft: #dcece9;
+  --current: #a2572a;
+  --current-soft: #f2e6dc;
+  --keep: #3a7a4f;
+  --watch: #9c7620;
+  --risk: #ab463c;
+  --shadow: 0 1px 2px rgba(20, 26, 38, .04), 0 6px 24px -12px rgba(20, 26, 38, .12);
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0f1218;
+    --surface: #161a22;
+    --surface-2: #1d222c;
+    --ink: #e8ebf1;
+    --ink-soft: #9aa3b1;
+    --ink-faint: #666f7d;
+    --line: #262b35;
+    --line-strong: #333a46;
+    --accent: #52a89e;
+    --accent-ink: #7cc4bb;
+    --accent-soft: #17322f;
+    --current: #cd8150;
+    --current-soft: #33251a;
+    --keep: #5da674;
+    --watch: #c6a24a;
+    --risk: #d06055;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 30px -14px rgba(0, 0, 0, .6);
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0f1218;
+  --surface: #161a22;
+  --surface-2: #1d222c;
+  --ink: #e8ebf1;
+  --ink-soft: #9aa3b1;
+  --ink-faint: #666f7d;
+  --line: #262b35;
+  --line-strong: #333a46;
+  --accent: #52a89e;
+  --accent-ink: #7cc4bb;
+  --accent-soft: #17322f;
+  --current: #cd8150;
+  --current-soft: #33251a;
+  --keep: #5da674;
+  --watch: #c6a24a;
+  --risk: #d06055;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 30px -14px rgba(0, 0, 0, .6);
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4 {
+  font-family: "Bricolage Grotesque", "Hanken Grotesk", system-ui, sans-serif;
+  font-weight: 600;
+  line-height: 1.15;
+  text-wrap: balance;
+  margin: 0;
+  letter-spacing: -0.012em;
+}
+p { margin: 0; }
+a { color: var(--accent-ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+code, kbd, .mono {
+  font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.86em;
+}
+code {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.08em 0.38em;
+  color: var(--ink);
+  white-space: nowrap;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* ---- shell ---------------------------------------------------------------- */
+.wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 5vw, 56px);
+}
+.layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: clamp(28px, 5vw, 64px);
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; gap: 0; }
+  .rail { display: none; }
+}
+
+/* ---- masthead ---------------------------------------------------------------- */
+.masthead {
+  border-bottom: 1px solid var(--line);
+  background:
+    radial-gradient(120% 140% at 100% 0%, var(--accent-soft) 0%, transparent 55%),
+    var(--surface);
+}
+.masthead .wrap { padding-top: clamp(40px, 7vw, 76px); padding-bottom: clamp(32px, 5vw, 52px); }
+.eyebrow {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  margin-bottom: 18px;
+}
+.masthead h1 {
+  font-size: clamp(2.1rem, 5.4vw, 3.4rem);
+  font-weight: 700;
+  max-width: 15ch;
+}
+.standfirst {
+  margin-top: 20px;
+  max-width: 64ch;
+  font-size: clamp(1rem, 1.4vw, 1.12rem);
+  color: var(--ink-soft);
+}
+.locked {
+  margin-top: 28px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.locked span {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  padding: 5px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-soft);
+}
+.locked span b { color: var(--ink); font-weight: 500; }
+
+/* ---- rail ---------------------------------------------------------------- */
+.rail {
+  position: sticky;
+  top: 24px;
+  font-size: 13.5px;
+  padding-top: 8px;
+}
+.rail ol { list-style: none; margin: 0; padding: 0; }
+.rail > ol > li { margin-bottom: 3px; }
+.rail a {
+  display: flex;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  line-height: 1.35;
+}
+.rail a:hover { background: var(--surface-2); color: var(--ink); }
+.rail a .n {
+  font-family: "JetBrains Mono", monospace;
+  color: var(--ink-faint);
+  font-size: 12px;
+  flex: none;
+  width: 1.4em;
+  text-align: right;
+}
+.rail .grouplabel {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 22px 0 6px 8px;
+}
+
+/* ---- main flow ---------------------------------------------------------------- */
+main { padding: clamp(36px, 6vw, 60px) 0 96px; min-width: 0; }
+section { margin-bottom: clamp(46px, 7vw, 76px); scroll-margin-top: 24px; }
+section > h2 {
+  font-size: clamp(1.35rem, 2.6vw, 1.7rem);
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--ink);
+  display: inline-block;
+  margin-bottom: 22px;
+}
+.lede { max-width: 66ch; color: var(--ink-soft); margin-bottom: 22px; }
+.lede strong { color: var(--ink); font-weight: 600; }
+
+/* ---- architecture diagram ---------------------------------------------------- */
+.arch {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 18px;
+  align-items: stretch;
+}
+@media (max-width: 720px) { .arch { grid-template-columns: 1fr; } .arch .flow { transform: rotate(90deg); justify-self: center; } }
+.arch-col {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
+  box-shadow: var(--shadow);
+}
+.arch-col h3 {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+  color: var(--ink-faint);
+}
+.arch-col.now h3 { color: var(--current); }
+.arch-col.next h3 { color: var(--accent-ink); }
+.stack { display: flex; flex-direction: column; gap: 8px; }
+.node {
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  font-size: 13.5px;
+}
+.node .lbl { font-weight: 600; display: block; }
+.node .sub { color: var(--ink-soft); font-size: 12.5px; }
+.node.warn { border-color: var(--current); background: var(--current-soft); }
+.node.good { border-color: var(--accent); background: var(--accent-soft); }
+.arch .flow {
+  align-self: center;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--ink-faint);
+  font-size: 20px;
+}
+.arch-foot {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.arch-foot .mono { color: var(--ink-faint); }
+
+/* ---- three columns: stay / change / new ------------------------------------- */
+.triad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+@media (max-width: 780px) { .triad { grid-template-columns: 1fr; } }
+.tcard {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--edge, var(--line-strong));
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+}
+.tcard.stay { --edge: var(--keep); }
+.tcard.change { --edge: var(--watch); }
+.tcard.new { --edge: var(--accent); }
+.tcard h3 { font-size: 1.02rem; margin-bottom: 4px; }
+.tcard .tag {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.tcard ul { margin: 12px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
+.tcard li { font-size: 13.6px; line-height: 1.45; padding-left: 16px; position: relative; color: var(--ink-soft); }
+.tcard li::before { content: ""; position: absolute; left: 0; top: 0.62em; width: 6px; height: 6px; border-radius: 2px; background: var(--edge); }
+.tcard li b { color: var(--ink); font-weight: 600; }
+
+/* ---- phase cards ---------------------------------------------------------------- */
+.phase {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: clamp(18px, 3vw, 26px);
+  box-shadow: var(--shadow);
+  margin-bottom: 18px;
+}
+.phase-head { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.phase-num {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 700;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--surface);
+  background: var(--accent);
+  width: 44px; height: 44px;
+  border-radius: 11px;
+  display: grid; place-items: center;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.phase-title { flex: 1 1 240px; min-width: 0; }
+.phase-title h3 { font-size: 1.22rem; }
+.phase-title .outcome { color: var(--ink-soft); font-size: 14px; margin-top: 3px; }
+.effort {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 5px 12px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  align-self: center;
+}
+.phase-body { margin-top: 18px; display: grid; grid-template-columns: 1fr; gap: 14px; }
+.dolist { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.dolist li {
+  font-size: 14px;
+  line-height: 1.5;
+  padding-left: 26px;
+  position: relative;
+  color: var(--ink);
+}
+.dolist li::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0.28em;
+  width: 15px; height: 15px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 4px;
+}
+.dolist li .h { font-weight: 600; }
+.dolist li .d { color: var(--ink-soft); }
+.exit {
+  border-top: 1px dashed var(--line-strong);
+  padding-top: 12px;
+  font-size: 13.4px;
+  color: var(--ink-soft);
+}
+.exit b {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  display: block;
+  margin-bottom: 3px;
+}
+
+/* ---- definition blocks (cross-cutting) ------------------------------------- */
+.defs { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
+.def { display: grid; grid-template-columns: 190px 1fr; gap: 20px; padding: 15px 18px; background: var(--surface); }
+.def + .def { border-top: 1px solid var(--line); }
+@media (max-width: 640px) { .def { grid-template-columns: 1fr; gap: 5px; } }
+.def dt { font-weight: 600; font-size: 14.5px; }
+.def dd { margin: 0; color: var(--ink-soft); font-size: 14px; }
+.def dd b { color: var(--ink); font-weight: 600; }
+
+/* ---- table ---------------------------------------------------------------- */
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+table { border-collapse: collapse; width: 100%; font-size: 13.6px; min-width: 560px; background: var(--surface); }
+th, td { text-align: left; padding: 12px 16px; vertical-align: top; }
+thead th {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+tbody tr + tr td { border-top: 1px solid var(--line); }
+td:first-child { font-weight: 600; color: var(--ink); width: 38%; }
+td b { color: var(--ink); font-weight: 600; }
+
+/* ---- cost + start ---------------------------------------------------------------- */
+.cost {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.cost .item {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+}
+.cost .item .k { font-size: 12.5px; color: var(--ink-soft); }
+.cost .item .v {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 600;
+  font-size: 1.15rem;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.cost .item.total { border-color: var(--accent); background: var(--accent-soft); }
+.cost .item.total .v { color: var(--accent-ink); }
+
+.startlist { counter-reset: s; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 12px; }
+.startlist li {
+  counter-increment: s;
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 14px;
+  align-items: start;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+  font-size: 14px;
+}
+.startlist li::before {
+  content: counter(s);
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-radius: 7px;
+  width: 30px; height: 30px;
+  display: grid; place-items: center;
+}
+.startlist li b { color: var(--ink); font-weight: 600; }
+.startlist li .d { color: var(--ink-soft); display: block; margin-top: 2px; }
+
+footer {
+  border-top: 1px solid var(--line);
+  padding: 26px 0 60px;
+  color: var(--ink-faint);
+  font-size: 12.5px;
+  font-family: "JetBrains Mono", monospace;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .rail a, .tcard, .phase { transition: background .15s ease, border-color .15s ease; }
+}
+</style>
+
+<header class="masthead">
+  <div class="wrap">
+    <div class="eyebrow">Migration plan &middot; internal</div>
+    <h1>PO Dashboard Rebuild</h1>
+    <p class="standfirst">
+      Move the purchase-order dashboard off Streamlit to a FastAPI service and a React
+      single-page app on Supabase &mdash; an app that is always on, loads fast, and keeps
+      every line of the Python extraction, sync, and matching code already built.
+    </p>
+    <div class="locked">
+      <span><b>Frontend:</b>&nbsp;FastAPI + React SPA</span>
+      <span><b>Data &amp; auth:</b>&nbsp;Supabase</span>
+      <span><b>Charts:</b>&nbsp;ECharts + Tremor</span>
+      <span><b>Team:</b>&nbsp;solo, incremental</span>
+      <span><b>Method:</b>&nbsp;strangler-fig</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap layout">
+  <nav class="rail" aria-label="Contents">
+    <ol>
+      <li><a href="#why"><span class="n">&mdash;</span> Why move</a></li>
+      <li><a href="#arch"><span class="n">&mdash;</span> Architecture</a></li>
+      <li><a href="#delta"><span class="n">&mdash;</span> Stay / change / new</a></li>
+    </ol>
+    <div class="grouplabel">Phases</div>
+    <ol>
+      <li><a href="#p0"><span class="n">0</span> Supabase + service layer</a></li>
+      <li><a href="#p1"><span class="n">1</span> Skeleton + deploy</a></li>
+      <li><a href="#p2"><span class="n">2</span> Read-only pages</a></li>
+      <li><a href="#p3"><span class="n">3</span> Interactive pages</a></li>
+      <li><a href="#p4"><span class="n">4</span> Cut over</a></li>
+      <li><a href="#p5"><span class="n">5</span> Harden</a></li>
+    </ol>
+    <div class="grouplabel">Reference</div>
+    <ol>
+      <li><a href="#cross"><span class="n">&mdash;</span> Cross-cutting</a></li>
+      <li><a href="#risks"><span class="n">&mdash;</span> Risks &amp; decisions</a></li>
+      <li><a href="#cost"><span class="n">&mdash;</span> Cost</a></li>
+      <li><a href="#start"><span class="n">&mdash;</span> Start here</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <section id="why">
+      <h2>Why move</h2>
+      <p class="lede">
+        Streamlit re-runs the whole script on every interaction, serves one session at a time
+        per worker, and on the hosted tier it <strong>sleeps when idle</strong> &mdash; so the
+        first visit each morning is a cold start and every filter change is a full recompute.
+        The data work underneath is fine; the delivery layer is the bottleneck.
+      </p>
+      <p class="lede">
+        The target splits the two. A <strong>FastAPI</strong> process holds the Python logic as
+        plain service functions behind JSON endpoints and stays warm on an always-on host. A
+        <strong>React</strong> app renders the UI, caches responses on the client, and keeps
+        filter state in the URL so views are finally shareable. <strong>Supabase</strong>
+        &mdash; the stack already in use elsewhere &mdash; becomes the Postgres database, the
+        auth provider, and file storage. The scheduled extraction and sync jobs do not change.
+      </p>
+    </section>
+
+    <section id="arch">
+      <h2>Architecture</h2>
+      <div class="arch">
+        <div class="arch-col now">
+          <h3>Now</h3>
+          <div class="stack">
+            <div class="node"><span class="lbl">Browser</span></div>
+            <div class="node warn"><span class="lbl">Streamlit</span><span class="sub">hosted tier &middot; sleeps when idle &middot; full rerun per click</span></div>
+            <div class="node"><span class="lbl">Neon Postgres</span><span class="sub">serverless &middot; autosuspend drops connections</span></div>
+          </div>
+        </div>
+        <div class="flow" aria-hidden="true">&rarr;</div>
+        <div class="arch-col next">
+          <h3>Target</h3>
+          <div class="stack">
+            <div class="node good"><span class="lbl">React SPA</span><span class="sub">Vite + TS &middot; Cloudflare Pages (global CDN)</span></div>
+            <div class="node good"><span class="lbl">FastAPI</span><span class="sub">Fly.io, min 1 machine &middot; reuses all existing Python</span></div>
+            <div class="node good"><span class="lbl">Supabase</span><span class="sub">Postgres (pooled) + Auth + Storage</span></div>
+          </div>
+        </div>
+        <div class="arch-foot">
+          <span class="mono">unchanged &nbsp;&rsaquo;</span>
+          <span>GitHub Actions run <code>run_cloud_extraction.py</code>, <code>run_qbo_sync.py</code>, and the eval on schedule &mdash; they just point <code>DATABASE_URL</code> at Supabase.</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="delta">
+      <h2>Stay / change / new</h2>
+      <div class="triad">
+        <div class="tcard stay">
+          <span class="tag">Untouched</span>
+          <h3>Stays exactly</h3>
+          <ul>
+            <li><b>All extraction &amp; sync logic</b> &mdash; <code>extract_pos.py</code>, <code>run_cloud_extraction.py</code>, <code>run_qbo_sync.py</code>, the modification &amp; review pipeline</li>
+            <li><b>The matcher</b> &mdash; <code>qbo_matcher.py</code>, <code>qbo_client.py</code></li>
+            <li><b>Pure logic</b> &mdash; <code>product_catalog.py</code>, <code>math_check.py</code>, <code>price_check.py</code>, <code>extraction_reviews.py</code>, <code>attention.py</code></li>
+            <li><b>The Postgres schema</b> &mdash; <code>schema.sql</code> ports as-is</li>
+            <li><b>The three scheduled GitHub Actions</b></li>
+          </ul>
+        </div>
+        <div class="tcard change">
+          <span class="tag">Refactored</span>
+          <h3>Changes shape</h3>
+          <ul>
+            <li><b><code>dashboard/data.py</code></b> &mdash; its DB queries &amp; pandas transforms move into <code>backend/services/</code>, minus the Streamlit imports</li>
+            <li><b>Charts</b> &mdash; the backend now returns plain data series; the client draws them with <b>ECharts</b> (analytical charts) and <b>Tremor</b> (KPI cards). The existing colour-blind-safe palette becomes a shared chart theme</li>
+            <li><b>Caching</b> &mdash; <code>st.cache_data(ttl=)</code> &rarr; TanStack Query on the client + a small TTL cache server-side</li>
+            <li><b>OAuth callbacks</b> &mdash; Gmail / QBO redirect handling moves to clean FastAPI routes</li>
+          </ul>
+        </div>
+        <div class="tcard new">
+          <span class="tag">Added</span>
+          <h3>New surface</h3>
+          <ul>
+            <li><b>React SPA</b> &mdash; Vite + TypeScript, Mantine components, TanStack Query, React Router</li>
+            <li><b>FastAPI app</b> &mdash; JSON endpoints, JWT verification, a connection pool</li>
+            <li><b>Supabase Auth</b> &mdash; replaces the shared-password gate with real accounts</li>
+            <li><b>Two deploy targets</b> &mdash; Fly.io (API) and Cloudflare Pages (SPA)</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="phases">
+      <h2>The phased plan</h2>
+      <p class="lede">
+        Six phases, run in order. Streamlit stays live and in use the whole time &mdash; pages
+        move over one at a time, and there is no flag day. Estimates assume one developer
+        working part-time.
+      </p>
+
+      <article class="phase" id="p0">
+        <div class="phase-head">
+          <div class="phase-num">0</div>
+          <div class="phase-title">
+            <h3>Supabase cutover &amp; service layer</h3>
+            <p class="outcome">Prove Supabase with the app you already have; separate the Python logic from Streamlit.</p>
+          </div>
+          <div class="effort">3&ndash;5 days</div>
+        </div>
+        <div class="phase-body">
+          <ul class="dolist">
+            <li><span class="h">Create the Supabase project</span> <span class="d">&mdash; same region as your users; enable <code>pg_cron</code>.</span></li>
+            <li><span class="h">Move the data</span> <span class="d">&mdash; <code>pg_dump</code> from Neon, restore into Supabase, verify <code>count(*)</code> on every table.</span></li>
+            <li><span class="h">Repoint everything at Supabase</span> <span class="d">&mdash; <code>.streamlit/secrets.toml</code> and the three Actions <code>DATABASE_URL</code> secrets. App uses the <b>transaction pooler (6543)</b>; the pipeline scripts use the <b>session connection (5432)</b>.</span></li>
+            <li><span class="h">Regression pass on Streamlit</span> <span class="d">&mdash; run the dashboard, one Gmail extraction, and one QBO sync against Supabase. Nothing should change.</span></li>
+            <li><span class="h">Extract the service layer</span> <span class="d">&mdash; move <code>data.py</code>'s query + transform functions into <code>backend/services/</code>; leave a re-export shim so Streamlit still imports them.</span></li>
+          </ul>
+          <p class="exit"><b>Exit when</b> Streamlit runs unchanged on Supabase, all scheduled jobs pass a run, and the logic modules import with no <code>streamlit</code> dependency.</p>
+        </div>
+      </article>
+
+      <article class="phase" id="p1">
+        <div class="phase-head">
+          <div class="phase-num">1</div>
+          <div class="phase-title">
+            <h3>Skeleton, auth &amp; first deploy</h3>
+            <p class="outcome">The full stack stands up in production with one real page.</p>
+          </div>
+          <div class="effort">~1 week</div>
+        </div>
+        <div class="phase-body">
+          <ul class="dolist">
+            <li><span class="h">FastAPI app</span> <span class="d">&mdash; <code>/health</code>, JWT middleware verifying Supabase tokens against its JWKS, a connection pool (<code>psycopg_pool</code>).</span></li>
+            <li><span class="h">Supabase Auth</span> <span class="d">&mdash; create the team's accounts (email allowlist). All data access stays server-side through FastAPI with the service role, so no row-level-security policies are needed yet.</span></li>
+            <li><span class="h">React shell</span> <span class="d">&mdash; Vite + TS, Mantine, router, TanStack Query, a Supabase auth provider, protected routes, a filter bar bound to the URL query string.</span></li>
+            <li><span class="h">Port the Overview page</span> <span class="d">&mdash; one or two endpoints returning the KPI numbers + data series; render with a first-pass ECharts / Tremor treatment (the full theme lands in Phase&nbsp;2).</span></li>
+            <li><span class="h">Deploy</span> <span class="d">&mdash; FastAPI to Fly.io (min 1 machine), the SPA to Cloudflare Pages; wire CORS and the API base URL.</span></li>
+            <li><span class="h">Move the OAuth callbacks</span> <span class="d">&mdash; add <code>/auth/gmail/callback</code> and <code>/auth/qbo/callback</code> FastAPI routes; register the new redirect URIs in Google Cloud Console and the Intuit app (keep the Streamlit ones during overlap).</span></li>
+          </ul>
+          <p class="exit"><b>Exit when</b> a teammate logs in at the production URL, sees the live Overview page, and it loads in under a second warm.</p>
+        </div>
+      </article>
+
+      <article class="phase" id="p2">
+        <div class="phase-head">
+          <div class="phase-num">2</div>
+          <div class="phase-title">
+            <h3>Read-only analytics pages</h3>
+            <p class="outcome">Every page you only look at is now in the new app &mdash; on a proper chart layer.</p>
+          </div>
+          <div class="effort">~2.5 weeks</div>
+        </div>
+        <div class="phase-body">
+          <ul class="dolist">
+            <li><span class="h">Build the chart layer first</span> <span class="d">&mdash; the ECharts theme module (palette, gridlines, legend, numerals, axis type) and the <code>&lt;Chart&gt;</code> / <code>&lt;KpiCard&gt;</code> / <code>&lt;DataGrid&gt;</code> / scope-bar wrappers. This is the design investment; ~3&ndash;4 days, then every page is fast.</span></li>
+            <li><span class="h">Port in order</span> <span class="d">&mdash; Customer&nbsp;360, Products &amp; Sizes, Explore, Order Lifecycle. Roughly half a day to a day each once the chart layer exists.</span></li>
+            <li><span class="h">One endpoint pattern</span> <span class="d">&mdash; <code>GET /api/&lt;page&gt;?start=&amp;end=&amp;customers=&amp;products=&amp;sizes=</code>, stateless, returns records + data series. The backend assembles the shared filtered context once per request.</span></li>
+            <li><span class="h">Client caching</span> <span class="d">&mdash; TanStack Query <code>staleTime</code> tuned per endpoint; stale-while-revalidate so re-visits are instant.</span></li>
+          </ul>
+          <p class="exit"><b>Exit when</b> the four analytics pages match the Streamlit output number-for-number, every chart is drawn through the shared theme, and pages load from cache instantly on return visits.</p>
+        </div>
+      </article>
+
+      <article class="phase" id="p3">
+        <div class="phase-head">
+          <div class="phase-num">3</div>
+          <div class="phase-title">
+            <h3>Interactive &amp; editing pages</h3>
+            <p class="outcome">The pages where people click things &mdash; the real work of the rebuild.</p>
+          </div>
+          <div class="effort">~1.5 weeks</div>
+        </div>
+        <div class="phase-body">
+          <ul class="dolist">
+            <li><span class="h">Match &amp; Reconcile</span> <span class="d">&mdash; confirm / reject links; wrap <code>qbo_matcher.run_matching</code> and the confirm calls as POST endpoints.</span></li>
+            <li><span class="h">Data Quality &amp; Extraction Review</span> <span class="d">&mdash; the review queue, the verdict form, the seeded-modification flow; Supabase Realtime can live-update the queue as the pipeline writes new flags.</span></li>
+            <li><span class="h">Editable grids</span> <span class="d">&mdash; Edit PO, Reference Prices, the review line-item editor. AG&nbsp;Grid + optimistic mutations; the existing <code>save_po_edit</code> / <code>save_extraction_review</code> / price functions become POST handlers <b>unchanged</b>.</span></li>
+            <li><span class="h">Settings &amp; Connections</span> <span class="d">&mdash; QBO / Gmail connect + disconnect, sync buttons, product hiding, saved views.</span></li>
+          </ul>
+          <p class="exit"><b>Exit when</b> every Streamlit page has an equivalent in the new app and a full day's real work can be done without opening Streamlit.</p>
+        </div>
+      </article>
+
+      <article class="phase" id="p4">
+        <div class="phase-head">
+          <div class="phase-num">4</div>
+          <div class="phase-title">
+            <h3>Cut over &amp; retire Streamlit</h3>
+            <p class="outcome">The new app is the app.</p>
+          </div>
+          <div class="effort">2&ndash;3 days</div>
+        </div>
+        <div class="phase-body">
+          <ul class="dolist">
+            <li><span class="h">Parallel run</span> <span class="d">&mdash; the team uses the new app for one to two weeks; Streamlit stays reachable as a fallback.</span></li>
+            <li><span class="h">Drop the old redirect URIs</span> <span class="d">&mdash; remove the Streamlit OAuth callbacks from Google and Intuit once nothing points at them.</span></li>
+            <li><span class="h">Delete <code>dashboard/</code></span> <span class="d">&mdash; it lives on in git history; update <code>AGENTS.md</code> and the README.</span></li>
+          </ul>
+          <p class="exit"><b>Exit when</b> the Streamlit deployment is turned off and no one has asked for it back.</p>
+        </div>
+      </article>
+
+      <article class="phase" id="p5">
+        <div class="phase-head">
+          <div class="phase-num">5</div>
+          <div class="phase-title">
+            <h3>Harden for speed</h3>
+            <p class="outcome">Take the wins that only make sense once the shape is settled.</p>
+          </div>
+          <div class="effort">3&ndash;5 days</div>
+        </div>
+        <div class="phase-body">
+          <ul class="dolist">
+            <li><span class="h">Materialized views</span> <span class="d">&mdash; the revenue / product-mix / customer rollups become materialized views, refreshed by <code>pg_cron</code> or a step in the scheduled jobs. Expensive dashboard queries become instant reads.</span></li>
+            <li><span class="h">Response compression &amp; cache headers</span> <span class="d">&mdash; brotli/gzip on the API; <code>Cache-Control</code> on stable endpoints; the SPA already sits on a CDN.</span></li>
+            <li><span class="h">Observability</span> <span class="d">&mdash; Sentry for errors, an uptime check on <code>/health</code>, Fly metrics.</span></li>
+            <li><span class="h">Decide on scale</span> <span class="d">&mdash; one Fly machine is plenty for an internal tool; if you add a second for redundancy, move the server-side TTL cache to Supabase or Redis.</span></li>
+          </ul>
+          <p class="exit"><b>Exit when</b> every page is under ~400&nbsp;ms warm and an error surfaces in Sentry before a user reports it.</p>
+        </div>
+      </article>
+    </section>
+
+    <section id="cross">
+      <h2>Cross-cutting concerns</h2>
+      <dl class="defs">
+        <div class="def">
+          <dt>Auth</dt>
+          <dd><b>Supabase Auth</b> issues the session; the SPA sends the JWT as a bearer token; FastAPI verifies it against Supabase's JWKS. All Postgres access is server-side with the service role, so <b>no RLS policies</b> are required &mdash; simpler, and the frontend never touches the database directly.</dd>
+        </div>
+        <div class="def">
+          <dt>Database connections</dt>
+          <dd>API uses the <b>transaction pooler</b> (<code>:6543</code>) &mdash; many short queries, kept warm in a <code>psycopg_pool</code>. The pipeline scripts use the <b>session connection</b> (<code>:5432</code>) &mdash; they need long transactions and <code>execute_values</code> batches. This also ends the <code>SSL connection has been closed unexpectedly</code> failures the Neon autosuspend caused.</dd>
+        </div>
+        <div class="def">
+          <dt>Charts &amp; visual polish</dt>
+          <dd>Charts are a <b>deliberate design investment</b>, not a straight port. The backend returns plain data series (labels, values, group keys); the client draws them with <b>ECharts</b> (<code>echarts-for-react</code>, tree-shaken &mdash; smooth, refined defaults, a fraction of Plotly's weight) and <b>Tremor</b> for KPI cards, deltas and sparklines. The house colour-blind-safe palette and the <code>style()</code> rules &mdash; one hairline gridline set, no tick marks, top-strip legend, tabular numerals, muted axis labels &mdash; become a <b>single ECharts theme module</b> plus a <code>&lt;Chart&gt;</code> / <code>&lt;KpiCard&gt;</code> wrapper, built once in Phase&nbsp;2 and reused by every page. Reusing Plotly via <code>react-plotly.js</code> stays available as a faster fallback if the schedule tightens.</dd>
+        </div>
+        <div class="def">
+          <dt>Filters &amp; state</dt>
+          <dd>A React filter bar writes to the URL query string; endpoints are stateless and take the filters as params. Views become <b>shareable links</b> &mdash; a long-standing Streamlit gap.</dd>
+        </div>
+        <div class="def">
+          <dt>Scheduled jobs</dt>
+          <dd>Unchanged. <code>extract_pos.yml</code>, <code>qbo_sync.yml</code>, and <code>eval_extraction.yml</code> keep running on GitHub Actions; only <code>DATABASE_URL</code> moves to the Supabase session string.</dd>
+        </div>
+        <div class="def">
+          <dt>Secrets</dt>
+          <dd><b>Backend</b> (Fly secrets): <code>DATABASE_URL</code>, <code>ANTHROPIC_API_KEY</code>, <code>GMAIL_*</code>, <code>QBO_*</code>, <code>SUPABASE_URL</code>, <code>SUPABASE_SERVICE_KEY</code>, <code>SUPABASE_JWT_SECRET</code>. <b>Frontend</b> (build-time, public-safe): <code>VITE_SUPABASE_URL</code>, <code>VITE_SUPABASE_ANON_KEY</code>, <code>VITE_API_BASE</code>.</dd>
+        </div>
+        <div class="def">
+          <dt>PDF storage (optional)</dt>
+          <dd>The pipeline never keeps PDF bytes today. If you want attachments viewable in the app, push them to a <b>Supabase Storage</b> bucket during extraction and store the object path on the PO row.</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section id="risks">
+      <h2>Risks &amp; decisions</h2>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Risk / decision</th><th>How it's handled</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>pandas in the request path could block</td>
+              <td>Endpoints stay <b>sync</b> &mdash; FastAPI runs them on a threadpool. Anything over ~300&nbsp;ms goes behind a TTL cache or a materialized view (Phase&nbsp;5).</td>
+            </tr>
+            <tr>
+              <td>Supabase transaction pooler drops session features</td>
+              <td>Documented split: pipeline scripts on <code>:5432</code>, the API on <code>:6543</code>. Decided in Phase&nbsp;0.</td>
+            </tr>
+            <tr>
+              <td>Nine pages is still a lot of UI to rebuild</td>
+              <td><b>Strangler-fig.</b> Streamlit stays live; pages move one at a time; the team can switch per-page. No big-bang cutover.</td>
+            </tr>
+            <tr>
+              <td>Charts must look genuinely professional, not ported</td>
+              <td>ECharts + Tremor with a single shared theme built up-front in Phase&nbsp;2 (~3&ndash;4 days). Costs more than piping Plotly figure dicts, but it's the reason the charts look considered rather than default.</td>
+            </tr>
+            <tr>
+              <td>Editable grids are the hardest part</td>
+              <td>Deferred to Phase&nbsp;3, after the pattern is proven on read-only pages. The existing <code>save_*</code> functions are reused verbatim as POST handlers.</td>
+            </tr>
+            <tr>
+              <td>OAuth redirect URI mismatch after the move</td>
+              <td>New callback URLs registered <b>before</b> switching; Streamlit's callbacks kept working through the overlap; old URIs removed only in Phase&nbsp;4.</td>
+            </tr>
+            <tr>
+              <td>Data drift during the DB move</td>
+              <td>Move first (Phase&nbsp;0) with Streamlit pointed at Supabase and verified by row count. No dual-write window &mdash; one clean switch.</td>
+            </tr>
+            <tr>
+              <td>Solo developer, no deadline &rarr; risk of stalling mid-migration</td>
+              <td>Each phase leaves a <b>working, shippable</b> state. Stopping after Phase&nbsp;2 still gives an always-on app for all the read-only work.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="cost">
+      <h2>Running cost</h2>
+      <div class="cost">
+        <div class="item"><div class="k">Supabase Pro</div><div class="v">~$25/mo</div></div>
+        <div class="item"><div class="k">Fly.io &mdash; 1 machine, always on</div><div class="v">~$5&ndash;12/mo</div></div>
+        <div class="item"><div class="k">Cloudflare Pages</div><div class="v">$0</div></div>
+        <div class="item"><div class="k">GitHub Actions</div><div class="v">within free tier</div></div>
+        <div class="item total"><div class="k">Total</div><div class="v">~$30&ndash;40/mo</div></div>
+      </div>
+      <p class="lede" style="margin-top:16px">
+        Supabase Pro is the line item that matters &mdash; it's what keeps the database from
+        pausing and gives you daily backups and room to grow. Everything else is small or free
+        at this scale.
+      </p>
+    </section>
+
+    <section id="start">
+      <h2>Start here &mdash; week one</h2>
+      <ol class="startlist">
+        <li><b>Create the Supabase project</b><span class="d">Pick the region closest to the team. Turn on <code>pg_cron</code> under Database &rarr; Extensions.</span></li>
+        <li><b>Migrate the database</b><span class="d"><code>pg_dump</code> the Neon database, restore into Supabase, then <code>SELECT count(*)</code> on every table on both sides and compare.</span></li>
+        <li><b>Repoint the connection strings</b><span class="d">Supabase pooler string into <code>.streamlit/secrets.toml</code>; Supabase session string into the three GitHub Actions <code>DATABASE_URL</code> secrets. Run the dashboard, one extraction, and one QBO sync &mdash; confirm nothing regresses.</span></li>
+        <li><b>Scaffold the two new folders</b><span class="d"><code>backend/</code> (FastAPI, <code>/health</code>) and <code>web/</code> (Vite + React + TS). Get both running locally.</span></li>
+        <li><b>Lift the service layer</b><span class="d">Move <code>dashboard/data.py</code>'s query and transform functions into <code>backend/services/</code>; leave a thin re-export in <code>data.py</code> so Streamlit keeps working.</span></li>
+        <li><b>Deploy the empty stack</b><span class="d">FastAPI to Fly.io with <code>min_machines_running = 1</code>; the React shell to Cloudflare Pages. Wire Supabase Auth login and confirm a protected route.</span></li>
+      </ol>
+    </section>
+
+    <footer>
+      strangler-fig migration &middot; streamlit stays live until phase 4 &middot; every phase ships
+    </footer>
+  </main>
+</div>
