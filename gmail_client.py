@@ -278,6 +278,16 @@ def get_attachment(access_token: str, message_id: str, attachment_id: str) -> by
     return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
 
 
+def attachment_bytes(access_token: str, message_id: str, att: dict) -> bytes:
+    """Raw bytes for one extract_body_and_attachments() entry — from the inline
+    base64 'data' when Gmail returned it that way (small attachments), otherwise a
+    get_attachment() fetch by id."""
+    if att.get("data"):
+        d = att["data"]
+        return base64.urlsafe_b64decode(d + "=" * (-len(d) % 4))
+    return get_attachment(access_token, message_id, att["attachment_id"])
+
+
 def message_headers(message: dict) -> dict:
     """{header_name_lowercased: value} for a get_message() result's headers."""
     return {h.get("name", "").lower(): h.get("value") for h in message.get("payload", {}).get("headers", [])}
@@ -305,13 +315,35 @@ def _html_to_text(raw_html: str) -> str:
     return re.sub(r"[ \t]+", " ", text).strip()
 
 
+_PDF_NAME = re.compile(r"\.pdf\s*$", re.I)
+# MIME types a PDF attachment legitimately arrives under. Get Fresh's PO system
+# (and plenty of other ERPs) attach the PDF as application/octet-stream and rely on
+# the .pdf extension; some senders use application/x-pdf or a download-forcing type,
+# or leave it blank. So: trust a ".pdf" filename, but only when the declared type
+# is one of these generic/blank ones or actually application/pdf — never for an
+# image/*, text/*, message/rfc822, etc. that merely happens to be named *.pdf.
+_PDF_MIME_OK = {
+    "application/pdf", "application/x-pdf", "application/acrobat",
+    "applications/vnd.pdf", "text/pdf", "text/x-pdf",
+    "application/octet-stream", "binary/octet-stream",
+    "application/download", "application/force-download", "",
+}
+
+
+def _looks_like_pdf_part(filename: str, mime_type: str) -> bool:
+    if mime_type == "application/pdf":
+        return True
+    return bool(_PDF_NAME.search(filename)) and mime_type.lower() in _PDF_MIME_OK
+
+
 def extract_body_and_attachments(message: dict) -> tuple[str, list[dict]]:
     """From a get_message() result: returns (body_text, attachments), where
-    attachments is [{'filename', 'attachment_id', 'mime_type', 'size'}, ...] for
-    every part with a real filename and application/pdf mime type (other
-    attachment types are skipped — never a PO document). body_text prefers
-    text/plain parts, falling back to a crude strip of text/html when no plain-text
-    part exists."""
+    attachments is [{'filename', 'attachment_id', 'data', 'mime_type', 'size'}, ...]
+    for every PDF-looking part (see _looks_like_pdf_part — not just an exact
+    application/pdf type). Exactly one of 'attachment_id' / 'data' is set: Gmail
+    returns small attachments inline as base64 'data' with no attachmentId.
+    body_text prefers text/plain parts, falling back to a crude strip of text/html
+    when no plain-text part exists."""
     payload = message.get("payload", {})
     plain_parts, html_parts, attachments = [], [], []
 
@@ -320,9 +352,11 @@ def extract_body_and_attachments(message: dict) -> tuple[str, list[dict]]:
         mime_type = part.get("mimeType", "")
         body = part.get("body", {})
 
-        if filename and mime_type == "application/pdf" and body.get("attachmentId"):
+        if filename and _looks_like_pdf_part(filename, mime_type) and (body.get("attachmentId") or body.get("data")):
             attachments.append({
-                "filename": filename, "attachment_id": body["attachmentId"],
+                "filename": filename,
+                "attachment_id": body.get("attachmentId"),
+                "data": body.get("data"),  # inline base64url when there's no attachmentId
                 "mime_type": mime_type, "size": body.get("size", 0),
             })
         elif not filename and body.get("data"):

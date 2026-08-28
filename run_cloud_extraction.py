@@ -441,7 +441,7 @@ def _process_thread(
         for m, att in attachments_by_message:
             if stop_event.is_set():
                 break
-            pdf_bytes = gmail_client.get_attachment(access_token, m["id"], att["attachment_id"])
+            pdf_bytes = gmail_client.attachment_bytes(access_token, m["id"], att)
             file_hash = hashlib.sha256(pdf_bytes).hexdigest()
             source_label = att["filename"]
 
