@@ -126,14 +126,14 @@ account owner / a browser · **(code)** = doable in the repo.
 
 ## Phase 3 — Interactive & editing pages  ·  ~1.5 weeks
 
-- [ ] Match & Reconcile — `routers/matching.py` (`POST /api/matching/run`, `/confirm`, `/reject`) + page with the candidate review UI
-- [ ] Data Quality — `routers/quality.py` + page (the fix queue, category segmented control)
-- [ ] Extraction Review — `routers/review.py` (`GET queue`, `POST decision`, `DELETE decision`, revision candidates) + page with the verdict form + line-item editor
-- [ ] Supabase Realtime subscription on the review queue table → live updates
-- [ ] Edit PO — `routers/po_edit.py` (`GET /api/po/{id}`, `POST /api/po/{id}` wrapping `save_po_edit` **unchanged**) + AG Grid editor + optimistic mutation
-- [ ] Reference Prices — `routers/pricing.py` + editable grid
-- [x] Settings — connections part done (`routers/connections.py` + `pages/SettingsPage.tsx`: QBO/Gmail connect/disconnect, QBO sync-now/full-resync, auto-sync heartbeat, callback toast). Still to add: product hiding, saved views, reference prices.
-- [ ] Port `dashboard/attention.py` digest → `routers/overview.py` "needs attention" block
+- [x] **Match & Reconcile** — `routers/matching.py` wraps `qbo_matcher` verbatim (`get_needs_review` / `get_line_items_for_review` / `get_unlinked_pos` / `run_matching` / `confirm_link` / `reject_link`). `pages/MatchPage.tsx`: side-by-side PO↔invoice cards + Run.
+- [x] **Data Quality** — `routers/quality.py`, plain aggregations over `purchase_orders` / `line_items` (real). `pages/DataQualityPage.tsx` via `PageRenderer` — extraction failures / math-check / price-anomaly tables.
+- [x] **Extraction Review** — decision CRUD straight through `extraction_reviews.py` (`routers/review.py`); queue + revision candidates are real SQL in `services/review_queue.py`. `pages/ReviewPage.tsx`: Queue / Possible revisions / All decisions tabs + verdict form.
+- [ ] Supabase Realtime subscription on the review queue table → live updates.
+- [ ] Edit PO — `routers/po_edit.py` wrapping `save_po_edit` + editable grid (needs `save_po_edit` out of `data.py` or reimplemented thin).
+- [ ] Reference Prices — `routers/pricing.py` + editable grid.
+- [ ] Settings — product hiding, saved views (connections already done in Phase 1.5).
+- [ ] Port `dashboard/attention.py` digest → `routers/overview.py` "needs attention" block.
 
 **Exit:** every Streamlit page has an equivalent; a full day's real work needs no Streamlit.
 

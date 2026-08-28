@@ -5,11 +5,11 @@ import { LoginPage } from "@/auth/LoginPage";
 import { RequireAuth } from "@/auth/RequireAuth";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
+import { DataQualityPage } from "@/pages/DataQualityPage";
+import { MatchPage } from "@/pages/MatchPage";
+import { ReviewPage } from "@/pages/ReviewPage";
 import { SettingsPage } from "@/pages/SettingsPage";
-import { Placeholder } from "@/pages/Placeholder";
 import { KitchenSink } from "@/pages/KitchenSink";
-
-const P3 = "Phase 3 — interactive pages";
 
 export default function App() {
   return (
@@ -28,9 +28,9 @@ export default function App() {
                     <Route path="/products" element={<AnalyticsPage name="products" title="Products & Sizes" />} />
                     <Route path="/explore" element={<AnalyticsPage name="explore" title="Explore" />} />
                     <Route path="/lifecycle" element={<AnalyticsPage name="lifecycle" title="Order Lifecycle" />} />
-                    <Route path="/data-quality" element={<Placeholder name="Data Quality" phase={P3} />} />
-                    <Route path="/match" element={<Placeholder name="Match & Reconcile" phase={P3} />} />
-                    <Route path="/review" element={<Placeholder name="Extraction Review" phase={P3} />} />
+                    <Route path="/data-quality" element={<DataQualityPage />} />
+                    <Route path="/match" element={<MatchPage />} />
+                    <Route path="/review" element={<ReviewPage />} />
                     <Route path="/settings" element={<SettingsPage />} />
                     <Route path="/_kitchen-sink" element={<KitchenSink />} />
                     <Route path="*" element={<Navigate to="/" replace />} />

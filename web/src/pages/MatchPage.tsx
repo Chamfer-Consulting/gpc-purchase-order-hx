@@ -1,0 +1,147 @@
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Group,
+  Loader,
+  SimpleGrid,
+  Stack,
+  Table,
+  Text,
+  Title,
+} from "@mantine/core";
+import {
+  useConfirmLink,
+  useMatchReview,
+  useRejectLink,
+  useRunMatching,
+  type LineItem,
+  type MatchCandidate,
+} from "@/api/matching";
+import { fmtCurrency } from "@/lib/format";
+
+function Lines({ items }: { items: LineItem[] }) {
+  if (!items?.length) return <Text size="xs" c="dimmed">no line items</Text>;
+  return (
+    <Table withRowBorders={false} verticalSpacing={2} fz="xs">
+      <Table.Tbody>
+        {items.map((it, i) => (
+          <Table.Tr key={i}>
+            <Table.Td>{it.product_name ?? "?"}{it.container_size ? ` ${it.container_size}` : ""}</Table.Td>
+            <Table.Td ta="right" style={{ fontVariantNumeric: "tabular-nums" }}>{it.quantity ?? "?"}</Table.Td>
+            <Table.Td ta="right" style={{ fontVariantNumeric: "tabular-nums" }}>{fmtCurrency(it.line_total ?? null, true)}</Table.Td>
+          </Table.Tr>
+        ))}
+      </Table.Tbody>
+    </Table>
+  );
+}
+
+function CandidateCard({
+  c,
+  poItems,
+  invItems,
+}: {
+  c: MatchCandidate;
+  poItems: LineItem[];
+  invItems: LineItem[];
+}) {
+  const confirm = useConfirmLink();
+  const reject = useRejectLink();
+  const ref = { po_id: c.po_id, invoice_id: c.invoice_id };
+
+  return (
+    <Card withBorder radius="md" p="md">
+      <Group justify="space-between" mb="xs">
+        <Text fw={600}>PO {c.po_number ?? c.po_id}</Text>
+        <Badge variant="light">
+          {c.match_method}
+          {c.match_score != null ? ` · ${(c.match_score * 100).toFixed(0)}%` : ""}
+        </Badge>
+      </Group>
+      <SimpleGrid cols={2} spacing="md">
+        <div>
+          <Text size="xs" c="dimmed" tt="uppercase">
+            Purchase order
+          </Text>
+          <Text size="sm">
+            {c.po_customer} · {c.po_date?.slice(0, 10)} · {fmtCurrency(c.po_total)}
+          </Text>
+          <Lines items={poItems} />
+        </div>
+        <div>
+          <Text size="xs" c="dimmed" tt="uppercase">
+            Invoice {c.doc_number}
+          </Text>
+          <Text size="sm">
+            {c.inv_customer} · {c.txn_date?.slice(0, 10)} · {fmtCurrency(c.total_amt)}
+          </Text>
+          <Lines items={invItems} />
+        </div>
+      </SimpleGrid>
+      <Group mt="sm">
+        <Button size="xs" onClick={() => confirm.mutate(ref)} loading={confirm.isPending}>
+          Confirm match
+        </Button>
+        <Button size="xs" variant="default" color="red" onClick={() => reject.mutate(ref)} loading={reject.isPending}>
+          Not a match
+        </Button>
+      </Group>
+    </Card>
+  );
+}
+
+export function MatchPage() {
+  const { data, isLoading, error } = useMatchReview();
+  const run = useRunMatching();
+
+  return (
+    <Stack gap="md">
+      <Group justify="space-between">
+        <Title order={2}>Match &amp; Reconcile</Title>
+        <Button size="xs" onClick={() => run.mutate()} loading={run.isPending}>
+          Run matching
+        </Button>
+      </Group>
+      {run.data && (
+        <Text size="sm" c="dimmed">
+          {Object.entries(run.data)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join(" · ")}
+        </Text>
+      )}
+
+      {error && (
+        <Alert color="red" title="Couldn't load">
+          {(error as Error).message}
+        </Alert>
+      )}
+      {isLoading && <Loader />}
+
+      {data && (
+        <>
+          <Text size="sm" c="dimmed">
+            {data.candidates.length} candidate link(s) awaiting a decision · {data.unlinked.length} PO(s) with no
+            match
+          </Text>
+          <Stack>
+            {data.candidates.map((c) => (
+              <CandidateCard
+                key={`${c.po_id}-${c.invoice_id}`}
+                c={c}
+                poItems={data.po_items[String(c.po_id)] ?? []}
+                invItems={data.inv_items[String(c.invoice_id)] ?? []}
+              />
+            ))}
+            {data.candidates.length === 0 && (
+              <Text size="sm" c="dimmed">
+                Nothing to review. Run matching after a QuickBooks sync to surface new candidates.
+              </Text>
+            )}
+          </Stack>
+        </>
+      )}
+    </Stack>
+  );
+}

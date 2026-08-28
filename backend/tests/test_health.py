@@ -58,3 +58,20 @@ def test_oauth_callback_state_guard():
     # no valid signed state -> bounced back to the SPA, not a 500
     r = client.get("/auth/qbo/callback?code=x&realmId=1&state=bad", follow_redirects=False)
     assert r.status_code == 302 and "connect=qbo_state_mismatch" in r.headers["location"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/data-quality",
+        "/api/matching/review",
+        "/api/review/queue",
+        "/api/review/candidates",
+        "/api/review/decisions",
+        "/api/connections",
+    ],
+)
+def test_all_data_routes_require_auth(path):
+    assert client.get(path).status_code == 403
+    assert client.get(path, headers={"Authorization": "Bearer nope"}).status_code == 401
+
