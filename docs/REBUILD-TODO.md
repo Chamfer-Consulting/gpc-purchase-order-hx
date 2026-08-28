@@ -130,10 +130,10 @@ account owner / a browser · **(code)** = doable in the repo.
 - [x] **Data Quality** — `routers/quality.py`, plain aggregations over `purchase_orders` / `line_items` (real). `pages/DataQualityPage.tsx` via `PageRenderer` — extraction failures / math-check / price-anomaly tables.
 - [x] **Extraction Review** — decision CRUD straight through `extraction_reviews.py` (`routers/review.py`); queue + revision candidates are real SQL in `services/review_queue.py`. `pages/ReviewPage.tsx`: Queue / Possible revisions / All decisions tabs + verdict form.
 - [ ] Supabase Realtime subscription on the review queue table → live updates.
-- [ ] Edit PO — `routers/po_edit.py` wrapping `save_po_edit` + editable grid (needs `save_po_edit` out of `data.py` or reimplemented thin).
+- [x] Edit PO — `services/po_edit.py` (ported `save_po_edit` + a `get_po` reader; `math_check.validate_math` reused). `routers/po_edit.py` = `GET/POST /api/po/{id}`. `pages/EditPoPage.tsx` — editable header + line-item table, math-check feedback, `edited=TRUE` guard. `DataGrid` `linkTo` makes every `po_id` cell link to `/po/:id`.
 - [ ] Reference Prices — `routers/pricing.py` + editable grid.
 - [ ] Settings — product hiding, saved views (connections already done in Phase 1.5).
-- [ ] Port `dashboard/attention.py` digest → `routers/overview.py` "needs attention" block.
+- [x] "Needs attention" digest — `routers/overview.py:_attention` (direct SQL for math/error/price/mods + the reused matcher + `review_queue`). `PageResponse.attention` + `AttentionList` component, rendered top of every page that returns it.
 
 **Exit:** every Streamlit page has an equivalent; a full day's real work needs no Streamlit.
 

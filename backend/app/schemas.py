@@ -55,9 +55,17 @@ class Scope(BaseModel):
     note: str | None = None
 
 
+class AttentionItem(BaseModel):
+    severity: Literal["critical", "serious", "warning", "info"]
+    title: str
+    count: int = 1
+    href: str | None = None  # SPA route, e.g. "/data-quality"
+
+
 class PageResponse(BaseModel):
     stub: bool = False
     scope: Scope = Field(default_factory=Scope)
+    attention: list[AttentionItem] = Field(default_factory=list)
     kpis: list[Kpi] = Field(default_factory=list)
     charts: list[Chart] = Field(default_factory=list)
     tables: dict[str, Table] = Field(default_factory=dict)

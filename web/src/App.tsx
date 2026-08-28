@@ -8,6 +8,7 @@ import { AnalyticsPage } from "@/pages/AnalyticsPage";
 import { DataQualityPage } from "@/pages/DataQualityPage";
 import { MatchPage } from "@/pages/MatchPage";
 import { ReviewPage } from "@/pages/ReviewPage";
+import { EditPoPage } from "@/pages/EditPoPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { KitchenSink } from "@/pages/KitchenSink";
 
@@ -31,6 +32,7 @@ export default function App() {
                     <Route path="/data-quality" element={<DataQualityPage />} />
                     <Route path="/match" element={<MatchPage />} />
                     <Route path="/review" element={<ReviewPage />} />
+                    <Route path="/po/:id" element={<EditPoPage />} />
                     <Route path="/settings" element={<SettingsPage />} />
                     <Route path="/_kitchen-sink" element={<KitchenSink />} />
                     <Route path="*" element={<Navigate to="/" replace />} />

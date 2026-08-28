@@ -24,6 +24,7 @@ import {
   type QueueItem,
 } from "@/api/review";
 import { DataGrid } from "@/components/DataGrid";
+import { useRealtimeInvalidate } from "@/lib/realtime";
 
 function QueueCard({ item }: { item: QueueItem }) {
   const upsert = useUpsertDecision();
@@ -204,6 +205,10 @@ function DecisionsTab() {
 }
 
 export function ReviewPage() {
+  // Live-update the queue as the pipeline writes new flags / decisions land.
+  useRealtimeInvalidate("purchase_orders", ["review-queue", "data-quality"]);
+  useRealtimeInvalidate("extraction_reviews", ["review-decisions", "review-queue", "review-candidates"]);
+
   return (
     <Stack gap="md">
       <Title order={2}>Extraction Review</Title>

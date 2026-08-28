@@ -47,9 +47,17 @@ export interface Scope {
   note?: string | null;
 }
 
+export interface AttentionItem {
+  severity: "critical" | "serious" | "warning" | "info";
+  title: string;
+  count: number;
+  href?: string | null;
+}
+
 export interface PageResponse {
   stub: boolean;
   scope: Scope;
+  attention: AttentionItem[];
   kpis: Kpi[];
   charts: ChartSpec[];
   tables: Record<string, TableSpec>;

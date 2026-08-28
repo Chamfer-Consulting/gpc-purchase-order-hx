@@ -69,6 +69,8 @@ def test_oauth_callback_state_guard():
         "/api/review/candidates",
         "/api/review/decisions",
         "/api/connections",
+        "/api/po/1",
+        "/api/overview",
     ],
 )
 def test_all_data_routes_require_auth(path):

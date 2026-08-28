@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { Button, Group, Table, Text, UnstyledButton } from "@mantine/core";
 import { formatCell, type ColumnKind } from "@/lib/format";
 import { EmptyState } from "./EmptyState";
@@ -8,6 +9,8 @@ export interface Column<Row> {
   label: string;
   kind?: ColumnKind;
   align?: "left" | "right";
+  /** build an SPA route from the row value, e.g. (v) => `/po/${v}` */
+  linkTo?: (value: unknown, row: Row) => string;
 }
 
 interface DataGridProps<Row extends Record<string, unknown>> {
@@ -111,7 +114,13 @@ export function DataGrid<Row extends Record<string, unknown>>({
                       key={c.key}
                       style={{ textAlign: numeric ? "right" : "left", fontVariantNumeric: "tabular-nums" }}
                     >
-                      <Text size="sm">{formatCell(r[c.key], c.kind ?? "text")}</Text>
+                      {c.linkTo && r[c.key] != null ? (
+                        <Text size="sm" component={Link} to={c.linkTo(r[c.key], r)} c="blue">
+                          {formatCell(r[c.key], c.kind ?? "text")}
+                        </Text>
+                      ) : (
+                        <Text size="sm">{formatCell(r[c.key], c.kind ?? "text")}</Text>
+                      )}
                     </Table.Td>
                   );
                 })}

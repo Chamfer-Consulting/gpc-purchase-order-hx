@@ -6,6 +6,7 @@ import {
   lineOption,
   stackedBarOption,
 } from "@/charts/options";
+import { AttentionList } from "./AttentionList";
 import { DataGrid, type Column } from "./DataGrid";
 import { KpiCard } from "./KpiCard";
 import { ScopeBar } from "./ScopeBar";
@@ -41,6 +42,7 @@ function tableColumns(t: TableSpec): Column<Record<string, unknown>>[] {
     label: c.label,
     kind: c.kind,
     align: c.kind !== "text" && c.kind !== "date" ? "right" : "left",
+    linkTo: c.key === "po_id" ? (v: unknown) => `/po/${v}` : undefined,
   }));
 }
 
@@ -58,10 +60,12 @@ export function PageRenderer({ data }: { data: PageResponse }) {
         extra={data.scope.note ?? undefined}
       />
 
+      {data.attention.length > 0 && <AttentionList items={data.attention} />}
+
       {data.stub && (
         <Alert color="yellow" variant="light" title="Preview">
-          This page is wired to the API but the data service isn't connected yet. Use the
-          Streamlit dashboard for the real numbers until this phase lands.
+          Some numbers on this page come from a service that isn't wired yet — the ones marked
+          below. Use the Streamlit dashboard for those until this phase lands.
         </Alert>
       )}
 

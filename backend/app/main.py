@@ -9,7 +9,16 @@ from fastapi.middleware.gzip import GZipMiddleware
 from . import reuse  # noqa: F401 — sys.path shim for the reused repo modules
 from .config import get_settings
 from .db import close_pool, init_pool
-from .routers import analytics, connections, matching, oauth, overview, quality, review
+from .routers import (
+    analytics,
+    connections,
+    matching,
+    oauth,
+    overview,
+    po_edit,
+    quality,
+    review,
+)
 
 
 @asynccontextmanager
@@ -42,6 +51,7 @@ app.include_router(analytics.router)
 app.include_router(quality.router)
 app.include_router(matching.router)
 app.include_router(review.router)
+app.include_router(po_edit.router)
 app.include_router(connections.router)
 app.include_router(oauth.router)
 

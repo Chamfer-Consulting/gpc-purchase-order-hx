@@ -149,6 +149,9 @@ Cost: free.
    or use **Send magic link**.
 3. **Authentication → URL Configuration**: set the Site URL to the Pages URL and
    add it to the redirect allowlist.
+4. **Realtime** (for the live review queue): Database → Publications →
+   `supabase_realtime` → add `purchase_orders` and `extraction_reviews`. Without
+   this the queue just doesn't auto-refresh; nothing breaks.
 
 ---
 
