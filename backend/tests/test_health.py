@@ -39,14 +39,13 @@ def test_auth_required():
     assert client.get("/api/customers", headers={"Authorization": "Bearer nope"}).status_code == 401
 
 
-@pytest.mark.parametrize("page", ["customers", "products", "explore", "lifecycle"])
+@pytest.mark.parametrize("page", ["explore", "lifecycle"])
 def test_analytics_stub_shape(page):
     r = client.get(f"/api/{page}", headers={"Authorization": f"Bearer {_token()}"})
     assert r.status_code == 200
     body = r.json()
     assert body["stub"] is True
-    assert {"scope", "kpis", "charts", "tables", "notes"} <= body.keys()
-    assert body["scope"]["start"] is None
+    assert {"scope", "kpis", "charts", "tables", "notes", "attention"} <= body.keys()
     r2 = client.get(
         f"/api/{page}?start=2026-01-01&end=2026-03-31&customers=Get%20Fresh",
         headers={"Authorization": f"Bearer {_token()}"},

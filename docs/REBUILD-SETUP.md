@@ -89,35 +89,39 @@ Do this once §2 verifies clean. **This is the switch** — after it, Neon is id
 
 ---
 
-## 4. Backend host — Fly.io
+## 4. Backend host — Railway
 
-```bash
-# from the REPO ROOT (the Dockerfile needs repo-root context for the reused modules)
-fly launch --no-deploy --config backend/fly.toml --dockerfile backend/Dockerfile
-```
+1. railway.app → **New Project → Deploy from GitHub repo** → this repo.
+2. In the service's **Settings**: leave *Root Directory* at `/`. `railway.toml`
+   (committed at the repo root) points the build at `backend/Dockerfile` with the
+   repo root as context, so the reused Python modules are included.
+3. **Variables** tab — add all of these (values from §1 + the pipeline secrets):
 
-Set secrets (values from §1, plus the existing pipeline secrets):
+   | Variable | Value |
+   |---|---|
+   | `DATABASE_URL` | Supabase **transaction pooler** URL (`:6543`) |
+   | `SUPABASE_URL` | `https://<ref>.supabase.co` |
+   | `SUPABASE_SERVICE_KEY` | `service_role` key |
+   | `SUPABASE_JWT_SECRET` | JWT secret |
+   | `ANTHROPIC_API_KEY` | same as the pipeline |
+   | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | from `.streamlit/secrets.toml` |
+   | `GMAIL_REDIRECT_URI` | `https://<railway-domain>/auth/gmail/callback` |
+   | `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | from `.streamlit/secrets.toml` |
+   | `QBO_REDIRECT_URI` | `https://<railway-domain>/auth/qbo/callback` |
+   | `QBO_ENVIRONMENT` | `production` |
+   | `ALLOWED_ORIGINS` | `https://<pages-project>.pages.dev` |
+   | `FRONTEND_BASE` | `https://<pages-project>.pages.dev` |
 
-```bash
-fly secrets set \
-  DATABASE_URL="<supabase transaction pooler url>" \
-  SUPABASE_URL="https://<ref>.supabase.co" \
-  SUPABASE_SERVICE_KEY="<service_role key>" \
-  SUPABASE_JWT_SECRET="<jwt secret>" \
-  ANTHROPIC_API_KEY="<same as the pipeline>" \
-  GMAIL_CLIENT_ID="<...>" GMAIL_CLIENT_SECRET="<...>" \
-  QBO_CLIENT_ID="<...>" QBO_CLIENT_SECRET="<...>" \
-  QBO_REDIRECT_URI="https://<fly-app>.fly.dev/auth/qbo/callback" \
-  QBO_ENVIRONMENT="production" \
-  GMAIL_REDIRECT_URI="https://<fly-app>.fly.dev/auth/gmail/callback" \
-  ALLOWED_ORIGINS="https://<pages-project>.pages.dev"
-```
+4. **Settings → Networking → Generate Domain** to get the public URL. Railway
+   injects `$PORT`; the Dockerfile CMD and `railway.toml` both honour it.
+5. Deploy, then `curl https://<railway-domain>/health`.
 
-`fly.toml` already pins `min_machines_running = 1` (always on, no cold start).
-Deploy from the repo root: `fly deploy --config backend/fly.toml --dockerfile backend/Dockerfile`.
-Check: `curl https://<fly-app>.fly.dev/health`.
+Railway's paid usage plan keeps the service always running (no scale-to-zero).
+A 512 MB–1 GB instance for an internal tool is ~$5–10/mo of usage.
 
-Scale/cost: 1× `shared-cpu-1x` / 512 MB–1 GB ≈ $5–12/mo.
+*(Fly.io alternative: `backend/fly.toml` is still committed — `fly deploy --config
+backend/fly.toml --dockerfile backend/Dockerfile` from the repo root, secrets via
+`fly secrets set`.)*
 
 ---
 

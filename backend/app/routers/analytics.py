@@ -1,21 +1,27 @@
-"""Read-only analytics pages. Each endpoint returns a PageResponse and takes the
-shared FilterParams. Bodies are stubs until the service layer lands
-(docs/REBUILD-TODO.md §0.4 / §2.3) — they return the correct shape with empty
-data so the SPA is fully buildable now.
+"""Read-only analytics pages. Each returns a PageResponse and takes the shared
+FilterParams.
 
-When a service module exists, replace the stub body with e.g.:
-    from ..services.customers import customer_360
-    return customer_360(fp)
-and wrap the read in app.cache.cached(lambda fp, user: fp.cache_key()).
-"""
+customers / products are wired to real services (dashboard/data.py, called
+headless). explore / lifecycle are still stubs pending their ports
+(docs/REBUILD-TODO.md §2.3)."""
 
 from fastapi import APIRouter, Depends
 
 from ..auth import AuthedUser, current_user
+from ..cache import cached
 from ..deps import FilterParams, filter_params
 from ..schemas import PageResponse, Scope
+from ..services.customers import customer_360
+from ..services.products import products_and_sizes
 
 router = APIRouter(prefix="/api", tags=["analytics"])
+
+
+def _key(*args, **kwargs):
+    """Cache key for a page endpoint — everything but the FilterParams is the same
+    for all authed users. FastAPI passes deps by keyword."""
+    fp = kwargs.get("fp") or (args[0] if args else None)
+    return fp.cache_key() if fp is not None else ()
 
 
 def _stub(noun: str, fp: FilterParams) -> PageResponse:
@@ -26,34 +32,28 @@ def _stub(noun: str, fp: FilterParams) -> PageResponse:
             noun=noun,
             start=fp.start,
             end=fp.end,
-            note="Service layer not wired yet — see docs/REBUILD-TODO.md §2.3.",
+            note="Not ported yet — see docs/REBUILD-TODO.md §2.3.",
         ),
     )
 
 
 @router.get("/customers", response_model=PageResponse)
-def customers(
-    fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)
-) -> PageResponse:
-    return _stub("customers", fp)
+@cached(_key)
+def customers(fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)) -> PageResponse:
+    return customer_360(fp)
 
 
 @router.get("/products", response_model=PageResponse)
-def products(
-    fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)
-) -> PageResponse:
-    return _stub("POs", fp)
+@cached(_key)
+def products(fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)) -> PageResponse:
+    return products_and_sizes(fp)
 
 
 @router.get("/explore", response_model=PageResponse)
-def explore(
-    fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)
-) -> PageResponse:
+def explore(fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)) -> PageResponse:
     return _stub("POs", fp)
 
 
 @router.get("/lifecycle", response_model=PageResponse)
-def lifecycle(
-    fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)
-) -> PageResponse:
+def lifecycle(fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)) -> PageResponse:
     return _stub("orders", fp)

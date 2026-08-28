@@ -52,6 +52,9 @@ account owner / a browser · **(code)** = doable in the repo.
 
 ## Phase 1 — Skeleton, auth & first deploy  ·  ~1 week
 
+> Deploy target is **Railway** (backend) + Cloudflare Pages (SPA). `railway.toml`
+> at the repo root; `backend/fly.toml` kept as an alt. See SETUP §4.
+
 ### 1.1 Backend
 - [x] `backend/app/main.py` — FastAPI app, CORS, gzip, `/health`, lifespan opens the pool, all routers registered.
 - [x] `backend/app/config.py` — env settings (`pydantic-settings`), incl. `frontend_base` for callback redirects.
@@ -115,7 +118,9 @@ account owner / a browser · **(code)** = doable in the repo.
 
 ### 2.3 Pages
 - [x] Frontend for all read-only pages is done: `pages/AnalyticsPage.tsx` (generic — FilterBar + `usePage` + `PageRenderer`), routed for `/customers` `/products` `/explore` `/lifecycle`; `OverviewPage` on the same renderer; `components/PageRenderer.tsx` turns a `PageResponse` into scope bar → KPI grid → charts → tables.
-- [ ] **Backend service bodies** (the account owner's `data.py` → `services/` work): fill `services/{overview,customers,products,explore,lifecycle}.py` and swap each stub in `routers/analytics.py` / `routers/overview.py` for the real call + `@cached`.
+- [x] `dashboard/data.py` made **import-safe headless** (streamlit shim) — the backend calls it directly, no logic fork.
+- [x] `services/context.py` (filtered invoice/product frames, product-revenue basis, fuzzy customer match) + `services/customers.py` + `services/products.py` — real KPIs / charts / tables, wired + `@cached`.
+- [ ] `services/explore.py` (pivot / compare-periods / MoM movers) + `services/lifecycle.py` (requested-vs-delivered via `data.order_lifecycle` + `load_matched_line_items`) — still `_stub()`.
 
 ### 2.4 Client caching
 - [ ] TanStack Query `staleTime` per endpoint; stale-while-revalidate.

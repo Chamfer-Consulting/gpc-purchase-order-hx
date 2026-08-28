@@ -19,7 +19,34 @@ import pandas as pd
 import plotly.graph_objects as go
 import psycopg2
 import psycopg2.extras
-import streamlit as st
+
+try:
+    import streamlit as st
+except ModuleNotFoundError:  # headless: the FastAPI backend / CLI scripts import this
+    class _NoStreamlit:  # noqa: D401 — minimal shim, only what data.py touches
+        secrets: dict = {}
+
+        @staticmethod
+        def cache_data(*args, **kwargs):
+            """No-op stand-in for @st.cache_data(...). The backend caches at the
+            endpoint layer (app.cache) instead."""
+            def deco(fn):
+                fn.clear = lambda: None
+                return fn
+
+            if args and callable(args[0]) and not kwargs:
+                return deco(args[0])
+            return deco
+
+        @staticmethod
+        def error(*args, **kwargs):
+            pass
+
+        @staticmethod
+        def stop():
+            raise RuntimeError("No database configured — set DATABASE_URL.")
+
+    st = _NoStreamlit()
 
 import extraction_reviews
 from math_check import validate_math
