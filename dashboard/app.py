@@ -44,6 +44,7 @@ from data import (  # noqa: E402
 from views import (  # noqa: E402
     customer_360,
     explore,
+    extraction_review,
     fulfillment_dataquality,
     home,
     match_reconcile,
@@ -353,11 +354,14 @@ page_data_quality = st.Page(
     lambda: fulfillment_dataquality.render(ctx), title="Data Quality", icon=":material/rule:", url_path="data_quality"
 )
 page_match = st.Page(lambda: match_reconcile.render(ctx), title="Match & Reconcile", icon=":material/compare_arrows:", url_path="match_review")
+page_extraction_review = st.Page(
+    lambda: extraction_review.render(ctx), title="Extraction Review", icon=":material/model_training:", url_path="extraction_review"
+)
 page_settings = st.Page(lambda: settings.render(ctx), title="Settings & Connections", icon=":material/settings:", url_path="settings")
 
 pages = {
     "Analyse": [page_overview, page_customers, page_products, page_explore, page_lifecycle],
-    "Operate": [page_data_quality, page_match, page_settings],
+    "Operate": [page_data_quality, page_match, page_extraction_review, page_settings],
 }
 
 # Keys match dashboard/attention.py's AttentionItem.page values so Home's digest can
@@ -365,6 +369,7 @@ pages = {
 ctx.pages = {
     "data_quality": page_data_quality,
     "match_review": page_match,
+    "extraction_review": page_extraction_review,
     "requested_vs_delivered": page_lifecycle,
 }
 

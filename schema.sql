@@ -319,6 +319,21 @@ CREATE TABLE IF NOT EXISTS extraction_reviews (
     UNIQUE (target_kind, target_key)
 );
 CREATE INDEX IF NOT EXISTS idx_extraction_reviews_verdict ON extraction_reviews (verdict);
+
+-- The extracted text the pipeline last saw for a target (thread combined-text, or
+-- a PDF attachment's extracted text), truncated. Written by run_cloud_extraction
+-- on every extraction. Two readers: the dashboard review queue shows it so a
+-- person can judge a borderline call without opening Gmail, and it's copied into
+-- an extraction_reviews row when a decision is made so eval_extraction.py can
+-- replay that exact content later.
+CREATE TABLE IF NOT EXISTS extraction_snapshots (
+    target_kind  TEXT NOT NULL,          -- 'thread' | 'file'
+    target_key   TEXT NOT NULL,
+    content      TEXT NOT NULL,
+    content_hash TEXT,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (target_kind, target_key)
+);
 -- ===== CLOUD-THREAD-SCHEMA (end) =====
 
 -- Named, reusable dashboard configurations (redesign Phase F). `kind` scopes a

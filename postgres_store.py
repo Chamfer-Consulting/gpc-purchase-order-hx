@@ -190,6 +190,44 @@ def is_known(conn, source_file: str, file_hash: str) -> bool:
     return row[0] is None or row[0] == NOT_A_PO_ERROR
 
 
+SNAPSHOT_MAX_CHARS = 8_000
+
+
+def upsert_snapshot(conn, target_kind: str, target_key: str, content: str, content_hash: str | None) -> None:
+    """Record the extracted text the pipeline just saw for a target — see the
+    extraction_snapshots table comment. Truncated; best-effort (a snapshot write
+    must never break an extraction run)."""
+    if not content:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO extraction_snapshots (target_kind, target_key, content, content_hash, updated_at)
+                VALUES (%s, %s, %s, %s, now())
+                ON CONFLICT (target_kind, target_key) DO UPDATE SET
+                    content      = EXCLUDED.content,
+                    content_hash = EXCLUDED.content_hash,
+                    updated_at   = now()
+                """,
+                (target_kind, target_key, content[:SNAPSHOT_MAX_CHARS], content_hash),
+            )
+        conn.commit()
+    except Exception:  # noqa: BLE001 — snapshots are a convenience, not load-bearing
+        conn.rollback()
+
+
+def get_snapshot(conn, target_kind: str, target_key: str) -> dict | None:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT content, content_hash, updated_at FROM extraction_snapshots "
+            "WHERE target_kind = %s AND target_key = %s",
+            (target_kind, target_key),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
 def thread_has_clean_po(conn, thread_id: str) -> bool:
     """True if this Gmail thread already has at least one successfully-extracted
     purchase_orders row (any source_file — a PDF attachment or the thread text).

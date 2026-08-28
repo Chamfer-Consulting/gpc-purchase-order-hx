@@ -479,6 +479,8 @@ def _process_thread(
                     "treating as a non-PO document — skipping (no API call)"
                 )
                 continue
+            if text:
+                postgres_store.upsert_snapshot(pg_conn, "file", source_label, text, file_hash)
             pdf_b64 = None if text else pdf_to_base64(pdf_bytes)
             result = _extract_from_source(
                 client, source_label, stop_event, reference_prices,
@@ -512,6 +514,9 @@ def _process_thread(
     source_label = f"gmail-thread:{thread_id}"
     file_hash = hashlib.sha256(combined_text.encode("utf-8")).hexdigest()
     message_count = len(messages)
+
+    # Keep the review queue / eval able to see what the model saw.
+    postgres_store.upsert_snapshot(pg_conn, "thread", thread_id, combined_text, file_hash)
 
     # A human review decision on this thread is authoritative — re-asserted every
     # run so it survives a re-extraction. Checked before the is_known short-circuit

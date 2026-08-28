@@ -18,8 +18,10 @@ from dataclasses import dataclass, field
 import pandas as pd
 import plotly.graph_objects as go
 import psycopg2
+import psycopg2.extras
 import streamlit as st
 
+import extraction_reviews
 from math_check import validate_math
 from qbo_matcher import customers_match
 
@@ -970,3 +972,273 @@ class AppContext:
 
     # StreamlitPage objects for cross-page deep links (see docstring above)
     pages: dict = field(default_factory=dict)
+
+
+# ── Extraction review queue (training loop) ───────────────────────────────────
+#
+# Human decisions about what is / isn't a purchase order (and what's a revision of
+# what) live in extraction_reviews; the pipeline enforces them, feeds them back as
+# few-shot examples, and eval_extraction.py gates on them. See extraction_reviews.py
+# and schema.sql. These helpers back dashboard/views/extraction_review.py.
+
+_REVIEW_TABLES_DDL = """
+CREATE TABLE IF NOT EXISTS extraction_reviews (
+    id SERIAL PRIMARY KEY,
+    target_kind TEXT NOT NULL, target_key TEXT NOT NULL,
+    content_hash TEXT, content_snapshot TEXT,
+    verdict TEXT NOT NULL, revision_of TEXT,
+    standalone BOOLEAN NOT NULL DEFAULT FALSE, corrected JSONB,
+    fewshot BOOLEAN NOT NULL DEFAULT TRUE,
+    reviewer TEXT, note TEXT,
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (target_kind, target_key)
+);
+CREATE TABLE IF NOT EXISTS extraction_snapshots (
+    target_kind TEXT NOT NULL, target_key TEXT NOT NULL,
+    content TEXT NOT NULL, content_hash TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (target_kind, target_key)
+);
+"""
+
+
+def _ensure_review_tables(cur) -> None:
+    cur.execute(_REVIEW_TABLES_DDL)
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def load_extraction_reviews() -> pd.DataFrame:
+    """Every human review decision, newest first."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn.cursor() as cur:
+            _ensure_review_tables(cur)
+            conn.commit()
+        return pd.read_sql_query(
+            "SELECT target_kind, target_key, verdict, revision_of, standalone, "
+            "corrected, fewshot, reviewer, note, content_hash, updated_at "
+            "FROM extraction_reviews ORDER BY updated_at DESC",
+            conn,
+        )
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=120, show_spinner="Building the review queue...")
+def load_review_queue(limit: int = 300) -> pd.DataFrame:
+    """Extraction results most worth a human look, ranked by how suspect they are.
+    Excludes targets that already carry a decision whose content_hash still matches
+    the current snapshot (a settled call). Columns: target_kind, target_key,
+    po_id, reason, priority, customer_name, po_date, n_items, subject, from_addrs,
+    gmail_url, snapshot, decided (bool), stale (bool)."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn.cursor() as cur:
+            _ensure_review_tables(cur)
+            conn.commit()
+        q = """
+        WITH li AS (
+            SELECT po_id, count(*) FILTER (WHERE NOT is_removed) AS n_items,
+                   count(*) FILTER (WHERE math_mismatch IS NOT NULL AND NOT is_removed) AS n_math
+            FROM line_items GROUP BY po_id
+        )
+        SELECT
+            po.id                              AS po_id,
+            COALESCE(po.gmail_thread_id, '')   AS thread_id,
+            po.source_file, po.error, po.customer_name, po.po_date,
+            COALESCE(li.n_items, 0)            AS n_items,
+            COALESCE(li.n_math, 0)             AS n_math,
+            po.math_check_failed,
+            m.subject, m.from_addrs, m.url     AS gmail_url,
+            r.verdict                          AS decided_verdict,
+            r.content_hash                     AS decided_hash,
+            s.content                          AS snapshot,
+            s.content_hash                     AS snapshot_hash
+        FROM purchase_orders po
+        LEFT JOIN li ON li.po_id = po.id
+        LEFT JOIN gmail_thread_meta m ON m.thread_id = po.gmail_thread_id
+        LEFT JOIN extraction_reviews r
+               ON (r.target_kind = 'thread' AND r.target_key = po.gmail_thread_id)
+               OR (r.target_kind = 'file'   AND r.target_key = po.source_file)
+        LEFT JOIN extraction_snapshots s
+               ON (s.target_kind = 'thread' AND s.target_key = po.gmail_thread_id)
+               OR (s.target_kind = 'file'   AND s.target_key = po.source_file)
+        WHERE po.gmail_thread_id IS NOT NULL
+        """
+        df = pd.read_sql_query(q, conn)
+    finally:
+        conn.close()
+
+    if df.empty:
+        return df
+
+    df["target_kind"] = df["source_file"].str.startswith("gmail-thread:").map({True: "thread", False: "file"})
+    df["target_key"] = df.apply(
+        lambda r: r["thread_id"] if r["target_kind"] == "thread" and r["thread_id"] else r["source_file"], axis=1
+    )
+    df["decided"] = df["decided_verdict"].notna()
+    df["stale"] = df["decided"] & df["decided_hash"].notna() & (df["decided_hash"] != df["snapshot_hash"])
+
+    is_clean = df["error"].isna() | (df["error"] == "")
+    reasons, prio = [], []
+    for _, r in df.iterrows():
+        why, p = [], 0
+        if is_clean[r.name] and r["n_items"] == 0:
+            why.append("0 line items"); p += 5
+        if is_clean[r.name] and not r["customer_name"]:
+            why.append("no customer"); p += 3
+        if r["n_math"] > 0 or r["math_check_failed"]:
+            why.append("math mismatch"); p += 4
+        if r["stale"]:
+            why.append("decision is stale (content changed)"); p += 6
+        reasons.append(", ".join(why))
+        prio.append(p)
+    df["reason"], df["priority"] = reasons, prio
+
+    # Keep: anything with a reason and no settled decision, plus every stale one.
+    keep = (df["priority"] > 0) & (~df["decided"] | df["stale"])
+    df = df[keep].sort_values(["priority", "po_date"], ascending=[False, False]).head(limit)
+    return df.reset_index(drop=True)
+
+
+@st.cache_data(ttl=300, show_spinner="Finding possible revisions...")
+def load_revision_candidates(limit: int = 150) -> pd.DataFrame:
+    """High-precision "is B a revision of A?" candidates: two clean POs from the
+    same customer with the SAME delivery_date but different po_number, not already
+    grouped as revisions and not already decided. A shared delivery date with a
+    different PO number is the strong signal — you don't get two separate
+    deliveries on one day; a revised PO keeps the delivery date. The line-item
+    diff is left for the reviewer. Columns: a_po_id, b_po_id, customer_name,
+    delivery_date, a_po_number, b_po_number, a_kind, a_key, b_kind, b_key."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn.cursor() as cur:
+            _ensure_review_tables(cur)
+        conn.commit()
+        rows = pd.read_sql_query(
+            """
+            SELECT id AS po_id, customer_name, delivery_date, po_date, po_number,
+                   is_revision, source_file, gmail_thread_id
+            FROM purchase_orders
+            WHERE (error IS NULL OR error = '')
+              AND customer_name IS NOT NULL
+              AND delivery_date IS NOT NULL
+              AND delivery_date > (now() - interval '18 months')
+            """,
+            conn,
+        )
+        decided = pd.read_sql_query("SELECT target_kind, target_key FROM extraction_reviews", conn)
+    finally:
+        conn.close()
+
+    if rows.empty:
+        return rows
+
+    decided_keys = set(zip(decided["target_kind"], decided["target_key"])) if not decided.empty else set()
+    _is_thread = rows["source_file"].str.startswith("gmail-thread:")
+    rows["target_kind"] = _is_thread.map({True: "thread", False: "file"})
+    rows["target_key"] = rows["gmail_thread_id"].where(_is_thread, rows["source_file"])
+    rows["po_date"] = pd.to_datetime(rows["po_date"])
+
+    out = []
+    for (cust, dd), g in rows.groupby(["customer_name", "delivery_date"]):
+        recs = g.sort_values("po_date").to_dict("records")
+        for i in range(len(recs)):
+            for j in range(i + 1, len(recs)):
+                a, b = recs[i], recs[j]
+                if (a["po_number"] or "") == (b["po_number"] or ""):
+                    continue
+                if a.get("is_revision") and b.get("is_revision"):
+                    continue
+                if (b["target_kind"], b["target_key"]) in decided_keys:
+                    continue
+                out.append({
+                    "a_po_id": a["po_id"], "b_po_id": b["po_id"], "customer_name": cust,
+                    "delivery_date": pd.Timestamp(dd).date(),
+                    "a_po_number": a["po_number"], "b_po_number": b["po_number"],
+                    # the key annotate_revisions() groups A under: po_number or _source_file
+                    "a_group_key": a["po_number"] or a["source_file"],
+                    "a_kind": a["target_kind"], "a_key": a["target_key"],
+                    "b_kind": b["target_kind"], "b_key": b["target_key"],
+                })
+    df = pd.DataFrame(out)
+    if df.empty:
+        return df
+    return df.sort_values("delivery_date", ascending=False).head(limit).reset_index(drop=True)
+
+
+def save_extraction_review(
+    *, target_kind: str, target_key: str, verdict: str,
+    revision_of: str | None = None, standalone: bool = False,
+    corrected: dict | None = None, note: str | None = None, reviewer: str | None = None,
+) -> None:
+    """Persist a decision, snapshot the content it was made on, and reconcile the
+    stored PO rows for that target so the dashboard reflects the call immediately."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn.cursor() as cur:
+            _ensure_review_tables(cur)
+        conn.commit()
+        snap = extraction_reviews.get_decision  # noqa: F841 (keep import used even if unref)
+        snapshot = None
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT content, content_hash FROM extraction_snapshots "
+                "WHERE target_kind = %s AND target_key = %s",
+                (target_kind, target_key),
+            )
+            snapshot = cur.fetchone()
+
+        extraction_reviews.upsert_decision(
+            conn,
+            target_kind=target_kind, target_key=target_key, verdict=verdict,
+            content_hash=(snapshot or {}).get("content_hash"),
+            content_snapshot=(snapshot or {}).get("content"),
+            revision_of=revision_of, standalone=standalone,
+            corrected=corrected, reviewer=reviewer, note=note,
+        )
+
+        # Reconcile stored purchase_orders rows so the rest of the dashboard agrees
+        # with the call right now (the pipeline would also do this on its next run).
+        with conn.cursor() as cur:
+            if target_kind == "thread":
+                where = "(gmail_thread_id = %s OR source_file = %s)"
+                params = (target_key, f"gmail-thread:{target_key}")
+            else:
+                where = "source_file = %s"
+                params = (target_key,)
+            if verdict == "not_po":
+                cur.execute(
+                    f"UPDATE purchase_orders SET error = 'not a purchase order' "
+                    f"WHERE {where} AND (error IS NULL OR error = '')",
+                    params,
+                )
+            elif verdict == "is_po":
+                cur.execute(
+                    f"UPDATE purchase_orders SET error = NULL "
+                    f"WHERE {where} AND error = 'not a purchase order'",
+                    params,
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+    for fn in (load_extraction_reviews, load_review_queue, load_revision_candidates, load_data):
+        try:
+            fn.clear()
+        except Exception:
+            pass
+
+
+def delete_extraction_review(target_kind: str, target_key: str) -> None:
+    conn = psycopg2.connect(get_database_url())
+    try:
+        extraction_reviews.delete_decision(conn, target_kind, target_key)
+    finally:
+        conn.close()
+    for fn in (load_extraction_reviews, load_review_queue, load_revision_candidates):
+        try:
+            fn.clear()
+        except Exception:
+            pass
