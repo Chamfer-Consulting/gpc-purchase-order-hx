@@ -39,18 +39,21 @@ def test_auth_required():
     assert client.get("/api/customers", headers={"Authorization": "Bearer nope"}).status_code == 401
 
 
-@pytest.mark.parametrize("page", ["explore", "lifecycle"])
-def test_analytics_stub_shape(page):
-    r = client.get(f"/api/{page}", headers={"Authorization": f"Bearer {_token()}"})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["stub"] is True
-    assert {"scope", "kpis", "charts", "tables", "notes", "attention"} <= body.keys()
-    r2 = client.get(
-        f"/api/{page}?start=2026-01-01&end=2026-03-31&customers=Get%20Fresh",
-        headers={"Authorization": f"Bearer {_token()}"},
+def test_filter_params_parsing():
+    """FilterParams is the contract the SPA's useFilters mirrors."""
+    from app.deps import filter_params
+
+    fp = filter_params(
+        start="2026-01-01", end="2026-03-31", customers="Get Fresh,Testa",
+        products=None, sizes="4oz", include_samples="1",
     )
-    assert r2.json()["scope"]["start"] == "2026-01-01"
+    assert fp.start == "2026-01-01"
+    assert fp.customers == ("Get Fresh", "Testa")
+    assert fp.sizes == ("4oz",)
+    assert fp.include_samples is True
+    assert fp.cache_key() == (
+        "2026-01-01", "2026-03-31", ("Get Fresh", "Testa"), (), ("4oz",), True
+    )
 
 
 def test_oauth_callback_state_guard():

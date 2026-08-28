@@ -120,7 +120,8 @@ account owner / a browser · **(code)** = doable in the repo.
 - [x] Frontend for all read-only pages is done: `pages/AnalyticsPage.tsx` (generic — FilterBar + `usePage` + `PageRenderer`), routed for `/customers` `/products` `/explore` `/lifecycle`; `OverviewPage` on the same renderer; `components/PageRenderer.tsx` turns a `PageResponse` into scope bar → KPI grid → charts → tables.
 - [x] `dashboard/data.py` made **import-safe headless** (streamlit shim) — the backend calls it directly, no logic fork.
 - [x] `services/context.py` (filtered invoice/product frames, product-revenue basis, fuzzy customer match) + `services/customers.py` + `services/products.py` — real KPIs / charts / tables, wired + `@cached`.
-- [ ] `services/explore.py` (pivot / compare-periods / MoM movers) + `services/lifecycle.py` (requested-vs-delivered via `data.order_lifecycle` + `load_matched_line_items`) — still `_stub()`.
+- [x] `services/explore.py` (revenue by month/customer/product + MoM movers via `data.month_over_month_movers`) + `services/lifecycle.py` (requested/revised/shipped per PO via `data.prepare` + `order_lifecycle` + `load_matched_line_items`). All 4 analytics endpoints now real + `@cached`.
+- [ ] Explore's full pivot configurator (measure × dimension × grain, compare-two-periods) — needs extra query params; the first cut ships the common cuts.
 
 ### 2.4 Client caching
 - [ ] TanStack Query `staleTime` per endpoint; stale-while-revalidate.
