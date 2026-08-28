@@ -285,6 +285,40 @@ CREATE TABLE IF NOT EXISTS gmail_thread_state (
     was_po          BOOLEAN NOT NULL,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Human review decisions that OVERRIDE and TRAIN the PO extractor. One row per
+-- reviewed target — a Gmail thread ('thread', target_key = thread_id) or a source
+-- file ('file', target_key = source_file). Three consumers:
+--   1. The cloud pipeline consults it before every model call: verdict 'not_po'
+--      skips extraction entirely; 'is_po' with a `corrected` payload is published
+--      verbatim and protected like purchase_orders.edited; revision_of / standalone
+--      force or forbid the revision grouping in annotate_revisions().
+--   2. build_fewshot_block() turns the most instructive rows into few-shot
+--      examples injected back into the extraction + YES/NO gate prompts.
+--   3. eval_extraction.py replays every row's content_snapshot through the current
+--      prompt/model and scores it — CI fails on a regression.
+-- content_hash pins a decision to the exact content it was made on; if the thread
+-- later changes, the decision is "stale" (advisory only, re-surfaced for review).
+-- content_snapshot is the thread text / PDF text as reviewed (truncated), so the
+-- eval can replay without re-fetching from Gmail.
+CREATE TABLE IF NOT EXISTS extraction_reviews (
+    id               SERIAL PRIMARY KEY,
+    target_kind      TEXT NOT NULL,                     -- 'thread' | 'file'
+    target_key       TEXT NOT NULL,                     -- gmail thread_id, or source_file
+    content_hash     TEXT,                              -- content hash when reviewed; NULL = applies regardless
+    content_snapshot TEXT,                              -- thread/PDF text as reviewed (truncated) — for eval replay
+    verdict          TEXT NOT NULL,                     -- 'is_po' | 'not_po' | 'needs_fix'
+    revision_of      TEXT,                              -- po_number / 'gmail-thread:<id>' this revises
+    standalone       BOOLEAN NOT NULL DEFAULT FALSE,    -- TRUE = never group as a revision
+    corrected        JSONB,                             -- reviewer's authoritative field values
+    fewshot          BOOLEAN NOT NULL DEFAULT TRUE,     -- include in the few-shot block
+    reviewer         TEXT,
+    note             TEXT,
+    decided_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (target_kind, target_key)
+);
+CREATE INDEX IF NOT EXISTS idx_extraction_reviews_verdict ON extraction_reviews (verdict);
 -- ===== CLOUD-THREAD-SCHEMA (end) =====
 
 -- Named, reusable dashboard configurations (redesign Phase F). `kind` scopes a

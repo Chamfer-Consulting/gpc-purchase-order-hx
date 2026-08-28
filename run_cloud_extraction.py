@@ -53,6 +53,7 @@ import anthropic
 import psycopg2
 from tqdm import tqdm
 
+import extraction_reviews
 import gmail_client
 import postgres_store
 from extract_pos import _extract_from_source, annotate_revisions, extract_pdf_text, pdf_to_base64
@@ -448,6 +449,21 @@ def _process_thread(
                 logger.info(f"{source_label}: filename is a non-PO document type — skipping (no API call)")
                 continue
 
+            decision = extraction_reviews.get_decision(pg_conn, "file", source_label)
+            if (
+                decision
+                and not extraction_reviews.is_stale(decision, file_hash)
+                and extraction_reviews.has_authoritative_result(decision)
+            ):
+                result = extraction_reviews.synthesized_result(decision, source_label, "review")
+                result["_file_hash"] = file_hash
+                result["source_received_at"] = _received_at(m)
+                result["gmail_thread_id"] = thread_id
+                results.append(result)
+                extracted_keys.add((source_label, file_hash))
+                logger.info(f"{source_label}: applied human review decision ({decision['verdict']}) — no model call")
+                continue
+
             text = extract_pdf_text(pdf_bytes)
             if text and len(text) > NON_PO_TEXT_CEILING:
                 logger.info(
@@ -487,6 +503,29 @@ def _process_thread(
     source_label = f"gmail-thread:{thread_id}"
     file_hash = hashlib.sha256(combined_text.encode("utf-8")).hexdigest()
     message_count = len(messages)
+
+    # A human review decision on this thread is authoritative — re-asserted every
+    # run so it survives a re-extraction. Checked before the is_known short-circuit
+    # so a 'not_po' verdict also overrides a stale clean PO row from before the
+    # decision. A decision made on different content (is_stale) reverts to advisory.
+    decision = extraction_reviews.get_decision(pg_conn, "thread", thread_id)
+    if (
+        decision
+        and not extraction_reviews.is_stale(decision, file_hash)
+        and extraction_reviews.has_authoritative_result(decision)
+    ):
+        result = extraction_reviews.synthesized_result(decision, source_label, "review")
+        result["_file_hash"] = file_hash
+        result["source_received_at"] = _thread_received_at(messages)
+        result["gmail_thread_id"] = thread_id
+        results.append(result)
+        extracted_keys.add((source_label, file_hash))
+        if result.get("error") == postgres_store.NOT_A_PO_ERROR:
+            postgres_store.upsert_thread_state(pg_conn, thread_id, message_count, file_hash, was_po=False)
+        else:
+            result["_thread_state"] = (thread_id, message_count, file_hash, True)
+        logger.info(f"{source_label}: applied human review decision ({decision['verdict']}) — no model call")
+        return results
 
     state = postgres_store.get_thread_state(pg_conn, thread_id)
     # The last_file_hash short-circuit is only trusted for a thread recorded as NOT an
@@ -741,6 +780,8 @@ def main():
                         )
                         if (r.get("_source_file"), r.get("_file_hash")) not in fresh_keys
                     ]
+                    # Human "is this a revision?" calls, authoritative for grouping.
+                    group_overrides = extraction_reviews.group_override_map(conn)
                     conn.close()
                     conn = None
                     # annotate_revisions() mutates line_items in place and is NOT
@@ -750,6 +791,11 @@ def main():
                     # bookkeeping below.
                     batch = copy.deepcopy(deduped)
                     combined = existing + batch
+                    if group_overrides:
+                        for r in combined:
+                            ov = group_overrides.get(r.get("gmail_thread_id")) or group_overrides.get(r.get("_source_file"))
+                            if ov:
+                                extraction_reviews.apply_group_override(r, ov)
                     combined.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
                     annotate_revisions(combined)
                     # Publish only the PO groups this batch touched; every other group's

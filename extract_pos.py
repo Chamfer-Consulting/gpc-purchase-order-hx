@@ -364,15 +364,25 @@ def annotate_revisions(all_results):
     Groups results by PO number, sorts by date, assigns version labels,
     and diffs each version against its predecessor.
     Mutates each result and its line items in-place.
+
+    Human review overrides (extraction_reviews, stamped onto results by the
+    caller) are authoritative for grouping:
+      - result["_standalone"] = True     -> its own singleton group, never a revision
+      - result["_group_override"] = "X"  -> grouped under X regardless of po_number
     """
     groups = defaultdict(list)
+    _standalone_seq = 0
 
     for r in all_results:
         if "error" in r and "line_items" not in r:
             r["_version_label"] = ""
             r["_is_revision"] = False
             continue
-        po_num = r.get("po_number") or r.get("_source_file")
+        if r.get("_standalone"):
+            _standalone_seq += 1
+            groups[("__standalone__", _standalone_seq)].append(r)
+            continue
+        po_num = r.get("_group_override") or r.get("po_number") or r.get("_source_file")
         groups[po_num].append(r)
 
     for po_num, versions in groups.items():
