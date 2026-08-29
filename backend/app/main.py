@@ -13,6 +13,7 @@ from .db import close_pool, init_pool
 from .routers import (
     analytics,
     connections,
+    explore,
     filters,
     matching,
     oauth,
@@ -59,6 +60,7 @@ app.add_middleware(
 
 app.include_router(overview.router)
 app.include_router(analytics.router)
+app.include_router(explore.router)
 app.include_router(filters.router)
 app.include_router(quality.router)
 app.include_router(matching.router)

@@ -80,6 +80,8 @@ def test_oauth_callback_state_guard():
         "/api/invoices",
         "/api/pricing",
         "/api/pricing/history?product=x&size=y",
+        "/api/explore/pivot",
+        "/api/explore/compare?a_start=2026-01-01&a_end=2026-01-31&b_start=2026-02-01&b_end=2026-02-28",
         "/api/settings/hidden-products",
         "/api/settings/views?kind=customers",
         "/api/overview",

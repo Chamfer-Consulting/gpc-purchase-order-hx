@@ -5,6 +5,7 @@ import { LoginPage } from "@/auth/LoginPage";
 import { RequireAuth } from "@/auth/RequireAuth";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
+import { ExplorePage } from "@/pages/ExplorePage";
 import { DataQualityPage } from "@/pages/DataQualityPage";
 import { MatchPage } from "@/pages/MatchPage";
 import { ReviewPage } from "@/pages/ReviewPage";
@@ -30,7 +31,7 @@ export default function App() {
                     <Route path="/" element={<OverviewPage />} />
                     <Route path="/customers" element={<AnalyticsPage name="customers" title="Customer 360" />} />
                     <Route path="/products" element={<AnalyticsPage name="products" title="Products & Sizes" />} />
-                    <Route path="/explore" element={<AnalyticsPage name="explore" title="Explore" />} />
+                    <Route path="/explore" element={<ExplorePage />} />
                     <Route path="/lifecycle" element={<AnalyticsPage name="lifecycle" title="Order Lifecycle" />} />
                     <Route path="/data-quality" element={<DataQualityPage />} />
                     <Route path="/pricing" element={<PricingPage />} />

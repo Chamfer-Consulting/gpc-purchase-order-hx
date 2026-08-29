@@ -126,7 +126,16 @@ account owner / a browser · **(code)** = doable in the repo.
 - [x] `dashboard/data.py` made **import-safe headless** (streamlit shim) — the backend calls it directly, no logic fork.
 - [x] `services/context.py` (filtered invoice/product frames, product-revenue basis, fuzzy customer match) + `services/customers.py` + `services/products.py` — real KPIs / charts / tables, wired + `@cached`.
 - [x] `services/explore.py` (revenue by month/customer/product + MoM movers via `data.month_over_month_movers`) + `services/lifecycle.py` (requested/revised/shipped per PO via `data.prepare` + `order_lifecycle` + `load_matched_line_items`). All 4 analytics endpoints now real + `@cached`.
-- [ ] Explore's full pivot configurator (measure × dimension × grain, compare-two-periods) — needs extra query params; the first cut ships the common cuts.
+- [x] Explore's full pivot configurator — `GET /api/explore/pivot`
+      (`?measure=revenue|orders|quantity&grain=day|week|month|quarter|year|all&dims=customer,product,size`)
+      returns a PageResponse (totals KPIs + a top-12-series time chart, rest
+      bucketed "Other", + the flat result table) and `GET /api/explore/compare`
+      (`?a_start&a_end&b_start&b_end`) returns the two-period invoice/revenue
+      KPIs with deltas + a biggest-movers-by-customer table
+      (`explore.compare_periods_by_group` reused). `pages/ExplorePage.tsx`
+      replaces the generic AnalyticsPage for `/explore`: measure/grain
+      segmented controls, a break-by MultiSelect, and a Compare-two-periods
+      panel. Both endpoints honour the FilterBar scope and are `@cached`.
 
 ### 2.4 Client caching
 - [x] TanStack Query `staleTime` per endpoint; stale-while-revalidate. Global 60s
