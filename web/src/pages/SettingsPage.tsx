@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Alert,
@@ -7,8 +7,11 @@ import {
   Card,
   Group,
   Loader,
+  ScrollArea,
   Stack,
+  Switch,
   Text,
+  TextInput,
   Title,
 } from "@mantine/core";
 import {
@@ -19,6 +22,7 @@ import {
   type ConnectionsStatus,
 } from "@/api/connections";
 import { useBackfillDocs } from "@/api/poDocs";
+import { useHiddenProducts, useSetHidden } from "@/api/settings";
 
 const CALLBACK_MESSAGES: Record<string, { color: string; text: string }> = {
   qbo_ok: { color: "green", text: "QuickBooks connected." },
@@ -77,7 +81,86 @@ export function SettingsPage() {
       )}
 
       <DocumentsCard />
+      <ProductVisibilityCard />
     </Stack>
+  );
+}
+
+function ProductVisibilityCard() {
+  const { data, isLoading, error } = useHiddenProducts();
+  const setHidden = useSetHidden();
+  const [q, setQ] = useState("");
+
+  const shown = useMemo(() => {
+    const rows = data ?? [];
+    const needle = q.trim().toLowerCase();
+    const filtered = needle
+      ? rows.filter((r) => r.product_name.toLowerCase().includes(needle))
+      : rows;
+    // hidden first, then by usage
+    return [...filtered].sort(
+      (a, b) => Number(b.hidden) - Number(a.hidden) || b.n_lines - a.n_lines,
+    );
+  }, [data, q]);
+
+  const hiddenCount = (data ?? []).filter((r) => r.hidden).length;
+
+  return (
+    <Card withBorder radius="md" p="lg">
+      <Title order={4} mb="xs">
+        Product visibility
+      </Title>
+      <Text size="sm" c="dimmed" mb="xs">
+        Hidden products are excluded from every analytics page and the reference-price
+        table. {hiddenCount} hidden now.
+      </Text>
+      {error && (
+        <Text size="xs" c="red">
+          {(error as Error).message}
+        </Text>
+      )}
+      {isLoading && <Loader size="sm" />}
+      {data && (
+        <>
+          <TextInput
+            size="xs"
+            placeholder="Filter products…"
+            value={q}
+            onChange={(e) => setQ(e.currentTarget.value)}
+            mb="xs"
+          />
+          <ScrollArea.Autosize mah={320}>
+            <Stack gap={2}>
+              {shown.map((r) => (
+                <Group key={r.product_name} justify="space-between" wrap="nowrap">
+                  <Text size="sm" truncate>
+                    {r.product_name}{" "}
+                    <Text span size="xs" c="dimmed">
+                      ({r.n_lines} lines)
+                    </Text>
+                  </Text>
+                  <Switch
+                    size="xs"
+                    checked={r.hidden}
+                    onChange={(e) =>
+                      setHidden.mutate({
+                        product_name: r.product_name,
+                        hidden: e.currentTarget.checked,
+                      })
+                    }
+                  />
+                </Group>
+              ))}
+              {shown.length === 0 && (
+                <Text size="xs" c="dimmed">
+                  No matches.
+                </Text>
+              )}
+            </Stack>
+          </ScrollArea.Autosize>
+        </>
+      )}
+    </Card>
   );
 }
 

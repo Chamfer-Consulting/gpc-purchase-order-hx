@@ -78,6 +78,10 @@ def test_oauth_callback_state_guard():
         "/api/po/1/documents/1",
         "/api/archive",
         "/api/invoices",
+        "/api/pricing",
+        "/api/pricing/history?product=x&size=y",
+        "/api/settings/hidden-products",
+        "/api/settings/views?kind=customers",
         "/api/overview",
         "/api/filters/options",
         "/api/customers",
@@ -105,6 +109,10 @@ def test_all_data_routes_require_auth(path):
         ("post", "/api/po/1/documents/upload", {"filename": "x.pdf", "content_b64": "eA=="}),
         ("post", "/api/po/documents/backfill", {"sources": ["gmail"], "limit": 5}),
         ("delete", "/api/po/1/documents/1", None),
+        ("post", "/api/pricing", {"rows": [], "delete": []}),
+        ("post", "/api/settings/hidden-products", {"product_name": "x", "hidden": True}),
+        ("post", "/api/settings/views", {"kind": "customers", "name": "x", "config": {}}),
+        ("delete", "/api/settings/views", {"name": "x"}),
     ],
 )
 def test_admin_mutations_require_auth(method, path, body):

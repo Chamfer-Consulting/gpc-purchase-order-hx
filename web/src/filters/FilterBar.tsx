@@ -2,12 +2,15 @@ import dayjs from "dayjs";
 import { Group, MultiSelect, Switch } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import { useFilters } from "./useFilters";
+import { SavedViewsControl } from "./SavedViewsControl";
 
 interface FilterBarProps {
   customerOptions?: string[];
   productOptions?: string[];
   sizeOptions?: string[];
   showSamples?: boolean;
+  /** when set, shows the saved-views control scoped to this page key */
+  viewKind?: string;
 }
 
 // dayjs parses a bare ISO "YYYY-MM-DD" as LOCAL start-of-day (native `new Date`
@@ -22,6 +25,7 @@ export function FilterBar({
   productOptions = [],
   sizeOptions = [],
   showSamples = true,
+  viewKind,
 }: FilterBarProps) {
   const { filters, setFilters } = useFilters();
 
@@ -75,6 +79,7 @@ export function FilterBar({
           onChange={(e) => setFilters({ includeSamples: e.currentTarget.checked })}
         />
       )}
+      {viewKind && <SavedViewsControl kind={viewKind} />}
     </Group>
   );
 }

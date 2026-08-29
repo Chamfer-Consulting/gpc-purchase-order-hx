@@ -45,9 +45,12 @@ account owner / a browser · **(code)** = doable in the repo.
 - [x] Matching / quality / review / connections routers wrap the reused repo
       modules (`qbo_matcher`, `extraction_reviews`, `qbo_client`, `gmail_client`)
       directly on psycopg2 conns (`app/reused_db.py`).
-- [ ] `services/overview.py` — the Overview page's revenue series + YoY charts
-      (KPIs + the attention digest are already real in `routers/overview.py`).
-- [ ] `services/settings.py` — reference-price editor + hidden-products + saved views.
+- [x] `services/overview.py` — the Overview page's scoped revenue/invoice KPIs
+      (deltas vs. the preceding period, trailing sparklines), monthly series, and
+      year-over-year annual comparison. `context.py` split into `prepared_frames()`
+      + `slice_by_date()` for the prev-period reuse.
+- [x] `services/settings.py` + `services/pricing.py` — reference-price editor
+      (`routers/pricing.py`), hidden-products + saved views (`routers/settings.py`).
 
 **Exit:** every analytics endpoint returns real data; Streamlit + the scheduled jobs unaffected.
 
@@ -139,8 +142,15 @@ account owner / a browser · **(code)** = doable in the repo.
 - [x] **Extraction Review** — decision CRUD straight through `extraction_reviews.py` (`routers/review.py`); queue + revision candidates are real SQL in `services/review_queue.py`. `pages/ReviewPage.tsx`: Queue / Possible revisions / All decisions tabs + verdict form.
 - [ ] Supabase Realtime subscription on the review queue table → live updates.
 - [x] Edit PO — `services/po_edit.py` (ported `save_po_edit` + a `get_po` reader; `math_check.validate_math` reused). `routers/po_edit.py` = `GET/POST /api/po/{id}`. `pages/EditPoPage.tsx` — editable header + line-item table, math-check feedback, `edited=TRUE` guard. `DataGrid` `linkTo` makes every `po_id` cell link to `/po/:id`.
-- [ ] Reference Prices — `routers/pricing.py` + editable grid.
-- [ ] Settings — product hiding, saved views (connections already done in Phase 1.5).
+- [x] Reference Prices — `routers/pricing.py` (`GET/POST /api/pricing`,
+      `GET /api/pricing/history`) + `services/pricing.py`; `pages/PricingPage.tsx`
+      = unit-price history chart (per customer, per product/size) + an editable
+      reference-price table (add / edit / delete, save-diff against the loaded
+      seed). Nav entry under Data Quality.
+- [x] Settings — product hiding (`GET/POST /api/settings/hidden-products` +
+      "Product visibility" card) and saved views (`GET/POST/DELETE
+      /api/settings/views` + `SavedViewsControl` in the FilterBar, scoped per
+      analytics page). Connections already done in Phase 1.5.
 - [x] "Needs attention" digest — `routers/overview.py:_attention` (direct SQL for math/error/price/mods + the reused matcher + `review_queue`). `PageResponse.attention` + `AttentionList` component, rendered top of every page that returns it.
 
 **Exit:** every Streamlit page has an equivalent; a full day's real work needs no Streamlit.

@@ -11,6 +11,7 @@ const NAV: { label: string; to: string }[] = [
   { label: "Explore", to: "/explore" },
   { label: "Order Lifecycle", to: "/lifecycle" },
   { label: "Data Quality", to: "/data-quality" },
+  { label: "Pricing", to: "/pricing" },
   { label: "Match & Reconcile", to: "/match" },
   { label: "Extraction Review", to: "/review" },
   { label: "Archive", to: "/archive" },

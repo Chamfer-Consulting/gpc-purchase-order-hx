@@ -11,6 +11,7 @@ import { ReviewPage } from "@/pages/ReviewPage";
 import { EditPoPage } from "@/pages/EditPoPage";
 import { NewPoPage } from "@/pages/NewPoPage";
 import { ArchivePage } from "@/pages/ArchivePage";
+import { PricingPage } from "@/pages/PricingPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { KitchenSink } from "@/pages/KitchenSink";
 
@@ -32,6 +33,7 @@ export default function App() {
                     <Route path="/explore" element={<AnalyticsPage name="explore" title="Explore" />} />
                     <Route path="/lifecycle" element={<AnalyticsPage name="lifecycle" title="Order Lifecycle" />} />
                     <Route path="/data-quality" element={<DataQualityPage />} />
+                    <Route path="/pricing" element={<PricingPage />} />
                     <Route path="/match" element={<MatchPage />} />
                     <Route path="/review" element={<ReviewPage />} />
                     <Route path="/po/new" element={<NewPoPage />} />

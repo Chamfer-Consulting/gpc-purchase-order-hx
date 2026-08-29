@@ -16,6 +16,7 @@ export function AnalyticsPage({ name, title }: { name: PageName; title: string }
         customerOptions={opts?.customers ?? []}
         productOptions={opts?.products ?? []}
         sizeOptions={opts?.sizes ?? []}
+        viewKind={name}
       />
 
       {error && (

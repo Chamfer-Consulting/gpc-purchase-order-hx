@@ -1,0 +1,319 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  ActionIcon,
+  Alert,
+  Button,
+  Group,
+  Loader,
+  NumberInput,
+  Paper,
+  Select,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
+import { Chart } from "@/charts/Chart";
+import type { EChartsOption } from "@/charts/echartsCore";
+import { fmtCurrency } from "@/lib/format";
+import {
+  useReferencePrices,
+  usePriceHistory,
+  useSavePrices,
+  type ReferencePrice,
+  type RefPriceRow,
+} from "@/api/pricing";
+
+interface EditRow {
+  _rk: number;
+  id: number | null;
+  customer_name: string;
+  product_name: string;
+  container_size: string;
+  price: number | "";
+  source: string;
+}
+
+let RK = 1;
+
+// key parts are joined on U+241F (never present in a name) so a name's own
+// spaces / slashes don't corrupt the round-trip through the deleted-keys set.
+const SEP = "␟";
+const keyOf = (r: { customer_name: string; product_name: string; container_size: string }) =>
+  [r.customer_name, r.product_name, r.container_size].join(SEP);
+
+function seedRows(refs: ReferencePrice[]): EditRow[] {
+  return refs.map((r) => ({
+    _rk: RK++,
+    id: r.id,
+    customer_name: r.customer_name,
+    product_name: r.product_name,
+    container_size: r.container_size,
+    price: r.price,
+    source: r.source,
+  }));
+}
+
+export function PricingPage() {
+  const { data, isLoading, error } = useReferencePrices();
+  const save = useSavePrices();
+
+  const [rows, setRows] = useState<EditRow[]>([]);
+  const [seed, setSeed] = useState<Map<string, number>>(new Map());
+
+  useEffect(() => {
+    if (!data) return;
+    setRows(seedRows(data.reference_prices));
+    setSeed(new Map(data.reference_prices.map((r) => [keyOf(r), r.price] as const)));
+  }, [data]);
+
+  const products = useMemo(
+    () => Array.from(new Set(data?.options.map((o) => o.product_name) ?? [])).sort(),
+    [data],
+  );
+  const [product, setProduct] = useState<string | null>(null);
+  const sizes = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (data?.options ?? [])
+            .filter((o) => o.product_name === product)
+            .map((o) => o.container_size),
+        ),
+      ).sort(),
+    [data, product],
+  );
+  const [size, setSize] = useState<string | null>(null);
+  useEffect(() => {
+    if (product && sizes.length && !sizes.includes(size ?? "")) setSize(sizes[0]);
+  }, [product, sizes, size]);
+
+  function patch(rk: number, p: Partial<EditRow>) {
+    setRows((rs) => rs.map((r) => (r._rk === rk ? { ...r, ...p } : r)));
+  }
+  function addRow() {
+    setRows((rs) => [
+      ...rs,
+      {
+        _rk: RK++,
+        id: null,
+        customer_name: "",
+        product_name: product ?? "",
+        container_size: size ?? "",
+        price: "",
+        source: "manual",
+      },
+    ]);
+  }
+  function removeRow(rk: number) {
+    setRows((rs) => rs.filter((r) => r._rk !== rk));
+  }
+
+  function onSave() {
+    const present = new Set<string>();
+    const changed: RefPriceRow[] = [];
+    for (const r of rows) {
+      const cust = r.customer_name.trim();
+      const prod = r.product_name.trim();
+      const sz = r.container_size.trim();
+      if (!cust || !prod || !sz || r.price === "" || Number.isNaN(Number(r.price))) continue;
+      const k = keyOf({ customer_name: cust, product_name: prod, container_size: sz });
+      present.add(k);
+      const prev = seed.get(k);
+      if (prev === undefined || Number(prev) !== Number(r.price)) {
+        changed.push({ customer_name: cust, product_name: prod, container_size: sz, price: Number(r.price) });
+      }
+    }
+    const deleted = [...seed.keys()]
+      .filter((k) => !present.has(k))
+      .map((k) => k.split(SEP));
+    if (!changed.length && !deleted.length) return;
+    save.mutate({ rows: changed, delete: deleted });
+  }
+
+  return (
+    <Stack gap="lg" maw={980}>
+      <Title order={2}>Pricing &amp; Reference Prices</Title>
+      <Text size="sm" c="dimmed">
+        Review unit-price history, then set the reference prices that drive the price-anomaly
+        flag on new orders. <b>auto</b> rows refresh from the most recent price actually paid
+        on each extraction sync; editing one makes it a permanent <b>manual</b> override.
+      </Text>
+
+      {error && <Alert color="red" title="Couldn't load">{(error as Error).message}</Alert>}
+      {isLoading && <Loader />}
+
+      {data && (
+        <>
+          <Paper withBorder radius="md" p="md">
+            <Title order={4} mb="xs">Price history</Title>
+            <Group mb="sm" gap="sm">
+              <Select
+                label="Product"
+                size="xs"
+                w={260}
+                data={products}
+                value={product}
+                onChange={(v) => {
+                  setProduct(v);
+                  setSize(null);
+                }}
+                searchable
+                placeholder="Pick a product"
+              />
+              <Select
+                label="Size"
+                size="xs"
+                w={140}
+                data={sizes}
+                value={size}
+                onChange={setSize}
+                disabled={!product}
+              />
+            </Group>
+            <HistoryChart product={product} size={size} />
+          </Paper>
+
+          <Paper withBorder radius="md" p="md">
+            <Group justify="space-between" mb="xs">
+              <Title order={4}>Reference prices</Title>
+              <Group gap="xs">
+                <Button size="xs" variant="default" onClick={addRow}>
+                  Add row
+                </Button>
+                <Button size="xs" onClick={onSave} loading={save.isPending}>
+                  Save changes
+                </Button>
+              </Group>
+            </Group>
+
+            {save.data && (
+              <Text size="xs" c="dimmed" mb="xs">
+                Saved {save.data.saved} changed/added · {save.data.deleted} deleted.
+              </Text>
+            )}
+            {save.error && (
+              <Text size="xs" c="red" mb="xs">
+                {(save.error as Error).message}
+              </Text>
+            )}
+
+            <Table.ScrollContainer minWidth={720}>
+              <Table striped withTableBorder verticalSpacing={4}>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Customer</Table.Th>
+                    <Table.Th>Product</Table.Th>
+                    <Table.Th>Size</Table.Th>
+                    <Table.Th w={130}>Price ($)</Table.Th>
+                    <Table.Th w={90}>Source</Table.Th>
+                    <Table.Th w={40} />
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {rows.map((r) => (
+                    <Table.Tr key={r._rk}>
+                      <Table.Td>
+                        <TextInput
+                          size="xs"
+                          value={r.customer_name}
+                          onChange={(e) => patch(r._rk, { customer_name: e.currentTarget.value })}
+                        />
+                      </Table.Td>
+                      <Table.Td>
+                        <TextInput
+                          size="xs"
+                          value={r.product_name}
+                          onChange={(e) => patch(r._rk, { product_name: e.currentTarget.value })}
+                        />
+                      </Table.Td>
+                      <Table.Td>
+                        <TextInput
+                          size="xs"
+                          value={r.container_size}
+                          onChange={(e) => patch(r._rk, { container_size: e.currentTarget.value })}
+                        />
+                      </Table.Td>
+                      <Table.Td>
+                        <NumberInput
+                          size="xs"
+                          decimalScale={2}
+                          value={r.price}
+                          onChange={(v) => patch(r._rk, { price: v === "" ? "" : Number(v) })}
+                          hideControls
+                        />
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="xs" c={r.source === "manual" ? "blue" : "dimmed"}>
+                          {r.source}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <ActionIcon
+                          size="sm"
+                          variant="subtle"
+                          color="red"
+                          onClick={() => removeRow(r._rk)}
+                          aria-label="Delete row"
+                        >
+                          ×
+                        </ActionIcon>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          </Paper>
+        </>
+      )}
+    </Stack>
+  );
+}
+
+function HistoryChart({ product, size }: { product: string | null; size: string | null }) {
+  const { data, isLoading } = usePriceHistory(product, size);
+
+  const option = useMemo<EChartsOption | null>(() => {
+    if (!data || !data.points.length) return null;
+    const byCust = new Map<string, [string, number][]>();
+    for (const p of data.points) {
+      if (!p.date) continue;
+      const c = p.customer_name ?? "—";
+      if (!byCust.has(c)) byCust.set(c, []);
+      byCust.get(c)!.push([p.date, p.unit_price]);
+    }
+    return {
+      tooltip: { trigger: "axis" },
+      legend: {},
+      xAxis: { type: "time" },
+      yAxis: { type: "value", name: "Unit price ($)" },
+      series: [...byCust.entries()].map(([name, pts]) => ({
+        type: "line",
+        name,
+        data: pts,
+        showSymbol: true,
+        symbolSize: 6,
+      })),
+    };
+  }, [data]);
+
+  if (!product || !size) return <Text size="sm" c="dimmed">Pick a product and size.</Text>;
+  if (isLoading) return <Loader size="sm" />;
+  if (!option) return <Text size="sm" c="dimmed">No priced history for this selection.</Text>;
+
+  return (
+    <>
+      <Chart option={option} height={320} />
+      {data && data.reference_prices.length > 0 && (
+        <Text size="xs" c="dimmed" mt="xs">
+          Current reference:{" "}
+          {data.reference_prices
+            .map((r) => `${r.customer_name} ${fmtCurrency(r.price, true)} (${r.source})`)
+            .join(" · ")}
+        </Text>
+      )}
+    </>
+  );
+}
