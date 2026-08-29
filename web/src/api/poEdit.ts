@@ -89,6 +89,12 @@ export interface PoLink {
   txn_date: string | null;
   total_amt: number | null;
   customer_name: string | null;
+  qbo_url: string | null;
+}
+
+export interface PoSources {
+  gmail_thread_url: string | null;
+  drive_pdf_url: string | null;
 }
 
 export interface AuditEntry {
@@ -117,6 +123,7 @@ export interface PoDetail {
   removed_items: PoLineItem[];
   revisions?: PoRevision[];
   links?: PoLink[];
+  sources?: PoSources;
   audit?: AuditEntry[];
 }
 

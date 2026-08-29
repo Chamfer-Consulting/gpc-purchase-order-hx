@@ -7,6 +7,7 @@ data load (see `docs/REBUILD-SETUP.md` §2). The base schema comes over with tha
 | Migration | What it does |
 |-----------|--------------|
 | `20260828120000_admin_crud.sql` | PO lifecycle `status` + soft delete, per-line `voided`, `audit_log` table. Backs the admin CRUD surface on `po-dashboard-rebuild`. |
+| `20260828130000_po_documents.sql` | `po_documents` table — captured source PDFs (emailed PO from Gmail, invoice from QuickBooks), bytes stored inline. |
 
 ## Applying
 

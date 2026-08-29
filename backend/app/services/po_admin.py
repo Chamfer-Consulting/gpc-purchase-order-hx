@@ -13,6 +13,7 @@ import uuid
 import psycopg2.extras
 
 import extraction_reviews  # repo root, via app.reuse
+import qbo_client  # dashboard/, via app.reuse
 import qbo_matcher  # dashboard/, via app.reuse
 from math_check import validate_math  # repo root, via app.reuse
 
@@ -38,7 +39,7 @@ def _header_row(cur, po_id: int) -> dict | None:
         """
         SELECT id, po_number, customer_name, customer_id, status, status_reason,
                status_at, deleted_at, edited, edited_by, source_file, gmail_thread_id,
-               delivery_date, po_date, subtotal, tax, total
+               drive_file_id, delivery_date, po_date, subtotal, tax, total
         FROM purchase_orders WHERE id = %s
         """,
         (po_id,),
@@ -72,8 +73,23 @@ def po_detail(conn, po_id: int) -> dict | None:
         )
         base["revisions"] = _revision_chain(cur, hdr)
         base["links"] = _links(cur, po_id)
+        base["sources"] = _sources(cur, hdr)
     base["audit"] = audit.history(conn, "purchase_order", po_id)
     return base
+
+
+def _sources(cur, hdr: dict) -> dict:
+    """Deep links back to where this PO / its invoices actually live."""
+    out: dict = {"gmail_thread_url": None, "drive_pdf_url": None}
+    if hdr.get("gmail_thread_id"):
+        cur.execute(
+            "SELECT url FROM gmail_thread_meta WHERE thread_id = %s", (hdr["gmail_thread_id"],)
+        )
+        row = cur.fetchone()
+        out["gmail_thread_url"] = row["url"] if row else None
+    if hdr.get("drive_file_id"):
+        out["drive_pdf_url"] = f"https://drive.google.com/file/d/{hdr['drive_file_id']}/view"
+    return out
 
 
 def _revision_chain(cur, hdr: dict) -> list[dict]:
@@ -106,7 +122,8 @@ def _links(cur, po_id: int) -> list[dict]:
     cur.execute(
         """
         SELECT l.invoice_id, l.match_method, l.match_score, l.confirmed, l.rejected,
-               l.linked_at, i.doc_number, i.txn_date, i.total_amt, i.customer_name
+               l.linked_at, i.doc_number, i.txn_date, i.total_amt, i.customer_name,
+               i.qbo_invoice_id
         FROM po_invoice_links l
         JOIN qbo_invoices i ON i.id = l.invoice_id
         WHERE l.po_id = %s
@@ -114,7 +131,12 @@ def _links(cur, po_id: int) -> list[dict]:
         """,
         (po_id,),
     )
-    return [_jsonify(dict(r)) for r in cur.fetchall()]
+    out = []
+    for r in cur.fetchall():
+        d = _jsonify(dict(r))
+        d["qbo_url"] = qbo_client.invoice_url(r["qbo_invoice_id"]) if r["qbo_invoice_id"] else None
+        out.append(d)
+    return out
 
 
 _ARCHIVE_COLS = """

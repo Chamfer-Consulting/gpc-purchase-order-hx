@@ -82,9 +82,13 @@ supabase link --project-ref <ref> && supabase db push
 psql "$SUPABASE_SESSION_URL" -f supabase/migrations/20260828120000_admin_crud.sql
 ```
 
-Current migrations: `20260828120000_admin_crud.sql` — PO lifecycle `status` +
-soft delete, per-line `voided`, `audit_log`. (The API also self-applies this on
-boot, so it's safe to defer, but run it so the change is explicit.)
+Current migrations:
+- `20260828120000_admin_crud.sql` — PO lifecycle `status` + soft delete, per-line
+  `voided`, `audit_log`.
+- `20260828130000_po_documents.sql` — `po_documents` (captured PO/invoice PDFs).
+
+(The API also self-applies both on boot, so it's safe to defer, but run them so
+the change is explicit.)
 
 ---
 

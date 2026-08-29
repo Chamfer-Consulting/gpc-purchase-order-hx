@@ -30,6 +30,24 @@ CREATE TABLE IF NOT EXISTS audit_log (
     at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log (entity, entity_id, at DESC);
+
+CREATE TABLE IF NOT EXISTS po_documents (
+    id           BIGSERIAL PRIMARY KEY,
+    po_id        INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    invoice_id   INTEGER REFERENCES qbo_invoices(id) ON DELETE SET NULL,
+    kind         TEXT NOT NULL,
+    source       TEXT NOT NULL,
+    filename     TEXT NOT NULL,
+    mime_type    TEXT NOT NULL DEFAULT 'application/pdf',
+    byte_size    INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    content      BYTEA,
+    storage_path TEXT,
+    captured_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    captured_by  TEXT,
+    UNIQUE (po_id, kind, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_po_documents_po_id ON po_documents (po_id);
 """
 
 

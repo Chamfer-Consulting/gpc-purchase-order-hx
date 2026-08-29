@@ -18,6 +18,7 @@ from .routers import (
     oauth,
     overview,
     po_admin,
+    po_docs,
     po_edit,
     quality,
     review,
@@ -58,6 +59,7 @@ app.include_router(matching.router)
 app.include_router(review.router)
 app.include_router(po_edit.router)
 app.include_router(po_admin.router)
+app.include_router(po_docs.router)
 app.include_router(connections.router)
 app.include_router(oauth.router)
 

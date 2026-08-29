@@ -252,6 +252,22 @@ def disconnect(conn) -> None:
     conn.commit()
 
 
+def fetch_invoice_pdf(access_token: str, realm_id: str, qbo_invoice_id: str) -> bytes:
+    """The rendered invoice PDF — byte-for-byte what QuickBooks' Print / Save-as-PDF
+    produces. GET .../invoice/{id}/pdf with Accept: application/pdf."""
+    resp = requests.get(
+        f"{api_base()}/v3/company/{realm_id}/invoice/{qbo_invoice_id}/pdf",
+        headers={"Authorization": f"Bearer {access_token}", "Accept": "application/pdf"},
+        params={"minorversion": QBO_MINOR_VERSION},
+        timeout=60,
+    )
+    if resp.status_code == 401:
+        raise QBOReauthRequired("QuickBooks rejected the token fetching an invoice PDF.")
+    if not resp.ok:
+        raise RuntimeError(f"QuickBooks invoice-PDF error {resp.status_code}: {resp.text[:300]}")
+    return resp.content
+
+
 def fetch_all_invoices(access_token: str, realm_id: str, since: datetime | None = None) -> list[dict]:
     """Paginates QBO's Query API to pull Invoices — every one, or (for incremental
     syncs) only those updated after `since` (a timezone-aware datetime)."""

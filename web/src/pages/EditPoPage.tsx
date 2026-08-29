@@ -38,9 +38,25 @@ import {
   type PoLineItem,
   type PoLink,
   type PoRevision,
+  type PoSources,
   type PoStatus,
 } from "@/api/poEdit";
+import {
+  openDocument,
+  useCaptureDocs,
+  useDeleteDoc,
+  usePoDocuments,
+  useUploadDoc,
+  type PoDocument,
+} from "@/api/poDocs";
 import { fmtCurrency } from "@/lib/format";
+
+const DOC_KIND_LABEL: Record<PoDocument["kind"], string> = {
+  po_pdf: "PO PDF",
+  invoice_pdf: "Invoice PDF",
+  email_pdf: "Email PDF",
+  other: "File",
+};
 
 const EMPTY: PoLineItem = {
   product_raw: "",
@@ -344,6 +360,7 @@ export function EditPoPage() {
 
       <RevisionsPanel poId={poId} revisions={data.revisions ?? []} />
       <LinksPanel poId={poId} links={data.links ?? []} />
+      <DocumentsPanel poId={poId} sources={data.sources} />
       <AuditPanel entries={data.audit ?? []} />
     </Stack>
   );
@@ -475,15 +492,22 @@ function LinksPanel({ poId, links }: { poId: number; links: PoLink[] }) {
                   </Badge>
                 </Table.Td>
                 <Table.Td>
-                  <Button
-                    size="xs"
-                    variant="subtle"
-                    color="red"
-                    loading={unlink.isPending}
-                    onClick={() => unlink.mutate(l.invoice_id)}
-                  >
-                    Unlink
-                  </Button>
+                  <Group gap={4} wrap="nowrap">
+                    {l.qbo_url && (
+                      <Anchor href={l.qbo_url} target="_blank" rel="noopener" size="xs">
+                        Open in QuickBooks ↗
+                      </Anchor>
+                    )}
+                    <Button
+                      size="xs"
+                      variant="subtle"
+                      color="red"
+                      loading={unlink.isPending}
+                      onClick={() => unlink.mutate(l.invoice_id)}
+                    >
+                      Unlink
+                    </Button>
+                  </Group>
                 </Table.Td>
               </Table.Tr>
             ))}
@@ -530,6 +554,151 @@ function LinksPanel({ poId, links }: { poId: number; links: PoLink[] }) {
         <Text size="xs" c="red" mt="xs">
           {(link.error as Error).message}
         </Text>
+      )}
+    </Paper>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+
+function DocumentsPanel({ poId, sources }: { poId: number; sources?: PoSources }) {
+  const { data: docs } = usePoDocuments(poId);
+  const capture = useCaptureDocs(poId);
+  const upload = useUploadDoc(poId);
+  const del = useDeleteDoc(poId);
+  const result = capture.data;
+
+  return (
+    <Paper withBorder p="md" radius="md">
+      <Title order={4} mb="sm">
+        Documents
+      </Title>
+
+      {(sources?.gmail_thread_url || sources?.drive_pdf_url) && (
+        <Group gap="md" mb="sm">
+          {sources?.drive_pdf_url && (
+            <Anchor href={sources.drive_pdf_url} target="_blank" rel="noopener" size="sm">
+              Original PO PDF (Drive) ↗
+            </Anchor>
+          )}
+          {sources?.gmail_thread_url && (
+            <Anchor href={sources.gmail_thread_url} target="_blank" rel="noopener" size="sm">
+              Email thread ↗
+            </Anchor>
+          )}
+        </Group>
+      )}
+
+      <Group gap="xs" mb="sm">
+        <Button
+          size="xs"
+          variant="light"
+          loading={capture.isPending}
+          onClick={() => capture.mutate(["gmail"])}
+        >
+          Capture from Gmail
+        </Button>
+        <Button
+          size="xs"
+          variant="light"
+          loading={capture.isPending}
+          onClick={() => capture.mutate(["qbo"])}
+        >
+          Capture from QuickBooks
+        </Button>
+        <Button
+          size="xs"
+          variant="subtle"
+          component="label"
+          loading={upload.isPending}
+        >
+          Upload a file
+          <input
+            type="file"
+            hidden
+            onChange={(e) => {
+              const f = e.currentTarget.files?.[0];
+              if (f) upload.mutate(f);
+              e.currentTarget.value = "";
+            }}
+          />
+        </Button>
+      </Group>
+
+      {result && (
+        <Text size="xs" c="dimmed" mb="xs">
+          {[result.gmail?.note, result.qbo?.note].filter(Boolean).join(" ")}
+          {[...(result.gmail?.skipped ?? []), ...(result.qbo?.skipped ?? [])].length > 0 &&
+            ` (${[...(result.gmail?.skipped ?? []), ...(result.qbo?.skipped ?? [])].join("; ")})`}
+        </Text>
+      )}
+      {capture.error && (
+        <Text size="xs" c="red" mb="xs">
+          {(capture.error as Error).message}
+        </Text>
+      )}
+      {upload.error && (
+        <Text size="xs" c="red" mb="xs">
+          {(upload.error as Error).message}
+        </Text>
+      )}
+
+      {!docs || docs.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          No PDFs captured yet. Use the buttons above to pull them from Gmail / QuickBooks.
+        </Text>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <Table>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Kind</Table.Th>
+                <Table.Th>File</Table.Th>
+                <Table.Th>Source</Table.Th>
+                <Table.Th>Size</Table.Th>
+                <Table.Th>Captured</Table.Th>
+                <Table.Th />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {docs.map((d) => (
+                <Table.Tr key={d.id}>
+                  <Table.Td>
+                    <Badge size="xs" variant="light">
+                      {DOC_KIND_LABEL[d.kind]}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Anchor onClick={() => openDocument(poId, d.id)} style={{ cursor: "pointer" }}>
+                      {d.filename}
+                    </Anchor>
+                  </Table.Td>
+                  <Table.Td>{d.source}</Table.Td>
+                  <Table.Td style={{ fontVariantNumeric: "tabular-nums" }}>
+                    {(d.byte_size / 1024).toFixed(0)} KB
+                  </Table.Td>
+                  <Table.Td>{d.captured_at?.slice(0, 16).replace("T", " ") ?? "—"}</Table.Td>
+                  <Table.Td>
+                    <Group gap={4} wrap="nowrap">
+                      <Button size="xs" variant="subtle" onClick={() => openDocument(poId, d.id)}>
+                        View
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        color="red"
+                        loading={del.isPending}
+                        onClick={() => del.mutate(d.id)}
+                      >
+                        Delete
+                      </Button>
+                    </Group>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </div>
       )}
     </Paper>
   );

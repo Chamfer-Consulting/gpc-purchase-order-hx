@@ -194,8 +194,10 @@ Model: **soft delete** (a `status` enum, rows preserved) + an **audit_log**.
 - [x] Frontend — `EditPoPage` gains a lifecycle panel (status change + reason, soft delete / restore), per-line void toggle, revision-chain panel (regroup / standalone), invoice-links panel with search, and a collapsible audit trail. New `/po/new` route (`NewPoPage`). `MatchPage` gains a manual-link workbench + clickable unlinked-PO list.
 - [x] Reactivation is gated by an inline warning block (Edit PO → "Reactivate order…") spelling out the consequences before a non-active PO goes back to `active`.
 - [x] Archive page (`/archive`, in the nav) — `GET /api/archive`; tabs per status bucket (All / Cancelled / Withdrawn / Voided / Deleted / Draft) with counts, each row tagged with its status badge and linking to the PO. This is how non-active POs are found.
+- [x] Document capture — `po_documents` table (bytes inline). `services/po_docs.py` + `routers/po_docs.py`: `GET /api/po/{id}/documents`, `GET .../documents/{doc_id}` (streams the PDF), `POST .../documents/capture` `{sources:["gmail","qbo"]}`, `POST .../documents/upload` (base64), `DELETE .../documents/{doc_id}`. Gmail = the thread's PDF attachments (`gmail_client`); QBO = `qbo_client.fetch_invoice_pdf` (new — the Print/Save-as-PDF endpoint) for each confirmed linked invoice. `GET /api/po/{id}` now also returns `sources` (Drive PDF + email-thread deep links) and `links[].qbo_url`. Frontend: a Documents panel in `EditPoPage` (capture buttons, upload, view/delete, deep links).
 - [x] Tests — auth guards for every new route + mutation (`backend/tests/test_health.py`).
-- [ ] **(you)** Run `supabase/migrations/20260828120000_admin_crud.sql` against Supabase (or `supabase db push`) — see SETUP §2.1.
+- [ ] **(you)** Run the migrations in `supabase/migrations/` against Supabase (or `supabase db push`) — see SETUP §2.1.
+- [ ] Follow-up: auto-capture PDFs at ingestion (a pipeline step) + a bulk backfill endpoint like `gdrive_client.sync_drive_links`; optional move of `po_documents.content` bytes to Supabase Storage.
 - [ ] Follow-up: `status` as a column/filter on the analytics tables too; a bulk "cancel these" action from the review queue.
 
 ---

@@ -102,6 +102,29 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log (entity, entity_id, at DESC);
 
+-- Captured source documents for a PO: the emailed PO PDF pulled from Gmail, and the
+-- rendered invoice PDF pulled from QuickBooks (its Print/Download output). Bytes are
+-- stored inline for now (PDFs are small; ~100 KB typical); storage_path is reserved
+-- for a later move to Supabase Storage, at which point content goes NULL.
+-- Written by backend/app/services/po_docs.py.
+CREATE TABLE IF NOT EXISTS po_documents (
+    id           BIGSERIAL PRIMARY KEY,
+    po_id        INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    invoice_id   INTEGER REFERENCES qbo_invoices(id) ON DELETE SET NULL,  -- for kind = 'invoice_pdf'
+    kind         TEXT NOT NULL,          -- po_pdf | invoice_pdf | email_pdf | other
+    source       TEXT NOT NULL,          -- gmail | qbo | drive | upload
+    filename     TEXT NOT NULL,
+    mime_type    TEXT NOT NULL DEFAULT 'application/pdf',
+    byte_size    INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,          -- sha256 hex, for dedupe
+    content      BYTEA,                  -- inline bytes; NULL once offloaded to storage_path
+    storage_path TEXT,
+    captured_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    captured_by  TEXT,
+    UNIQUE (po_id, kind, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_po_documents_po_id ON po_documents (po_id);
+
 -- Dashboard-side manual edits are permanent: once a PO is edited, sync_dashboard.py
 -- must never overwrite its header or line items again (see sync_dashboard.py's
 -- ON CONFLICT ... WHERE clause).

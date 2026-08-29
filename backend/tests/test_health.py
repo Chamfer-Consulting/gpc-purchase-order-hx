@@ -74,6 +74,8 @@ def test_oauth_callback_state_guard():
         "/api/po/1",
         "/api/po/1/detail",
         "/api/po/1/audit",
+        "/api/po/1/documents",
+        "/api/po/1/documents/1",
         "/api/archive",
         "/api/invoices",
         "/api/overview",
@@ -99,6 +101,9 @@ def test_all_data_routes_require_auth(path):
         ("post", "/api/po/1/regroup", {"standalone": True}),
         ("post", "/api/links", {"po_id": 1, "invoice_id": 1}),
         ("delete", "/api/links?po_id=1&invoice_id=1", None),
+        ("post", "/api/po/1/documents/capture", {"sources": ["gmail"]}),
+        ("post", "/api/po/1/documents/upload", {"filename": "x.pdf", "content_b64": "eA=="}),
+        ("delete", "/api/po/1/documents/1", None),
     ],
 )
 def test_admin_mutations_require_auth(method, path, body):

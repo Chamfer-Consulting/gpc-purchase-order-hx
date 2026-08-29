@@ -21,6 +21,21 @@ export async function apiSend<T>(
   return request<T>(method, path, undefined, body);
 }
 
+/**
+ * Fetch a binary endpoint (e.g. a stored PDF) with the Supabase token and return
+ * an object URL for it. Caller is responsible for URL.revokeObjectURL when done.
+ */
+export async function fetchBlobUrl(path: string): Promise<string> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  const url = new URL(path, BASE || window.location.origin);
+  const res = await fetch(url.toString(), {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  return URL.createObjectURL(await res.blob());
+}
+
 async function request<T>(
   method: string,
   path: string,
