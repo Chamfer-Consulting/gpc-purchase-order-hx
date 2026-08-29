@@ -192,9 +192,11 @@ Model: **soft delete** (a `status` enum, rows preserved) + an **audit_log**.
 - [x] Reports hide non-active POs — `overview`, `data-quality`, `review_queue`, `lifecycle` all scope to `status = 'active'`.
 - [x] Backend — `services/po_admin.py` + `services/audit.py`; `routers/po_admin.py`: `POST /api/po` (create), `DELETE /api/po/{id}` (soft), `POST /api/po/{id}/{status,restore,customer,regroup}`, `POST /api/po/{id}/line/{lid}/void`, `POST|DELETE /api/links`, `GET /api/invoices?search=`, `GET /api/po/{id}/{detail,audit}`. `GET /api/po/{id}` now returns status + revision chain + links + audit.
 - [x] Frontend — `EditPoPage` gains a lifecycle panel (status change + reason, soft delete / restore), per-line void toggle, revision-chain panel (regroup / standalone), invoice-links panel with search, and a collapsible audit trail. New `/po/new` route (`NewPoPage`). `MatchPage` gains a manual-link workbench + clickable unlinked-PO list.
+- [x] Reactivation is gated by an inline warning block (Edit PO → "Reactivate order…") spelling out the consequences before a non-active PO goes back to `active`.
+- [x] Archive page (`/archive`, in the nav) — `GET /api/archive`; tabs per status bucket (All / Cancelled / Withdrawn / Voided / Deleted / Draft) with counts, each row tagged with its status badge and linking to the PO. This is how non-active POs are found.
 - [x] Tests — auth guards for every new route + mutation (`backend/tests/test_health.py`).
 - [ ] **(you)** Run `supabase/migrations/20260828120000_admin_crud.sql` against Supabase (or `supabase db push`) — see SETUP §2.1.
-- [ ] Follow-up: surface `status` as a filter/column on the analytics tables; a bulk "cancel these" action from the review queue.
+- [ ] Follow-up: `status` as a column/filter on the analytics tables too; a bulk "cancel these" action from the review queue.
 
 ---
 

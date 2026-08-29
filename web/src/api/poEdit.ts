@@ -36,6 +36,16 @@ export const PO_STATUSES: PoStatus[] = [
   "deleted",
 ];
 
+/** Colour per lifecycle status — the "tag" shown on a PO wherever it's listed. */
+export const STATUS_COLOR: Record<PoStatus, string> = {
+  active: "teal",
+  draft: "gray",
+  cancelled: "orange",
+  withdrawn: "yellow",
+  voided: "red",
+  deleted: "red",
+};
+
 export interface PoHeader {
   id: number;
   source_file: string;
@@ -234,6 +244,36 @@ export function useInvoiceSearch(search: string) {
     queryFn: () => apiGet<InvoiceHit[]>(`/api/invoices`, { search, limit: 25 }),
     enabled: search.trim().length > 0,
     staleTime: 30_000,
+  });
+}
+
+export interface ArchivedPo {
+  po_id: number;
+  po_number: string | null;
+  customer_name: string | null;
+  po_date: string | null;
+  delivery_date: string | null;
+  status: PoStatus;
+  status_reason: string | null;
+  status_at: string | null;
+  deleted_at: string | null;
+  total: number | null;
+  source_file: string;
+  edited_by: string | null;
+  n_items: number;
+}
+
+export interface ArchiveResponse {
+  rows: ArchivedPo[];
+  counts: Record<string, number>;
+}
+
+export function useArchive(status?: string) {
+  return useQuery({
+    queryKey: ["archive", status ?? "all"],
+    queryFn: () =>
+      apiGet<ArchiveResponse>("/api/archive", status ? { status } : undefined),
+    staleTime: 15_000,
   });
 }
 

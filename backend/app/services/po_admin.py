@@ -117,6 +117,46 @@ def _links(cur, po_id: int) -> list[dict]:
     return [_jsonify(dict(r)) for r in cur.fetchall()]
 
 
+_ARCHIVE_COLS = """
+    po.id AS po_id, po.po_number, po.customer_name, po.po_date, po.delivery_date,
+    po.status, po.status_reason, po.status_at, po.deleted_at, po.total,
+    po.source_file, po.edited_by,
+    (SELECT count(*) FROM line_items li WHERE li.po_id = po.id AND NOT li.is_removed) AS n_items
+"""
+
+
+def list_inactive(conn, status: str | None = None, limit: int = 500) -> list[dict]:
+    """Every PO whose status isn't 'active' (or just one status bucket), newest
+    status change first — the archive tab's data source."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        if status and status != "all":
+            if status not in VALID_STATUS:
+                raise AdminError(f"unknown status {status!r}")
+            cur.execute(
+                f"SELECT {_ARCHIVE_COLS} FROM purchase_orders po WHERE po.status = %s "
+                "ORDER BY po.status_at DESC NULLS LAST, po.id DESC LIMIT %s",
+                (status, limit),
+            )
+        else:
+            cur.execute(
+                f"SELECT {_ARCHIVE_COLS} FROM purchase_orders po WHERE po.status <> 'active' "
+                "ORDER BY po.status_at DESC NULLS LAST, po.id DESC LIMIT %s",
+                (limit,),
+            )
+        return [_jsonify(dict(r)) for r in cur.fetchall()]
+
+
+def inactive_counts(conn) -> dict[str, int]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT status, count(*) FROM purchase_orders "
+            "WHERE status <> 'active' GROUP BY status"
+        )
+        counts = {row[0]: row[1] for row in cur.fetchall()}
+    counts["all"] = sum(counts.values())
+    return counts
+
+
 def search_invoices(conn, q: str | None, limit: int = 25) -> list[dict]:
     like = f"%{(q or '').strip()}%"
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:

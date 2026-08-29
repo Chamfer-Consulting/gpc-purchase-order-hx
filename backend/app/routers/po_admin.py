@@ -78,6 +78,17 @@ def create_po(body: NewPoIn, user: AuthedUser = Depends(current_user)) -> dict:
     return {"ok": True, "po_id": po_id, "detail": detail}
 
 
+@router.get("/archive")
+def archive(
+    status: str | None = Query(None, description="one status bucket, or omit for all non-active"),
+    _: AuthedUser = Depends(current_user),
+) -> dict:
+    with reused_conn() as conn:
+        rows = _guard(po_admin.list_inactive, conn, status)
+        counts = po_admin.inactive_counts(conn)
+    return {"rows": rows, "counts": counts}
+
+
 @router.get("/po/{po_id}/detail")
 def po_detail(po_id: int, _: AuthedUser = Depends(current_user)) -> dict:
     with reused_conn() as conn:

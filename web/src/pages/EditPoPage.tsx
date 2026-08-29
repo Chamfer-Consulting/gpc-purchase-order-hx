@@ -32,6 +32,7 @@ import {
   useSoftDelete,
   useUnlinkInvoice,
   useVoidLine,
+  STATUS_COLOR,
   type AuditEntry,
   type PoHeader,
   type PoLineItem,
@@ -49,15 +50,6 @@ const EMPTY: PoLineItem = {
   unit_price: null,
   line_total: null,
   additional_cost: null,
-};
-
-const STATUS_COLOR: Record<PoStatus, string> = {
-  active: "teal",
-  draft: "gray",
-  cancelled: "orange",
-  withdrawn: "orange",
-  voided: "red",
-  deleted: "red",
 };
 
 export function EditPoPage() {

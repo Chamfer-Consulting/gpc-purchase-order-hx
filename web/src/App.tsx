@@ -10,6 +10,7 @@ import { MatchPage } from "@/pages/MatchPage";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { EditPoPage } from "@/pages/EditPoPage";
 import { NewPoPage } from "@/pages/NewPoPage";
+import { ArchivePage } from "@/pages/ArchivePage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { KitchenSink } from "@/pages/KitchenSink";
 
@@ -35,6 +36,7 @@ export default function App() {
                     <Route path="/review" element={<ReviewPage />} />
                     <Route path="/po/new" element={<NewPoPage />} />
                     <Route path="/po/:id" element={<EditPoPage />} />
+                    <Route path="/archive" element={<ArchivePage />} />
                     <Route path="/settings" element={<SettingsPage />} />
                     <Route path="/_kitchen-sink" element={<KitchenSink />} />
                     <Route path="*" element={<Navigate to="/" replace />} />

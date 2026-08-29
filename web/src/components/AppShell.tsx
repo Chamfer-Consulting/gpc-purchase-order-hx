@@ -13,6 +13,7 @@ const NAV: { label: string; to: string }[] = [
   { label: "Data Quality", to: "/data-quality" },
   { label: "Match & Reconcile", to: "/match" },
   { label: "Extraction Review", to: "/review" },
+  { label: "Archive", to: "/archive" },
   { label: "Settings", to: "/settings" },
 ];
 
