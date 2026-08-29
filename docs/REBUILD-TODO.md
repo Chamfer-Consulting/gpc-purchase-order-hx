@@ -129,7 +129,10 @@ account owner / a browser · **(code)** = doable in the repo.
 - [ ] Explore's full pivot configurator (measure × dimension × grain, compare-two-periods) — needs extra query params; the first cut ships the common cuts.
 
 ### 2.4 Client caching
-- [ ] TanStack Query `staleTime` per endpoint; stale-while-revalidate.
+- [x] TanStack Query `staleTime` per endpoint; stale-while-revalidate. Global 60s
+      default in `lib/queryClient.ts`; analytics pages at 5 min + `keepPreviousData`
+      (no loading flash on a filter change) to match the backend `@cached` TTL;
+      pricing / settings / connections / filter-options tuned individually.
 
 **Exit:** the four analytics pages match Streamlit number-for-number, all charts through the shared theme, instant on return visits.
 
@@ -140,7 +143,9 @@ account owner / a browser · **(code)** = doable in the repo.
 - [x] **Match & Reconcile** — `routers/matching.py` wraps `qbo_matcher` verbatim (`get_needs_review` / `get_line_items_for_review` / `get_unlinked_pos` / `run_matching` / `confirm_link` / `reject_link`). `pages/MatchPage.tsx`: side-by-side PO↔invoice cards + Run.
 - [x] **Data Quality** — `routers/quality.py`, plain aggregations over `purchase_orders` / `line_items` (real). `pages/DataQualityPage.tsx` via `PageRenderer` — extraction failures / math-check / price-anomaly tables.
 - [x] **Extraction Review** — decision CRUD straight through `extraction_reviews.py` (`routers/review.py`); queue + revision candidates are real SQL in `services/review_queue.py`. `pages/ReviewPage.tsx`: Queue / Possible revisions / All decisions tabs + verdict form.
-- [ ] Supabase Realtime subscription on the review queue table → live updates.
+- [x] Supabase Realtime subscription on the review queue table → live updates.
+      `web/src/lib/realtime.ts:useRealtimeInvalidate` + `ReviewPage.tsx` (subscribes
+      to `purchase_orders` and `extraction_reviews`). No-ops if Realtime is off.
 - [x] Edit PO — `services/po_edit.py` (ported `save_po_edit` + a `get_po` reader; `math_check.validate_math` reused). `routers/po_edit.py` = `GET/POST /api/po/{id}`. `pages/EditPoPage.tsx` — editable header + line-item table, math-check feedback, `edited=TRUE` guard. `DataGrid` `linkTo` makes every `po_id` cell link to `/po/:id`.
 - [x] Reference Prices — `routers/pricing.py` (`GET/POST /api/pricing`,
       `GET /api/pricing/history`) + `services/pricing.py`; `pages/PricingPage.tsx`
@@ -210,7 +215,13 @@ Model: **soft delete** (a `status` enum, rows preserved) + an **audit_log**.
 - [x] Supabase Storage offload — `doc_storage.py` (REST, no SDK); `store_document` uploads there + leaves `content` NULL when `SUPABASE_URL`+`SUPABASE_SERVICE_KEY` are set (bucket `po-documents`), reads proxy through the API. Inert/inline when unset. SETUP §3.1.
 - [ ] **(you)** Run the migrations in `supabase/migrations/` against Supabase (or `supabase db push`) — see SETUP §2.1. Add `doc_capture.yml`'s secrets in GitHub Actions; optionally create the `po-documents` Storage bucket (§3.1).
 - [ ] Optional: capture *inside* the extraction pipeline too (so a brand-new PO has its PDF before the nightly sweep) — currently the sweep covers it within a day.
-- [ ] Follow-up: `status` as a column/filter on the analytics tables too; a bulk "cancel these" action from the review queue.
+- [x] Bulk lifecycle action from the review queue — `POST /api/bulk/po-status`
+      (`po_admin.bulk_set_status`, commits per PO, returns per-id outcomes); the
+      Queue tab gains a checkbox per card and a sticky bar to set
+      cancelled / withdrawn / deleted / draft on the selection at once.
+      (A `status` column on the aggregate analytics tables was dropped — those
+      pages are active-only by design; the Archive page is where non-active POs
+      are listed with their status.)
 
 ---
 

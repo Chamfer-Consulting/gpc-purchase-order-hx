@@ -31,6 +31,12 @@ class StatusIn(BaseModel):
     reason: str | None = None
 
 
+class BulkStatusIn(BaseModel):
+    po_ids: list[int]
+    status: str
+    reason: str | None = None
+
+
 class DeleteIn(BaseModel):
     reason: str | None = None
 
@@ -109,6 +115,16 @@ def set_status(po_id: int, body: StatusIn, user: AuthedUser = Depends(current_us
     with reused_conn() as conn:
         after = _guard(po_admin.set_status, conn, _actor(user), po_id, body.status, body.reason)
     return {"ok": True, "header": after}
+
+
+@router.post("/bulk/po-status")
+def bulk_status(body: BulkStatusIn, user: AuthedUser = Depends(current_user)) -> dict:
+    if not body.po_ids:
+        raise HTTPException(422, "po_ids is empty")
+    with reused_conn() as conn:
+        out = _guard(po_admin.bulk_set_status, conn, _actor(user),
+                     body.po_ids, body.status, body.reason)
+    return {"ok": True, **out}
 
 
 @router.delete("/po/{po_id}")

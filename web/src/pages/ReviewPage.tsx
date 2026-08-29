@@ -5,9 +5,12 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Group,
   Loader,
+  Paper,
   Radio,
+  Select,
   Stack,
   Tabs,
   Text,
@@ -16,6 +19,7 @@ import {
   Title,
 } from "@mantine/core";
 import {
+  useBulkStatus,
   useDecisions,
   useDeleteDecision,
   useRevisionCandidates,
@@ -26,7 +30,15 @@ import {
 import { DataGrid } from "@/components/DataGrid";
 import { useRealtimeInvalidate } from "@/lib/realtime";
 
-function QueueCard({ item }: { item: QueueItem }) {
+function QueueCard({
+  item,
+  checked,
+  onCheck,
+}: {
+  item: QueueItem;
+  checked: boolean;
+  onCheck: (v: boolean) => void;
+}) {
   const upsert = useUpsertDecision();
   const [verdict, setVerdict] = useState<"is_po" | "not_po" | "revision">("is_po");
   const [revisionOf, setRevisionOf] = useState("");
@@ -44,8 +56,15 @@ function QueueCard({ item }: { item: QueueItem }) {
 
   return (
     <Card withBorder radius="md" p="md">
-      <Group justify="space-between" mb={4}>
-        <Text fw={600}>{item.subject ?? item.target_key}</Text>
+      <Group justify="space-between" mb={4} wrap="nowrap">
+        <Group gap={8} wrap="nowrap">
+          <Checkbox
+            checked={checked}
+            onChange={(e) => onCheck(e.currentTarget.checked)}
+            aria-label="Select for bulk action"
+          />
+          <Text fw={600}>{item.subject ?? item.target_key}</Text>
+        </Group>
         <Group gap={6}>
           {item.stale && <Badge color="orange" variant="light">stale</Badge>}
           <Badge color="yellow" variant="light">
@@ -94,23 +113,101 @@ function QueueCard({ item }: { item: QueueItem }) {
   );
 }
 
+const BULK_STATUSES = [
+  { value: "cancelled", label: "Cancelled" },
+  { value: "withdrawn", label: "Withdrawn" },
+  { value: "deleted", label: "Deleted" },
+  { value: "draft", label: "Draft" },
+];
+
 function QueueTab() {
   const { data, isLoading, error } = useReviewQueue();
+  const bulk = useBulkStatus();
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [status, setStatus] = useState<string>("withdrawn");
+  const [reason, setReason] = useState("");
+
   if (error) return <Alert color="red">{(error as Error).message}</Alert>;
   if (isLoading) return <Loader />;
   const items = data?.items ?? [];
+
+  const toggle = (poId: number, on: boolean) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (on) next.add(poId);
+      else next.delete(poId);
+      return next;
+    });
+
+  function applyBulk() {
+    const po_ids = [...selected];
+    if (!po_ids.length) return;
+    bulk.mutate(
+      { po_ids, status, reason: reason.trim() || null },
+      { onSuccess: () => setSelected(new Set()) },
+    );
+  }
+
   return (
     <Stack>
       <Text size="sm" c="dimmed">
         {items.length} extraction(s) flagged, ranked by how suspect they are.
       </Text>
+
+      {selected.size > 0 && (
+        <Paper withBorder p="xs" radius="md" style={{ position: "sticky", top: 8, zIndex: 2 }}>
+          <Group gap="sm" wrap="wrap">
+            <Text size="sm" fw={600}>
+              {selected.size} selected
+            </Text>
+            <Select
+              size="xs"
+              w={150}
+              data={BULK_STATUSES}
+              value={status}
+              onChange={(v) => v && setStatus(v)}
+              aria-label="Bulk status"
+            />
+            <TextInput
+              size="xs"
+              w={220}
+              placeholder="Reason (optional)"
+              value={reason}
+              onChange={(e) => setReason(e.currentTarget.value)}
+            />
+            <Button size="xs" color="orange" onClick={applyBulk} loading={bulk.isPending}>
+              Set status on {selected.size}
+            </Button>
+            <Button size="xs" variant="subtle" onClick={() => setSelected(new Set())}>
+              Clear
+            </Button>
+          </Group>
+          {bulk.data && (
+            <Text size="xs" c="dimmed" mt={4}>
+              {bulk.data.updated.length} updated
+              {bulk.data.failed.length ? `, ${bulk.data.failed.length} failed` : ""}.
+            </Text>
+          )}
+          {bulk.error && (
+            <Text size="xs" c="red" mt={4}>
+              {(bulk.error as Error).message}
+            </Text>
+          )}
+        </Paper>
+      )}
+
       {items.length === 0 && (
         <Text size="sm" c="dimmed">
           Nothing flagged. New low-confidence extractions appear here.
         </Text>
       )}
       {items.map((it) => (
-        <QueueCard key={`${it.target_kind}:${it.target_key}`} item={it} />
+        <QueueCard
+          key={`${it.target_kind}:${it.target_key}`}
+          item={it}
+          checked={selected.has(it.po_id)}
+          onCheck={(v) => toggle(it.po_id, v)}
+        />
       ))}
     </Stack>
   );

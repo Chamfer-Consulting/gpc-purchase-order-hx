@@ -103,6 +103,7 @@ def test_all_data_routes_require_auth(path):
         ("post", "/api/po/1/line/1/void", {"voided": True}),
         ("post", "/api/po/1/customer", {"customer_name": "x"}),
         ("post", "/api/po/1/regroup", {"standalone": True}),
+        ("post", "/api/bulk/po-status", {"po_ids": [1], "status": "withdrawn"}),
         ("post", "/api/links", {"po_id": 1, "invoice_id": 1}),
         ("delete", "/api/links?po_id=1&invoice_id=1", None),
         ("post", "/api/po/1/documents/capture", {"sources": ["gmail"]}),

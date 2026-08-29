@@ -11,6 +11,7 @@ export function useHiddenProducts() {
   return useQuery({
     queryKey: ["hidden-products"],
     queryFn: () => apiGet<ProductVisibility[]>("/api/settings/hidden-products"),
+    staleTime: 5 * 60_000,
   });
 }
 
@@ -32,6 +33,7 @@ export function useSavedViews<C = Record<string, unknown>>(kind: string) {
   return useQuery({
     queryKey: ["saved-views", kind],
     queryFn: () => apiGet<SavedView<C>[]>("/api/settings/views", { kind }),
+    staleTime: 5 * 60_000,
   });
 }
 

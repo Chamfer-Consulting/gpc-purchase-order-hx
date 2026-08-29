@@ -292,6 +292,27 @@ def set_status(conn, actor: str | None, po_id: int, status: str,
     return after
 
 
+def bulk_set_status(conn, actor: str | None, po_ids: list[int], status: str,
+                    reason: str | None = None) -> dict:
+    """Apply one status to many POs. Commits per PO (via set_status) so a bad id
+    partway through doesn't roll back the rest. Returns per-id outcomes."""
+    if status not in VALID_STATUS:
+        raise AdminError(f"unknown status {status!r}")
+    done: list[int] = []
+    failed: list[dict] = []
+    for po_id in dict.fromkeys(po_ids):  # de-dupe, keep order
+        try:
+            set_status(conn, actor, po_id, status, reason)
+            done.append(po_id)
+        except AdminError as exc:
+            conn.rollback()
+            failed.append({"po_id": po_id, "error": str(exc)})
+        except Exception as exc:  # noqa: BLE001 — record and continue the batch
+            conn.rollback()
+            failed.append({"po_id": po_id, "error": str(exc)})
+    return {"status": status, "updated": done, "failed": failed}
+
+
 def void_line(conn, actor: str | None, po_id: int, line_id: int,
               voided: bool, reason: str | None = None) -> dict:
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:

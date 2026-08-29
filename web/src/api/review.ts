@@ -86,3 +86,24 @@ export function useDeleteDecision() {
     onSuccess: () => invalidateAll(qc),
   });
 }
+
+export interface BulkStatusResult {
+  ok: boolean;
+  status: string;
+  updated: number[];
+  failed: { po_id: number; error: string }[];
+}
+
+/** Set one lifecycle status on many POs at once (triage from the review queue). */
+export function useBulkStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { po_ids: number[]; status: string; reason?: string | null }) =>
+      apiSend<BulkStatusResult>("POST", "/api/bulk/po-status", body),
+    onSuccess: () => {
+      invalidateAll(qc);
+      qc.invalidateQueries({ queryKey: ["archive"] });
+      qc.invalidateQueries({ queryKey: ["overview"] });
+    },
+  });
+}

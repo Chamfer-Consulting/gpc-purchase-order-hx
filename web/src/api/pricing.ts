@@ -48,6 +48,7 @@ export function useReferencePrices() {
   return useQuery({
     queryKey: ["pricing"],
     queryFn: () => apiGet<PricesResponse>("/api/pricing"),
+    staleTime: 2 * 60_000,
   });
 }
 
@@ -57,6 +58,7 @@ export function usePriceHistory(product: string | null, size: string | null) {
     queryFn: () =>
       apiGet<PriceHistory>("/api/pricing/history", { product: product!, size: size! }),
     enabled: Boolean(product && size),
+    staleTime: 5 * 60_000,
   });
 }
 
