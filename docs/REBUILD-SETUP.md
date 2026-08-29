@@ -17,7 +17,7 @@ Install once:
 | Node.js 20 LTS + npm | React frontend build | `brew install node@20` |
 | `psql` / `pg_dump` (v16+) | database migration | `brew install postgresql@16` |
 | Supabase CLI | project management, local dev | `brew install supabase/tap/supabase` |
-| Fly.io CLI (`flyctl`) | backend deploy | `brew install flyctl` |
+| Railway CLI *(optional)* | backend deploy / logs (the dashboard works too) | `brew install railway` |
 | GitHub CLI (`gh`) *(optional)* | trigger workflows | `brew install gh` |
 
 Cloudflare Pages needs no CLI — it builds from the GitHub repo.
@@ -41,8 +41,8 @@ Cloudflare Pages needs no CLI — it builds from the GitHub repo.
 5. **Project Settings → API → JWT Settings**, copy the **JWT Secret**.
 6. **Database → Extensions**, enable `pg_cron` (needed in Phase 5).
 
-> Keep a scratch note with all seven values — you'll paste them into Fly, GitHub,
-> and `web/.env` in later steps.
+> Keep a scratch note with all seven values — you'll paste them into Railway,
+> GitHub Actions, and the Cloudflare Pages env in later steps.
 
 ---
 
@@ -95,22 +95,23 @@ Do this once §2 verifies clean. **This is the switch** — after it, Neon is id
 2. In the service's **Settings**: leave *Root Directory* at `/`. `railway.toml`
    (committed at the repo root) points the build at `backend/Dockerfile` with the
    repo root as context, so the reused Python modules are included.
-3. **Variables** tab — add all of these (values from §1 + the pipeline secrets):
+3. **Variables** tab — add these (full annotated list: `backend/.env.example`):
 
-   | Variable | Value |
-   |---|---|
-   | `DATABASE_URL` | Supabase **transaction pooler** URL (`:6543`) |
-   | `SUPABASE_URL` | `https://<ref>.supabase.co` |
-   | `SUPABASE_SERVICE_KEY` | `service_role` key |
-   | `SUPABASE_JWT_SECRET` | JWT secret |
-   | `ANTHROPIC_API_KEY` | same as the pipeline |
-   | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | from `.streamlit/secrets.toml` |
-   | `GMAIL_REDIRECT_URI` | `https://<railway-domain>/auth/gmail/callback` |
-   | `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | from `.streamlit/secrets.toml` |
-   | `QBO_REDIRECT_URI` | `https://<railway-domain>/auth/qbo/callback` |
-   | `QBO_ENVIRONMENT` | `production` |
-   | `ALLOWED_ORIGINS` | `https://<pages-project>.pages.dev` |
-   | `FRONTEND_BASE` | `https://<pages-project>.pages.dev` |
+   | Variable | Value | |
+   |---|---|---|
+   | `DATABASE_URL` | Supabase **transaction pooler** URL (`:6543`) | required |
+   | `SUPABASE_JWT_SECRET` | Supabase → API → JWT Settings | required |
+   | `ALLOWED_ORIGINS` | `https://<pages-project>.pages.dev` | required in prod |
+   | `FRONTEND_BASE` | `https://<pages-project>.pages.dev` | required in prod |
+   | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | from `.streamlit/secrets.toml` | Gmail connect |
+   | `GMAIL_REDIRECT_URI` | `https://<railway-domain>/auth/gmail/callback` | Gmail connect |
+   | `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | from `.streamlit/secrets.toml` | QBO connect |
+   | `QBO_REDIRECT_URI` | `https://<railway-domain>/auth/qbo/callback` | QBO connect |
+   | `QBO_ENVIRONMENT` | `production` | QBO connect |
+   | `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | from §1.4 | optional (unused today) |
+
+   The API never calls Claude — `ANTHROPIC_API_KEY` stays on the pipeline (GitHub
+   Actions), not here.
 
 4. **Settings → Networking → Generate Domain** to get the public URL. Railway
    injects `$PORT`; the Dockerfile CMD and `railway.toml` both honour it.
@@ -137,9 +138,10 @@ backend/fly.toml --dockerfile backend/Dockerfile` from the repo root, secrets vi
 3. Environment variables (Production **and** Preview):
    - `VITE_SUPABASE_URL` = `https://<ref>.supabase.co`
    - `VITE_SUPABASE_ANON_KEY` = `<anon key>`
-   - `VITE_API_BASE` = `https://<fly-app>.fly.dev`
-4. Save & Deploy. Note the `*.pages.dev` URL and put it in the backend's
-   `ALLOWED_ORIGINS` (§4), then `fly deploy` again.
+   - `VITE_API_BASE` = `https://<railway-domain>`
+4. Save & Deploy. Note the `*.pages.dev` URL, set it as the backend's
+   `ALLOWED_ORIGINS` **and** `FRONTEND_BASE` in Railway (§4) — Railway redeploys
+   on the variable change.
 
 Cost: free.
 
@@ -165,18 +167,18 @@ Add the new callback URLs **alongside** the existing Streamlit ones — don't re
 the old ones until Phase 4.
 
 - **Google Cloud Console → APIs & Services → Credentials → the OAuth client**:
-  add `https://<fly-app>.fly.dev/auth/gmail/callback` to *Authorized redirect URIs*.
+  add `https://<railway-domain>/auth/gmail/callback` to *Authorized redirect URIs*.
 - **Intuit developer dashboard → your app → Keys & OAuth**:
-  add `https://<fly-app>.fly.dev/auth/qbo/callback` to *Redirect URIs*.
+  add `https://<railway-domain>/auth/qbo/callback` to *Redirect URIs*.
 
 ---
 
 ## 8. Phase 5 extras (later)
 
 - **Sentry**: create two projects (`po-dashboard-api`, `po-dashboard-web`); set
-  `SENTRY_DSN` as a Fly secret and `VITE_SENTRY_DSN` in Pages.
+  `SENTRY_DSN` as a Railway variable and `VITE_SENTRY_DSN` in Pages.
 - **Uptime**: a Cloudflare Health Check or an UptimeRobot monitor on
-  `https://<fly-app>.fly.dev/health`.
+  `https://<railway-domain>/health`.
 - **`pg_cron`**: SQL to schedule the materialized-view refresh (added with the
   views in Phase 5).
 
@@ -184,18 +186,26 @@ the old ones until Phase 4.
 
 ## Secret inventory (where each value lives)
 
-| Value | `.streamlit/secrets.toml` | GitHub Actions | Fly secrets | Cloudflare Pages |
-|---|:---:|:---:|:---:|:---:|
-| Supabase transaction pooler URL | ✅ (`database_url`) | | ✅ (`DATABASE_URL`) | |
-| Supabase session URL | | ✅ (`DATABASE_URL`) | | |
-| Supabase project URL | | | ✅ | ✅ (`VITE_SUPABASE_URL`) |
-| Supabase `anon` key | | | | ✅ (`VITE_SUPABASE_ANON_KEY`) |
-| Supabase `service_role` key | | | ✅ | |
-| Supabase JWT secret | | | ✅ | |
-| `VITE_API_BASE` (Fly URL) | | | | ✅ |
-| `ALLOWED_ORIGINS` (Pages URL) | | | ✅ | |
-| `ANTHROPIC_API_KEY` | ✅ | ✅ | ✅ | |
-| `GMAIL_*`, `QBO_*` | ✅ | ✅ | ✅ | |
+Env-var name in **bold**. "Railway" = the API service's Variables tab.
 
-The frontend only ever holds public-safe values (Supabase URL + `anon` key + the
-API base). Everything sensitive stays server-side.
+| Value | `.streamlit/secrets.toml` (Streamlit, until Phase 4) | GitHub Actions | Railway (API) | Cloudflare Pages (SPA) |
+|---|:---:|:---:|:---:|:---:|
+| Supabase **transaction pooler** URL (`:6543`) | ✅ `database_url` | | ✅ **DATABASE_URL** | |
+| Supabase **session** URL (`:5432`) | | ✅ **DATABASE_URL** | | |
+| Supabase project URL | | | ✅ **SUPABASE_URL** (optional) | ✅ **VITE_SUPABASE_URL** |
+| Supabase `anon` key | | | | ✅ **VITE_SUPABASE_ANON_KEY** |
+| Supabase `service_role` key | | | ✅ **SUPABASE_SERVICE_KEY** (optional) | |
+| Supabase JWT secret | | | ✅ **SUPABASE_JWT_SECRET** *(required)* | |
+| Backend public URL | | | | ✅ **VITE_API_BASE** = `https://<railway-domain>` |
+| Frontend public URL | | | ✅ **ALLOWED_ORIGINS** + **FRONTEND_BASE** = `https://<pages>.pages.dev` | |
+| `ANTHROPIC_API_KEY` | ✅ | ✅ | — (API doesn't call Claude) | |
+| `GMAIL_CLIENT_ID` / `_SECRET` | ✅ | ✅ | ✅ (connect flow) | |
+| `GMAIL_REDIRECT_URI` | ✅ | | ✅ = `https://<railway-domain>/auth/gmail/callback` | |
+| `QBO_CLIENT_ID` / `_SECRET` | ✅ | ✅ | ✅ (connect flow) | |
+| `QBO_REDIRECT_URI` | ✅ | | ✅ = `https://<railway-domain>/auth/qbo/callback` | |
+| `QBO_ENVIRONMENT` | ✅ | ✅ | ✅ (`production`) | |
+
+Minimum to boot the API: **DATABASE_URL** + **SUPABASE_JWT_SECRET**. The frontend
+only ever holds public-safe values (Supabase URL + `anon` key + the API base);
+everything sensitive stays server-side. Full local template: `backend/.env.example`,
+`web/.env.example`.

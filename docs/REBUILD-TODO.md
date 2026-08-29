@@ -30,23 +30,26 @@ account owner / a browser · **(code)** = doable in the repo.
 - [ ] Manually run `run_qbo_sync.py` against Supabase — succeeds.
 - [ ] Trigger each of the 3 GitHub Actions once — all green.
 
-### 0.4 Extract the service layer  *(code — incremental, own commits)*
-- [ ] Create `backend/` scaffold (done in the first build commit).
-- [ ] Move `dashboard/data.py` DB + transform functions into `backend/app/services/`:
-  - [ ] `services/context.py` — the `AppContext` assembly (`load_data`, `prepare`, `prepare_invoices`, filter application)
-  - [ ] `services/overview.py` — home KPIs, revenue series, YoY
-  - [ ] `services/customers.py` — customer 360
-  - [ ] `services/products.py` — products & sizes, size analysis
-  - [ ] `services/explore.py` — pivot / compare-periods / movers
-  - [ ] `services/lifecycle.py` — order lifecycle / requested-vs-delivered
-  - [ ] `services/quality.py` — data quality, match anomalies, invoice recon
-  - [ ] `services/review.py` — extraction review queue, revision candidates
-  - [ ] `services/matching.py` — thin wrappers over `qbo_matcher`
-  - [ ] `services/settings.py` — reference prices, hidden products, saved views, connections
-- [ ] Leave `dashboard/data.py` as a **re-export shim** so Streamlit keeps working.
-- [ ] `pytest` smoke: every moved function importable with no `streamlit` dependency.
+### 0.4 Service layer  *(done — approach changed: `data.py` stays the source of truth)*
+- [x] `backend/` scaffold.
+- [x] `dashboard/data.py` made **import-safe without streamlit** (a `_NoStreamlit`
+      shim) — the backend imports it and calls its functions directly, no fork,
+      Streamlit unaffected.
+- [x] `services/context.py` — `build_context(fp)`: filtered invoice/product frames,
+      product-revenue basis, date/customer(fuzzy)/product/size/sample filters.
+- [x] `services/customers.py`, `services/products.py`, `services/explore.py`,
+      `services/lifecycle.py` — real `PageResponse`s; wired + `@cached`.
+- [x] `services/review_queue.py` — the SQL-only slice of `load_review_queue` /
+      `load_revision_candidates` (no pandas).
+- [x] `services/po_edit.py` — `save_po_edit` + `get_po` ported.
+- [x] Matching / quality / review / connections routers wrap the reused repo
+      modules (`qbo_matcher`, `extraction_reviews`, `qbo_client`, `gmail_client`)
+      directly on psycopg2 conns (`app/reused_db.py`).
+- [ ] `services/overview.py` — the Overview page's revenue series + YoY charts
+      (KPIs + the attention digest are already real in `routers/overview.py`).
+- [ ] `services/settings.py` — reference-price editor + hidden-products + saved views.
 
-**Exit:** Streamlit runs unchanged on Supabase, all scheduled jobs pass, logic modules import without `streamlit`.
+**Exit:** every analytics endpoint returns real data; Streamlit + the scheduled jobs unaffected.
 
 ---
 
@@ -63,8 +66,8 @@ account owner / a browser · **(code)** = doable in the repo.
 - [x] `backend/app/schemas.py` — the `PageResponse` API contract (scope + KPIs + charts + named tables).
 - [x] `backend/app/deps.py` (`FilterParams`), `backend/app/cache.py` (`@cached` TTL), `backend/app/oauth_state.py` (signed state).
 - [x] `backend/app/routers/overview.py` — `GET /api/overview` (PageResponse; real numbers land with `services/overview.py`).
-- [x] `backend/app/routers/analytics.py` — `GET /api/{customers,products,explore,lifecycle}` stubs on the contract.
-- [x] `backend/tests/` — `/health`, auth guards, analytics stub shape, OAuth state guard. `pytest` green (7).
+- [x] `backend/app/routers/analytics.py` — `GET /api/{customers,products,explore,lifecycle}` wired to real services + `@cached`.
+- [x] `backend/tests/` — `/health`, auth guards on every data route, `FilterParams` contract, OAuth state guard. `pytest` green (12).
 
 ### 1.2 Supabase Auth
 - [ ] **(you)** Create the team's user accounts (Auth → Users), or enable email magic-link.
@@ -78,15 +81,14 @@ account owner / a browser · **(code)** = doable in the repo.
 - [x] `src/auth/` — `AuthProvider`, `LoginPage`, `RequireAuth`.
 - [x] `src/components/AppShell.tsx` — nav rail + header (Mantine).
 - [x] `src/filters/useFilters.ts` + `src/filters/FilterBar.tsx` — scope bound to the URL query string.
-- [ ] `src/pages/OverviewPage.tsx` — upgrade the stub to real KPI cards + the first live ECharts (needs the `/api/overview` service).
+- [x] `src/pages/OverviewPage.tsx` — renders `PageRenderer` (real KPIs + the needs-attention digest). Revenue charts land with `services/overview.py`.
 
 ### 1.4 Deploy
-- [ ] **(you)** Create the Fly.io app; set backend secrets. — see SETUP §4
-- [ ] `backend/Dockerfile` + `backend/fly.toml` (`min_machines_running = 1`). *(scaffolded)*
-- [ ] `fly deploy` — `/health` reachable at the public URL.
-- [ ] **(you)** Create the Cloudflare Pages project pointed at `web/`. — see SETUP §5
-- [ ] Set `web/` build env vars; deploy; SPA loads.
-- [ ] Wire CORS: backend `ALLOWED_ORIGINS` ← the Pages URL.
+- [x] `railway.toml` (repo root) + `backend/Dockerfile` (`$PORT`-aware) + `backend/fly.toml` (alt). *(scaffolded)*
+- [ ] **(you)** Create the Railway project from the repo; set the Variables (SETUP §4).
+- [ ] **(you)** Generate the Railway domain; `curl https://<railway-domain>/health`.
+- [ ] **(you)** Create the Cloudflare Pages project (root `web/`, output `web/dist`); set the 3 `VITE_` vars (SETUP §5).
+- [ ] **(you)** Set the backend `ALLOWED_ORIGINS` + `FRONTEND_BASE` to the Pages URL.
 
 ### 1.5 OAuth callbacks + connections
 - [x] `backend/app/routers/oauth.py` — `GET /auth/gmail/callback` + `GET /auth/qbo/callback`: verify the signed state, exchange the code (reused `gmail_client` / `qbo_client`), 302 back to `/settings?connect=...`.
@@ -114,7 +116,7 @@ account owner / a browser · **(code)** = doable in the repo.
 ### 2.2 Endpoint pattern
 - [x] Shared query params: `?start=&end=&customers=&products=&sizes=&include_samples=` — `backend/app/deps.py:FilterParams` + `filter_params` dependency (mirrors `web/src/filters/useFilters.ts`).
 - [x] `backend/app/cache.py` — `@cached(key_fn)` TTL cache (5 min), the `st.cache_data(ttl=)` counterpart.
-- [ ] Per-request `context` builder wired to `FilterParams` (needs the service layer).
+- [x] Per-request `context` builder — `services/context.py:build_context(fp)`.
 
 ### 2.3 Pages
 - [x] Frontend for all read-only pages is done: `pages/AnalyticsPage.tsx` (generic — FilterBar + `usePage` + `PageRenderer`), routed for `/customers` `/products` `/explore` `/lifecycle`; `OverviewPage` on the same renderer; `components/PageRenderer.tsx` turns a `PageResponse` into scope bar → KPI grid → charts → tables.
@@ -164,7 +166,7 @@ account owner / a browser · **(code)** = doable in the repo.
 - [ ] Brotli/gzip on the API (`starlette` middleware); `Cache-Control` on stable endpoints.
 - [ ] **(you)** Sentry project; wire the FastAPI + React DSNs.
 - [ ] **(you)** Uptime check on `/health`.
-- [ ] Decide scale: one Fly machine, or two + move the TTL cache to Supabase/Redis.
+- [ ] Decide scale: one Railway instance, or two + move the TTL cache to Supabase/Redis.
 
 **Exit:** every page < ~400ms warm; errors reach Sentry before a user reports them.
 

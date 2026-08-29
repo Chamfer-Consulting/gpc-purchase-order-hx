@@ -534,7 +534,7 @@ footer {
           <h3>Target</h3>
           <div class="stack">
             <div class="node good"><span class="lbl">React SPA</span><span class="sub">Vite + TS &middot; Cloudflare Pages (global CDN)</span></div>
-            <div class="node good"><span class="lbl">FastAPI</span><span class="sub">Fly.io, min 1 machine &middot; reuses all existing Python</span></div>
+            <div class="node good"><span class="lbl">FastAPI</span><span class="sub">Railway, always on &middot; reuses all existing Python</span></div>
             <div class="node good"><span class="lbl">Supabase</span><span class="sub">Postgres (pooled) + Auth + Storage</span></div>
           </div>
         </div>
@@ -576,7 +576,7 @@ footer {
             <li><b>React SPA</b> &mdash; Vite + TypeScript, Mantine components, TanStack Query, React Router</li>
             <li><b>FastAPI app</b> &mdash; JSON endpoints, JWT verification, a connection pool</li>
             <li><b>Supabase Auth</b> &mdash; replaces the shared-password gate with real accounts</li>
-            <li><b>Two deploy targets</b> &mdash; Fly.io (API) and Cloudflare Pages (SPA)</li>
+            <li><b>Two deploy targets</b> &mdash; Railway (API) and Cloudflare Pages (SPA)</li>
           </ul>
         </div>
       </div>
@@ -626,7 +626,7 @@ footer {
             <li><span class="h">Supabase Auth</span> <span class="d">&mdash; create the team's accounts (email allowlist). All data access stays server-side through FastAPI with the service role, so no row-level-security policies are needed yet.</span></li>
             <li><span class="h">React shell</span> <span class="d">&mdash; Vite + TS, Mantine, router, TanStack Query, a Supabase auth provider, protected routes, a filter bar bound to the URL query string.</span></li>
             <li><span class="h">Port the Overview page</span> <span class="d">&mdash; one or two endpoints returning the KPI numbers + data series; render with a first-pass ECharts treatment (the full shared theme lands in Phase&nbsp;2).</span></li>
-            <li><span class="h">Deploy</span> <span class="d">&mdash; FastAPI to Fly.io (min 1 machine), the SPA to Cloudflare Pages; wire CORS and the API base URL.</span></li>
+            <li><span class="h">Deploy</span> <span class="d">&mdash; FastAPI to Railway (Dockerfile build, always on), the SPA to Cloudflare Pages; wire CORS and the API base URL.</span></li>
             <li><span class="h">Move the OAuth callbacks</span> <span class="d">&mdash; add <code>/auth/gmail/callback</code> and <code>/auth/qbo/callback</code> FastAPI routes; register the new redirect URIs in Google Cloud Console and the Intuit app (keep the Streamlit ones during overlap).</span></li>
           </ul>
           <p class="exit"><b>Exit when</b> a teammate logs in at the production URL, sees the live Overview page, and it loads in under a second warm.</p>
@@ -705,8 +705,8 @@ footer {
           <ul class="dolist">
             <li><span class="h">Materialized views</span> <span class="d">&mdash; the revenue / product-mix / customer rollups become materialized views, refreshed by <code>pg_cron</code> or a step in the scheduled jobs. Expensive dashboard queries become instant reads.</span></li>
             <li><span class="h">Response compression &amp; cache headers</span> <span class="d">&mdash; brotli/gzip on the API; <code>Cache-Control</code> on stable endpoints; the SPA already sits on a CDN.</span></li>
-            <li><span class="h">Observability</span> <span class="d">&mdash; Sentry for errors, an uptime check on <code>/health</code>, Fly metrics.</span></li>
-            <li><span class="h">Decide on scale</span> <span class="d">&mdash; one Fly machine is plenty for an internal tool; if you add a second for redundancy, move the server-side TTL cache to Supabase or Redis.</span></li>
+            <li><span class="h">Observability</span> <span class="d">&mdash; Sentry for errors, an uptime check on <code>/health</code>, Railway metrics.</span></li>
+            <li><span class="h">Decide on scale</span> <span class="d">&mdash; one Railway instance is plenty for an internal tool; if you add a second for redundancy, move the server-side TTL cache to Supabase or Redis.</span></li>
           </ul>
           <p class="exit"><b>Exit when</b> every page is under ~400&nbsp;ms warm and an error surfaces in Sentry before a user reports it.</p>
         </div>
@@ -738,7 +738,7 @@ footer {
         </div>
         <div class="def">
           <dt>Secrets</dt>
-          <dd><b>Backend</b> (Fly secrets): <code>DATABASE_URL</code>, <code>ANTHROPIC_API_KEY</code>, <code>GMAIL_*</code>, <code>QBO_*</code>, <code>SUPABASE_URL</code>, <code>SUPABASE_SERVICE_KEY</code>, <code>SUPABASE_JWT_SECRET</code>. <b>Frontend</b> (build-time, public-safe): <code>VITE_SUPABASE_URL</code>, <code>VITE_SUPABASE_ANON_KEY</code>, <code>VITE_API_BASE</code>.</dd>
+          <dd><b>Backend</b> (Railway variables): <code>DATABASE_URL</code> + <code>SUPABASE_JWT_SECRET</code> (required), <code>ALLOWED_ORIGINS</code> + <code>FRONTEND_BASE</code>, and <code>GMAIL_*</code> / <code>QBO_*</code> for the connect flows. The API never calls Claude. <b>Frontend</b> (build-time, public-safe): <code>VITE_SUPABASE_URL</code>, <code>VITE_SUPABASE_ANON_KEY</code>, <code>VITE_API_BASE</code>.</dd>
         </div>
         <div class="def">
           <dt>PDF storage (optional)</dt>
@@ -796,7 +796,7 @@ footer {
       <h2>Running cost</h2>
       <div class="cost">
         <div class="item"><div class="k">Supabase Pro</div><div class="v">~$25/mo</div></div>
-        <div class="item"><div class="k">Fly.io &mdash; 1 machine, always on</div><div class="v">~$5&ndash;12/mo</div></div>
+        <div class="item"><div class="k">Railway &mdash; always-on service</div><div class="v">~$5&ndash;15/mo</div></div>
         <div class="item"><div class="k">Cloudflare Pages</div><div class="v">$0</div></div>
         <div class="item"><div class="k">GitHub Actions</div><div class="v">within free tier</div></div>
         <div class="item total"><div class="k">Total</div><div class="v">~$30&ndash;40/mo</div></div>
@@ -816,7 +816,7 @@ footer {
         <li><b>Repoint the connection strings</b><span class="d">Supabase pooler string into <code>.streamlit/secrets.toml</code>; Supabase session string into the three GitHub Actions <code>DATABASE_URL</code> secrets. Run the dashboard, one extraction, and one QBO sync &mdash; confirm nothing regresses.</span></li>
         <li><b>Scaffold the two new folders</b><span class="d"><code>backend/</code> (FastAPI, <code>/health</code>) and <code>web/</code> (Vite + React + TS). Get both running locally.</span></li>
         <li><b>Lift the service layer</b><span class="d">Move <code>dashboard/data.py</code>'s query and transform functions into <code>backend/services/</code>; leave a thin re-export in <code>data.py</code> so Streamlit keeps working.</span></li>
-        <li><b>Deploy the empty stack</b><span class="d">FastAPI to Fly.io with <code>min_machines_running = 1</code>; the React shell to Cloudflare Pages. Wire Supabase Auth login and confirm a protected route.</span></li>
+        <li><b>Deploy the empty stack</b><span class="d">FastAPI to Railway (repo has <code>railway.toml</code>); the React shell to Cloudflare Pages. Wire Supabase Auth login and confirm a protected route.</span></li>
       </ol>
     </section>
 
