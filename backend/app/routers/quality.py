@@ -22,30 +22,40 @@ def _rows(cur) -> list[dict]:
 @router.get("/data-quality", response_model=PageResponse)
 def data_quality(_: AuthedUser = Depends(current_user)) -> PageResponse:
     with reused_conn() as conn, conn.cursor() as cur:
+        # Every count is scoped to status = 'active' — cancelled / voided / deleted
+        # POs are out of the fix queue.
         cur.execute(
             "SELECT count(*) FROM purchase_orders "
-            "WHERE error IS NOT NULL AND error <> '' AND error <> %s "
+            "WHERE status = 'active' AND error IS NOT NULL AND error <> '' AND error <> %s "
             "AND error NOT LIKE 'modification%%'",
             (_NOT_PO,),
         )
         real_errors = cur.fetchone()[0]
 
-        cur.execute("SELECT count(*) FROM purchase_orders WHERE error = %s", (_NOT_PO,))
+        cur.execute(
+            "SELECT count(*) FROM purchase_orders WHERE status = 'active' AND error = %s",
+            (_NOT_PO,),
+        )
         not_po = cur.fetchone()[0]
 
         cur.execute(
-            "SELECT count(DISTINCT po_id) FROM line_items "
-            "WHERE math_mismatch IS NOT NULL AND NOT is_removed"
+            "SELECT count(DISTINCT li.po_id) FROM line_items li "
+            "JOIN purchase_orders po ON po.id = li.po_id "
+            "WHERE li.math_mismatch IS NOT NULL AND NOT li.is_removed AND po.status = 'active'"
         )
         math_pos = cur.fetchone()[0]
 
         cur.execute(
-            "SELECT count(DISTINCT po_id) FROM line_items "
-            "WHERE price_anomaly IS NOT NULL AND NOT is_removed"
+            "SELECT count(DISTINCT li.po_id) FROM line_items li "
+            "JOIN purchase_orders po ON po.id = li.po_id "
+            "WHERE li.price_anomaly IS NOT NULL AND NOT li.is_removed AND po.status = 'active'"
         )
         price_pos = cur.fetchone()[0]
 
-        cur.execute("SELECT count(*) FROM purchase_orders WHERE error LIKE 'modification%%'")
+        cur.execute(
+            "SELECT count(*) FROM purchase_orders "
+            "WHERE status = 'active' AND error LIKE 'modification%%'"
+        )
         unresolved_mods = cur.fetchone()[0]
 
         cur2 = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -55,7 +65,8 @@ def data_quality(_: AuthedUser = Depends(current_user)) -> PageResponse:
                    po.po_date, m.subject, m.from_addrs, m.url AS gmail_url
             FROM purchase_orders po
             LEFT JOIN gmail_thread_meta m ON m.thread_id = po.gmail_thread_id
-            WHERE po.error IS NOT NULL AND po.error <> '' AND po.error <> %s
+            WHERE po.status = 'active'
+              AND po.error IS NOT NULL AND po.error <> '' AND po.error <> %s
             ORDER BY po.extracted_at DESC LIMIT 200
             """,
             (_NOT_PO,),
@@ -70,7 +81,7 @@ def data_quality(_: AuthedUser = Depends(current_user)) -> PageResponse:
             SELECT po.id AS po_id, po.po_number, po.customer_name, po.po_date,
                    li.product_name, li.container_size, li.math_mismatch
             FROM line_items li JOIN purchase_orders po ON po.id = li.po_id
-            WHERE li.math_mismatch IS NOT NULL AND NOT li.is_removed
+            WHERE li.math_mismatch IS NOT NULL AND NOT li.is_removed AND po.status = 'active'
             ORDER BY po.po_date DESC NULLS LAST LIMIT 200
             """
         )
@@ -84,7 +95,7 @@ def data_quality(_: AuthedUser = Depends(current_user)) -> PageResponse:
             SELECT po.id AS po_id, po.po_number, po.customer_name,
                    li.product_name, li.container_size, li.unit_price, li.price_anomaly
             FROM line_items li JOIN purchase_orders po ON po.id = li.po_id
-            WHERE li.price_anomaly IS NOT NULL AND NOT li.is_removed
+            WHERE li.price_anomaly IS NOT NULL AND NOT li.is_removed AND po.status = 'active'
             ORDER BY po.po_date DESC NULLS LAST LIMIT 200
             """
         )

@@ -13,7 +13,7 @@ _HEADER_COLS = (
 _ITEM_COLS = (
     "id", "product_raw", "product_name", "container_size", "quantity", "unit_price",
     "line_total", "additional_cost", "sku", "is_sample", "math_mismatch",
-    "price_anomaly", "revision_status", "is_removed",
+    "price_anomaly", "revision_status", "is_removed", "voided", "void_reason",
 )
 
 
@@ -60,7 +60,8 @@ def save_po_edit(conn, po_id: int, header: dict, items: list[dict],
         "subtotal": header.get("subtotal"),
         "tax": header.get("tax"),
         "total": header.get("total"),
-        "line_items": items,
+        # voided lines are excluded from the qty×price=total reconciliation
+        "line_items": [it for it in items if not it.get("voided")],
     }
     validate_math(data)
 
@@ -104,11 +105,12 @@ def _insert_line(cur, po_id: int, it: dict, *, removed: bool) -> None:
         INSERT INTO line_items (
             po_id, product_raw, product_name, container_size,
             quantity, unit_price, line_total, additional_cost, sku, is_sample,
-            math_mismatch, price_anomaly, revision_status, is_removed
+            math_mismatch, price_anomaly, revision_status, is_removed, voided, void_reason
         ) VALUES (
             %(po_id)s, %(product_raw)s, %(product_name)s, %(container_size)s,
             %(quantity)s, %(unit_price)s, %(line_total)s, %(additional_cost)s, %(sku)s, %(is_sample)s,
-            %(math_mismatch)s, %(price_anomaly)s, %(revision_status)s, %(is_removed)s
+            %(math_mismatch)s, %(price_anomaly)s, %(revision_status)s, %(is_removed)s,
+            %(voided)s, %(void_reason)s
         )
         """,
         {
@@ -126,5 +128,7 @@ def _insert_line(cur, po_id: int, it: dict, *, removed: bool) -> None:
             "price_anomaly": it.get("price_anomaly"),
             "revision_status": it.get("revision_status") or ("Removed" if removed else "Edited"),
             "is_removed": removed,
+            "voided": bool(it.get("voided", False)),
+            "void_reason": it.get("void_reason") if it.get("voided") else None,
         },
     )

@@ -14,6 +14,8 @@ from ._util import records
 
 def order_lifecycle(fp: FilterParams) -> PageResponse:
     po_df, items_df, _matched_df = _dash.load_data()
+    if "status" in po_df.columns:  # admin-CRUD soft delete / cancel — out of scope
+        po_df = po_df[po_df["status"].fillna("active") == "active"]
     valid_po, latest_po, _all_items, _latest_items = _dash.prepare(po_df, items_df)
 
     scoped = latest_po

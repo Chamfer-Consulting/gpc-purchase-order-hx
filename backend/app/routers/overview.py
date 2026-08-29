@@ -22,8 +22,9 @@ def _attention(conn) -> list[AttentionItem]:
     items: list[AttentionItem] = []
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT count(DISTINCT po_id) FROM line_items "
-            "WHERE math_mismatch IS NOT NULL AND NOT is_removed"
+            "SELECT count(DISTINCT li.po_id) FROM line_items li "
+            "JOIN purchase_orders po ON po.id = li.po_id "
+            "WHERE li.math_mismatch IS NOT NULL AND NOT li.is_removed AND po.status = 'active'"
         )
         if (n := cur.fetchone()[0]):
             items.append(AttentionItem(severity="critical", count=n, href="/data-quality",
@@ -31,7 +32,8 @@ def _attention(conn) -> list[AttentionItem]:
 
         cur.execute(
             "SELECT count(*) FROM purchase_orders "
-            "WHERE error IS NOT NULL AND error <> '' AND error <> %s AND error NOT LIKE 'modification%%'",
+            "WHERE status = 'active' AND error IS NOT NULL AND error <> '' AND error <> %s "
+            "AND error NOT LIKE 'modification%%'",
             (_NOT_PO,),
         )
         if (n := cur.fetchone()[0]):
@@ -39,14 +41,18 @@ def _attention(conn) -> list[AttentionItem]:
                                        title=f"{n} source(s) failed extraction"))
 
         cur.execute(
-            "SELECT count(DISTINCT po_id) FROM line_items "
-            "WHERE price_anomaly IS NOT NULL AND NOT is_removed"
+            "SELECT count(DISTINCT li.po_id) FROM line_items li "
+            "JOIN purchase_orders po ON po.id = li.po_id "
+            "WHERE li.price_anomaly IS NOT NULL AND NOT li.is_removed AND po.status = 'active'"
         )
         if (n := cur.fetchone()[0]):
             items.append(AttentionItem(severity="serious", count=n, href="/data-quality",
                                        title=f"{n} order(s) with a price anomaly"))
 
-        cur.execute("SELECT count(*) FROM purchase_orders WHERE error LIKE 'modification%%'")
+        cur.execute(
+            "SELECT count(*) FROM purchase_orders "
+            "WHERE status = 'active' AND error LIKE 'modification%%'"
+        )
         if (n := cur.fetchone()[0]):
             items.append(AttentionItem(severity="serious", count=n, href="/review",
                                        title=f"{n} unresolved order modification(s)"))
@@ -82,7 +88,10 @@ def overview(
 ) -> PageResponse:
     with reused_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM purchase_orders WHERE error IS NULL OR error = ''")
+            cur.execute(
+                "SELECT count(*) FROM purchase_orders "
+                "WHERE status = 'active' AND (error IS NULL OR error = '')"
+            )
             clean_pos = cur.fetchone()[0]
             cur.execute("SELECT count(*) FROM qbo_invoices")
             invoices = cur.fetchone()[0]

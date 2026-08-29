@@ -29,6 +29,7 @@ LEFT JOIN extraction_snapshots s
        ON (s.target_kind = 'thread' AND s.target_key = po.gmail_thread_id)
        OR (s.target_kind = 'file'   AND s.target_key = po.source_file)
 WHERE po.gmail_thread_id IS NOT NULL
+  AND po.status = 'active'
 """
 
 
@@ -105,6 +106,7 @@ def revision_candidates(conn, limit: int = 150) -> list[dict]:
                    is_revision, source_file, gmail_thread_id
             FROM purchase_orders
             WHERE (error IS NULL OR error = '')
+              AND status = 'active'
               AND customer_name IS NOT NULL AND delivery_date IS NOT NULL
               AND delivery_date > (now() - interval '18 months')
             ORDER BY customer_name, delivery_date, po_date

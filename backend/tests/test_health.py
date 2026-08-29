@@ -72,6 +72,9 @@ def test_oauth_callback_state_guard():
         "/api/review/decisions",
         "/api/connections",
         "/api/po/1",
+        "/api/po/1/detail",
+        "/api/po/1/audit",
+        "/api/invoices",
         "/api/overview",
         "/api/filters/options",
         "/api/customers",
@@ -81,4 +84,26 @@ def test_oauth_callback_state_guard():
 def test_all_data_routes_require_auth(path):
     assert client.get(path).status_code == 403
     assert client.get(path, headers={"Authorization": "Bearer nope"}).status_code == 401
+
+
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        ("post", "/api/po", {"header": {}, "items": []}),
+        ("post", "/api/po/1/status", {"status": "cancelled"}),
+        ("delete", "/api/po/1", {"reason": "x"}),
+        ("post", "/api/po/1/restore", {}),
+        ("post", "/api/po/1/line/1/void", {"voided": True}),
+        ("post", "/api/po/1/customer", {"customer_name": "x"}),
+        ("post", "/api/po/1/regroup", {"standalone": True}),
+        ("post", "/api/links", {"po_id": 1, "invoice_id": 1}),
+        ("delete", "/api/links?po_id=1&invoice_id=1", None),
+    ],
+)
+def test_admin_mutations_require_auth(method, path, body):
+    kw = {"json": body} if body is not None else {}
+    assert getattr(client, method)(path, **kw).status_code == 403
+    assert getattr(client, method)(
+        path, headers={"Authorization": "Bearer nope"}, **kw
+    ).status_code == 401
 

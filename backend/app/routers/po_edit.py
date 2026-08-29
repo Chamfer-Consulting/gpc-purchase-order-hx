@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from ..auth import AuthedUser, current_user
 from ..reused_db import reused_conn
-from ..services import po_edit
+from ..services import po_admin, po_edit
 
 router = APIRouter(prefix="/api/po", tags=["po-edit"])
 
@@ -24,6 +24,8 @@ class LineItemIn(BaseModel):
     math_mismatch: str | None = None
     price_anomaly: str | None = None
     revision_status: str | None = None
+    voided: bool = False
+    void_reason: str | None = None
 
 
 class HeaderIn(BaseModel):
@@ -45,8 +47,10 @@ class PoEditIn(BaseModel):
 
 @router.get("/{po_id}")
 def get_po(po_id: int, _: AuthedUser = Depends(current_user)) -> dict:
+    """Header + line items + removed_items, plus the admin extras (lifecycle
+    status, revision chain, invoice links, audit trail)."""
     with reused_conn() as conn:
-        po = po_edit.get_po(conn, po_id)
+        po = po_admin.po_detail(conn, po_id)
     if po is None:
         raise HTTPException(404, "PO not found")
     return po

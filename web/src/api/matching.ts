@@ -53,3 +53,19 @@ function useLinkAction(action: "confirm" | "reject") {
 }
 export const useConfirmLink = () => useLinkAction("confirm");
 export const useRejectLink = () => useLinkAction("reject");
+
+/** Manual PO↔invoice link for an arbitrary pair (the admin workbench). */
+export function useManualLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ref: { po_id: number; invoice_id: number; replace_existing?: boolean }) =>
+      apiSend<{ ok: boolean }>("POST", "/api/links", {
+        replace_existing: false,
+        ...ref,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["match-review"] });
+      qc.invalidateQueries({ queryKey: ["po"] });
+    },
+  });
+}

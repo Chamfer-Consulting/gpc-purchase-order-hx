@@ -181,6 +181,23 @@ account owner / a browser · **(code)** = doable in the repo.
 
 ---
 
+## Admin CRUD for purchase orders (2026-08-28)
+
+Full editor/admin control over POs, revisions, cancellations, voided items, and
+manual linking — on `po-dashboard-rebuild` (React + FastAPI), Streamlit untouched.
+Model: **soft delete** (a `status` enum, rows preserved) + an **audit_log**.
+
+- [x] Schema — `purchase_orders.status` (active/draft/cancelled/withdrawn/voided/deleted) + `status_reason`/`status_at`/`deleted_at`/`edited_by`; `line_items.voided`/`void_reason`; `audit_log` table. In `schema.sql`, `supabase/migrations/20260828120000_admin_crud.sql`, and self-applied by `backend/app/admin_schema.py` on boot.
+- [x] Pipeline guard — `sync_dashboard.py` upsert now also requires `COALESCE(status,'active') = 'active'`; every admin mutation stamps `edited = TRUE` so non-active / touched POs are never overwritten or resurrected.
+- [x] Reports hide non-active POs — `overview`, `data-quality`, `review_queue`, `lifecycle` all scope to `status = 'active'`.
+- [x] Backend — `services/po_admin.py` + `services/audit.py`; `routers/po_admin.py`: `POST /api/po` (create), `DELETE /api/po/{id}` (soft), `POST /api/po/{id}/{status,restore,customer,regroup}`, `POST /api/po/{id}/line/{lid}/void`, `POST|DELETE /api/links`, `GET /api/invoices?search=`, `GET /api/po/{id}/{detail,audit}`. `GET /api/po/{id}` now returns status + revision chain + links + audit.
+- [x] Frontend — `EditPoPage` gains a lifecycle panel (status change + reason, soft delete / restore), per-line void toggle, revision-chain panel (regroup / standalone), invoice-links panel with search, and a collapsible audit trail. New `/po/new` route (`NewPoPage`). `MatchPage` gains a manual-link workbench + clickable unlinked-PO list.
+- [x] Tests — auth guards for every new route + mutation (`backend/tests/test_health.py`).
+- [ ] **(you)** Run `supabase/migrations/20260828120000_admin_crud.sql` against Supabase (or `supabase db push`) — see SETUP §2.1.
+- [ ] Follow-up: surface `status` as a filter/column on the analytics tables; a bulk "cancel these" action from the review queue.
+
+---
+
 ## Code-review fixes (2026-08-28)
 
 Nine findings from `/code-review` on the branch, all resolved:

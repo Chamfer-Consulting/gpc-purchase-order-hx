@@ -159,6 +159,7 @@ def _publish_to_postgres(results: list, database_url: str) -> list:
                     gmail_thread_id     = EXCLUDED.gmail_thread_id,
                     extracted_at        = now()
                 WHERE purchase_orders.edited = FALSE
+                  AND COALESCE(purchase_orders.status, 'active') = 'active'
                 RETURNING source_file, file_hash, id
                 """,
                 header_rows,

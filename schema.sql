@@ -74,6 +74,34 @@ CREATE TABLE IF NOT EXISTS reference_prices (
     UNIQUE(customer_name, product_name, container_size)
 );
 
+-- Admin CRUD (po-dashboard-rebuild): lifecycle status + soft delete. Non-'active'
+-- rows are hidden from reports and frozen from the extraction pipeline (they're
+-- also marked edited = TRUE on any admin action, which the publish guard honours).
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+  -- active | draft | cancelled | withdrawn | voided | deleted
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS status_reason TEXT;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS status_at TIMESTAMPTZ;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS edited_by TEXT;
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders (status);
+
+ALTER TABLE line_items ADD COLUMN IF NOT EXISTS voided BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE line_items ADD COLUMN IF NOT EXISTS void_reason TEXT;
+
+-- Who changed what, for the admin CRUD surface. before/after are the row (or the
+-- touched slice) as JSON. Written by backend/app/services/audit.py.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id         BIGSERIAL PRIMARY KEY,
+    actor      TEXT,
+    action     TEXT NOT NULL,   -- create | update | status | delete | restore | link | unlink | line_void | customer | revision
+    entity     TEXT NOT NULL,   -- purchase_order | line_item | po_invoice_link
+    entity_id  TEXT,
+    before     JSONB,
+    after      JSONB,
+    at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log (entity, entity_id, at DESC);
+
 -- Dashboard-side manual edits are permanent: once a PO is edited, sync_dashboard.py
 -- must never overwrite its header or line items again (see sync_dashboard.py's
 -- ON CONFLICT ... WHERE clause).

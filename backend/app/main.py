@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from . import reuse  # noqa: F401 — sys.path shim for the reused repo modules
+from .admin_schema import ensure_admin_schema
 from .config import get_settings
 from .db import close_pool, init_pool
 from .routers import (
@@ -16,6 +17,7 @@ from .routers import (
     matching,
     oauth,
     overview,
+    po_admin,
     po_edit,
     quality,
     review,
@@ -25,6 +27,7 @@ from .routers import (
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_pool()
+    ensure_admin_schema()
     yield
     close_pool()
 
@@ -54,6 +57,7 @@ app.include_router(quality.router)
 app.include_router(matching.router)
 app.include_router(review.router)
 app.include_router(po_edit.router)
+app.include_router(po_admin.router)
 app.include_router(connections.router)
 app.include_router(oauth.router)
 

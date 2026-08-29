@@ -70,6 +70,22 @@ exits non-zero on any mismatch. Do not proceed to §3 until it's clean.
 
 Delete `neon_dump.pgcustom` afterward (it contains customer data).
 
+### 2.1 Post-load migrations
+
+Schema changes made on `po-dashboard-rebuild` after the dump live in
+`supabase/migrations/` (see its `README.md`). Apply them once the restore verifies:
+
+```bash
+# CLI (records each migration):
+supabase link --project-ref <ref> && supabase db push
+# or plain psql, one file:
+psql "$SUPABASE_SESSION_URL" -f supabase/migrations/20260828120000_admin_crud.sql
+```
+
+Current migrations: `20260828120000_admin_crud.sql` — PO lifecycle `status` +
+soft delete, per-line `voided`, `audit_log`. (The API also self-applies this on
+boot, so it's safe to defer, but run it so the change is explicit.)
+
 ---
 
 ## 3. Cut the running app + jobs over to Supabase

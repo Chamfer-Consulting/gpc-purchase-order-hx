@@ -1,25 +1,103 @@
+import { useState } from "react";
+import { Link } from "react-router-dom";
 import {
   Alert,
+  Anchor,
   Badge,
   Button,
   Card,
   Group,
   Loader,
+  NumberInput,
+  Paper,
   SimpleGrid,
   Stack,
   Table,
   Text,
+  TextInput,
   Title,
 } from "@mantine/core";
 import {
   useConfirmLink,
+  useManualLink,
   useMatchReview,
   useRejectLink,
   useRunMatching,
   type LineItem,
   type MatchCandidate,
 } from "@/api/matching";
+import { useInvoiceSearch } from "@/api/poEdit";
 import { fmtCurrency } from "@/lib/format";
+
+function ManualLinkPanel({ initialPoId }: { initialPoId?: number }) {
+  const [poId, setPoId] = useState<number | "">(initialPoId ?? "");
+  const [search, setSearch] = useState("");
+  const hits = useInvoiceSearch(search);
+  const link = useManualLink();
+
+  return (
+    <Paper withBorder radius="md" p="md">
+      <Title order={4} mb="sm">
+        Manual link
+      </Title>
+      <Group align="flex-end" mb="sm">
+        <NumberInput
+          label="PO id"
+          value={poId}
+          onChange={(v) => setPoId(v === "" ? "" : Number(v))}
+          hideControls
+          w={120}
+        />
+        <TextInput
+          label="Find invoice"
+          placeholder="invoice number or customer"
+          value={search}
+          onChange={(e) => setSearch(e.currentTarget.value)}
+          style={{ flex: 1 }}
+        />
+      </Group>
+      {typeof poId === "number" && hits.data && hits.data.length > 0 && (
+        <Table fz="sm">
+          <Table.Tbody>
+            {hits.data.map((h) => (
+              <Table.Tr key={h.invoice_id}>
+                <Table.Td>{h.doc_number ?? h.invoice_id}</Table.Td>
+                <Table.Td>{h.customer_name}</Table.Td>
+                <Table.Td>{h.txn_date}</Table.Td>
+                <Table.Td>{h.total_amt != null ? fmtCurrency(h.total_amt) : "—"}</Table.Td>
+                <Table.Td>
+                  {h.linked && (
+                    <Badge size="xs" color="gray" variant="light" mr="xs">
+                      linked
+                    </Badge>
+                  )}
+                  <Button
+                    size="xs"
+                    variant="light"
+                    loading={link.isPending}
+                    onClick={() => link.mutate({ po_id: poId, invoice_id: h.invoice_id })}
+                  >
+                    Link to PO {poId}
+                  </Button>
+                </Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      )}
+      {link.error && (
+        <Text size="xs" c="red">
+          {(link.error as Error).message}
+        </Text>
+      )}
+      {link.isSuccess && (
+        <Text size="xs" c="teal">
+          Linked.
+        </Text>
+      )}
+    </Paper>
+  );
+}
 
 function Lines({ items }: { items: LineItem[] }) {
   if (!items?.length) return <Text size="xs" c="dimmed">no line items</Text>;
@@ -125,6 +203,25 @@ export function MatchPage() {
             {data.candidates.length} candidate link(s) awaiting a decision · {data.unlinked.length} PO(s) with no
             match
           </Text>
+
+          <ManualLinkPanel />
+
+          {data.unlinked.length > 0 && (
+            <Paper withBorder radius="md" p="md">
+              <Title order={4} mb="sm">
+                Unlinked POs
+              </Title>
+              <Group gap="xs">
+                {data.unlinked.map((u) => (
+                  <Anchor key={u.po_id} component={Link} to={`/po/${u.po_id}`} size="sm">
+                    {u.po_number ?? u.po_id}
+                    {u.customer_name ? ` · ${u.customer_name}` : ""}
+                  </Anchor>
+                ))}
+              </Group>
+            </Paper>
+          )}
+
           <Stack>
             {data.candidates.map((c) => (
               <CandidateCard
