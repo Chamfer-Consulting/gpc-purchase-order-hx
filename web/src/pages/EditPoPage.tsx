@@ -574,18 +574,11 @@ function DocumentsPanel({ poId, sources }: { poId: number; sources?: PoSources }
         Documents
       </Title>
 
-      {(sources?.gmail_thread_url || sources?.drive_pdf_url) && (
+      {sources?.gmail_thread_url && (
         <Group gap="md" mb="sm">
-          {sources?.drive_pdf_url && (
-            <Anchor href={sources.drive_pdf_url} target="_blank" rel="noopener" size="sm">
-              Original PO PDF (Drive) ↗
-            </Anchor>
-          )}
-          {sources?.gmail_thread_url && (
-            <Anchor href={sources.gmail_thread_url} target="_blank" rel="noopener" size="sm">
-              Email thread ↗
-            </Anchor>
-          )}
+          <Anchor href={sources.gmail_thread_url} target="_blank" rel="noopener" size="sm">
+            Email thread ↗
+          </Anchor>
         </Group>
       )}
 

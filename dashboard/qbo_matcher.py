@@ -606,7 +606,7 @@ def get_needs_review(conn) -> list[dict]:
                    po.po_number, po.customer_name AS po_customer, po.total AS po_total,
                    po.subtotal AS po_subtotal, po.tax AS po_tax,
                    po.po_date, po.sent_date, po.delivery_date, po.notes AS po_notes,
-                   po.source_file, po.drive_file_id,
+                   po.source_file,
                    inv.qbo_invoice_id, inv.doc_number, inv.customer_name AS inv_customer,
                    inv.txn_date, inv.due_date, inv.total_amt, inv.private_note AS inv_note
             FROM po_invoice_links l
@@ -706,7 +706,7 @@ def get_po_full_detail(conn, po_id: int) -> dict:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT po_number, source_file, customer_name, po_date, sent_date, "
-            "delivery_date, subtotal, tax, total, notes, drive_file_id "
+            "delivery_date, subtotal, tax, total, notes "
             "FROM purchase_orders WHERE id = %s",
             (po_id,),
         )

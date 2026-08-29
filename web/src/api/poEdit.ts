@@ -94,7 +94,6 @@ export interface PoLink {
 
 export interface PoSources {
   gmail_thread_url: string | null;
-  drive_pdf_url: string | null;
 }
 
 export interface AuditEntry {

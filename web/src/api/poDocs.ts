@@ -6,7 +6,7 @@ export interface PoDocument {
   po_id: number;
   invoice_id: number | null;
   kind: "po_pdf" | "invoice_pdf" | "email_pdf" | "other";
-  source: "gmail" | "qbo" | "drive" | "upload";
+  source: "gmail" | "qbo" | "upload";
   filename: string;
   mime_type: string;
   byte_size: number;

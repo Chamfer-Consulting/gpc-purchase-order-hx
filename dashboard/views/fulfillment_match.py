@@ -12,7 +12,6 @@ import pandas as pd
 import psycopg2
 import streamlit as st
 
-import gdrive_client
 import qbo_client
 import qbo_matcher
 from data import get_database_url
@@ -78,8 +77,6 @@ def _review_dialog(mc, row: dict, po_items_map: dict, inv_items_map: dict) -> No
     with dc1:
         st.markdown("**Purchase Order**")
         st.write(f"PO Number: {row['po_number'] or row['source_file']}")
-        if row.get("drive_file_id"):
-            st.markdown(f"[Open original PDF ↗]({gdrive_client.file_view_url(row['drive_file_id'])})")
         st.write(f"Customer: {row['po_customer']}")
         st.write(
             f"PO Date: {row['po_date'] or '—'} · Sent: {row['sent_date'] or '—'} · "
@@ -137,8 +134,7 @@ def render(ctx) -> None:
 
     try:
         with section_card("Automated matching"):
-            mcol1, mcol2 = st.columns(2)
-            if mcol1.button("Run matching"):
+            if st.button("Run matching"):
                 summary = None
                 with st.spinner("Matching POs to invoices..."):
                     try:
@@ -166,31 +162,6 @@ def render(ctx) -> None:
                         f"candidate(s) pruned. "
                         f"Fuzzy date window: ±{summary['date_window_days']} days."
                     )
-            if mcol2.button("Sync Drive links"):
-                mc = _live(mc)
-                progress_bar = st.progress(0.0, text="Searching Google Drive...")
-
-                def _drive_progress(i, total):
-                    progress_bar.progress(i / total, text=f"Searching Google Drive... {i}/{total}")
-
-                try:
-                    drive_summary = gdrive_client.sync_drive_links(mc, progress=_drive_progress)
-                    progress_bar.empty()
-                    msg = (
-                        f"{drive_summary['linked']} PO(s) linked to their PDF, "
-                        f"{drive_summary['not_found']} not found in this batch "
-                        f"(checked {drive_summary['total_checked']})."
-                    )
-                    if drive_summary["remaining"]:
-                        msg += f" {drive_summary['remaining']} more PO(s) still to check — click again to continue."
-                    st.success(msg)
-                except Exception as e:
-                    progress_bar.empty()
-                    st.error(f"Drive sync failed: {e}")
-            with mc.cursor() as _cur:
-                _cur.execute("SELECT COUNT(*), COUNT(drive_file_id) FROM purchase_orders WHERE error IS NULL")
-                _total_po, _linked_po = _cur.fetchone()
-            st.caption(f"{_linked_po} of {_total_po} POs linked to their original PDF in Google Drive.")
 
         st.subheader("Needs review")
         needs_review = qbo_matcher.get_needs_review(mc)
@@ -250,8 +221,6 @@ def render(ctx) -> None:
             if selected_po:
                 po_detail = qbo_matcher.get_po_full_detail(mc, selected_po)
                 st.write(f"PO Number: {po_detail['po_number'] or po_detail['source_file']}")
-                if po_detail.get("drive_file_id"):
-                    st.markdown(f"[Open original PDF ↗]({gdrive_client.file_view_url(po_detail['drive_file_id'])})")
                 st.write(f"Customer: {po_detail['customer_name']}")
                 st.write(
                     f"PO Date: {po_detail['po_date'] or '—'} · Sent: {po_detail['sent_date'] or '—'} · "

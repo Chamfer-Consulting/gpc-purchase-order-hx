@@ -8,6 +8,7 @@ data load (see `docs/REBUILD-SETUP.md` §2). The base schema comes over with tha
 |-----------|--------------|
 | `20260828120000_admin_crud.sql` | PO lifecycle `status` + soft delete, per-line `voided`, `audit_log` table. Backs the admin CRUD surface on `po-dashboard-rebuild`. |
 | `20260828130000_po_documents.sql` | `po_documents` table — captured source PDFs (emailed PO from Gmail, invoice from QuickBooks), bytes stored inline. |
+| `20260829000000_drop_gdrive.sql` | Drops `purchase_orders.drive_file_id` / `drive_synced_at`. The Google Drive integration is removed; original-PDF archival is now `po_documents` (above) on Supabase. |
 
 ## Applying
 

@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS po_documents (
     po_id        INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
     invoice_id   INTEGER REFERENCES qbo_invoices(id) ON DELETE SET NULL,  -- kind = 'invoice_pdf'
     kind         TEXT NOT NULL,          -- po_pdf | invoice_pdf | email_pdf | other
-    source       TEXT NOT NULL,          -- gmail | qbo | drive | upload
+    source       TEXT NOT NULL,          -- gmail | qbo | upload
     filename     TEXT NOT NULL,
     mime_type    TEXT NOT NULL DEFAULT 'application/pdf',
     byte_size    INTEGER NOT NULL,

@@ -39,7 +39,7 @@ def _header_row(cur, po_id: int) -> dict | None:
         """
         SELECT id, po_number, customer_name, customer_id, status, status_reason,
                status_at, deleted_at, edited, edited_by, source_file, gmail_thread_id,
-               drive_file_id, delivery_date, po_date, subtotal, tax, total
+               delivery_date, po_date, subtotal, tax, total
         FROM purchase_orders WHERE id = %s
         """,
         (po_id,),
@@ -79,16 +79,15 @@ def po_detail(conn, po_id: int) -> dict | None:
 
 
 def _sources(cur, hdr: dict) -> dict:
-    """Deep links back to where this PO / its invoices actually live."""
-    out: dict = {"gmail_thread_url": None, "drive_pdf_url": None}
+    """Deep link back to where this PO originally came from. The PO/invoice PDFs
+    themselves are captured into po_documents (see services/po_docs.py)."""
+    out: dict = {"gmail_thread_url": None}
     if hdr.get("gmail_thread_id"):
         cur.execute(
             "SELECT url FROM gmail_thread_meta WHERE thread_id = %s", (hdr["gmail_thread_id"],)
         )
         row = cur.fetchone()
         out["gmail_thread_url"] = row["url"] if row else None
-    if hdr.get("drive_file_id"):
-        out["drive_pdf_url"] = f"https://drive.google.com/file/d/{hdr['drive_file_id']}/view"
     return out
 
 

@@ -8,10 +8,8 @@ extraction pipeline itself are separate work.
 
 ## 0. Before you start
 
-- You need access to the **same Google Cloud project** already used for the Drive
-  service account (`gdrive_service_account` in your secrets) — or a new one, if
-  you'd rather keep this separate. Either works; reusing the existing project means
-  one less thing to track.
+- You need a **Google Cloud project** for the OAuth client. Any project works; a
+  dedicated one keeps this app's credentials easy to find.
 - Decide whether your Gmail account is a **Google Workspace** account (business
   domain, e.g. `you@yourcompany.com` managed by an admin) or a **personal**
   `@gmail.com` account — it changes one choice in step 2 below.

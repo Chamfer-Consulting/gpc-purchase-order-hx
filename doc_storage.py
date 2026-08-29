@@ -5,7 +5,7 @@ uploads the bytes here and leaves po_documents.content NULL; reads fall back to 
 download from here. When it's *not* configured every call is a no-op and bytes
 stay inline in Postgres — so this is safe to ship before Supabase Storage is wired.
 
-Direct REST calls (no supabase-py SDK) — matches qbo_client.py / gdrive_client.py.
+Direct REST calls (no supabase-py SDK) — matches qbo_client.py.
 """
 
 import requests

@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS po_documents (
     po_id        INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
     invoice_id   INTEGER REFERENCES qbo_invoices(id) ON DELETE SET NULL,  -- for kind = 'invoice_pdf'
     kind         TEXT NOT NULL,          -- po_pdf | invoice_pdf | email_pdf | other
-    source       TEXT NOT NULL,          -- gmail | qbo | drive | upload
+    source       TEXT NOT NULL,          -- gmail | qbo | upload
     filename     TEXT NOT NULL,
     mime_type    TEXT NOT NULL DEFAULT 'application/pdf',
     byte_size    INTEGER NOT NULL,
@@ -131,11 +131,9 @@ CREATE INDEX IF NOT EXISTS idx_po_documents_po_id ON po_documents (po_id);
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS edited BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
 
--- Link to the original PDF's copy in the Google Shared Drive it was archived to on
--- receipt — drive_file_id IS NULL is the incremental-sync filter (no time cursor needed,
--- a once-found file never needs re-searching).
-ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS drive_file_id TEXT;
-ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS drive_synced_at TIMESTAMPTZ;
+-- (Original-PDF archival moved to Supabase: the po_documents table holds the
+-- captured PO/invoice PDF bytes. The former Google Drive link columns
+-- drive_file_id / drive_synced_at were dropped — see supabase/migrations/.)
 
 -- Unlabeled date+time page-header stamp (e.g. Get Fresh's top-right print timestamp),
 -- captured as the finest-grained signal for ordering same-po_number revisions/reprints

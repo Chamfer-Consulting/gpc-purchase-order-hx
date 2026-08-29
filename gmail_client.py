@@ -8,9 +8,9 @@ in as explicit arguments rather than read internally from st.secrets — this mo
 is imported by both the Streamlit dashboard (passing st.secrets[...]) and a plain
 CLI/GitHub Actions script with no Streamlit installed (passing os.environ[...]), so
 it must not hard-depend on Streamlit itself (see GMAIL_SETUP.md / the plan this was
-built from). Pure requests-based REST calls throughout, same reasoning as
-gdrive_client.py/qbo_client.py: avoids the heavy, protobuf-pinned
-google-api-python-client SDK, which conflicts with Streamlit's pinned protobuf<6.
+built from). Pure requests-based REST calls throughout, same reasoning as qbo_client.py:
+avoids the heavy, protobuf-pinned google-api-python-client SDK, which conflicts
+with Streamlit's pinned protobuf<6.
 """
 
 import base64
