@@ -76,9 +76,10 @@ def main() -> None:
         print("no valid --sources (use gmail and/or qbo)", file=sys.stderr)
         sys.exit(2)
 
-    doc_storage.configure(
-        os.environ.get("SUPABASE_URL", ""), os.environ.get("SUPABASE_SERVICE_KEY", "")
-    )
+    # Supabase's 2025 key model: sb_secret_... replaces the service_role JWT.
+    # Accept either env name (both valid until end of 2026).
+    supabase_key = os.environ.get("SUPABASE_SECRET_KEY") or os.environ.get("SUPABASE_SERVICE_KEY", "")
+    doc_storage.configure(os.environ.get("SUPABASE_URL", ""), supabase_key)
     logger.info(
         "doc capture starting — sources=%s limit=%d storage=%s",
         sources, args.limit, "supabase" if doc_storage.is_enabled() else "inline",

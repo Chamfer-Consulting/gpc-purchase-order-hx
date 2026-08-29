@@ -10,6 +10,9 @@ psycopg[binary,pool]==3.2.3
 # code uses psycopg3 via the pool. See app/reused_db.py.
 psycopg2-binary==2.9.10
 PyJWT==2.10.1
+# ES256 / RS256 verification of Supabase's asymmetric JWT signing keys (2025+
+# key model). PyJWT needs this for anything other than HS256.
+cryptography==44.0.0
 python-dateutil==2.9.0.post0
 pandas==2.2.3
 plotly==5.24.1

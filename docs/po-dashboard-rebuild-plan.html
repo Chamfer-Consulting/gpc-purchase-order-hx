@@ -738,7 +738,7 @@ footer {
         </div>
         <div class="def">
           <dt>Secrets</dt>
-          <dd><b>Backend</b> (Railway variables): <code>DATABASE_URL</code> + <code>SUPABASE_JWT_SECRET</code> (required), <code>ALLOWED_ORIGINS</code> + <code>FRONTEND_BASE</code>, and <code>GMAIL_*</code> / <code>QBO_*</code> for the connect flows. The API never calls Claude. <b>Frontend</b> (build-time, public-safe): <code>VITE_SUPABASE_URL</code>, <code>VITE_SUPABASE_ANON_KEY</code>, <code>VITE_API_BASE</code>.</dd>
+          <dd><b>Backend</b> (Railway variables): <code>DATABASE_URL</code> + <code>SUPABASE_URL</code> (token verification via the JWKS endpoint; <code>SUPABASE_JWT_SECRET</code> only if the project still signs HS256), <code>ALLOWED_ORIGINS</code> + <code>FRONTEND_BASE</code>, and <code>GMAIL_*</code> / <code>QBO_*</code> for the connect flows. The API never calls Claude. <b>Frontend</b> (build-time, public-safe): <code>VITE_SUPABASE_URL</code>, <code>VITE_SUPABASE_PUBLISHABLE_KEY</code> (or legacy <code>VITE_SUPABASE_ANON_KEY</code>), <code>VITE_API_BASE</code>.</dd>
         </div>
         <div class="def">
           <dt>PDF storage (optional)</dt>

@@ -3,7 +3,7 @@ never imports streamlit."""
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,11 +16,28 @@ class Settings(BaseSettings):
     db_pool_min: int = Field(1, alias="DB_POOL_MIN")
     db_pool_max: int = Field(8, alias="DB_POOL_MAX")
 
-    # Supabase
+    # Supabase project URL, e.g. https://<ref>.supabase.co
     supabase_url: str = Field("", alias="SUPABASE_URL")
-    supabase_service_key: str = Field("", alias="SUPABASE_SERVICE_KEY")
-    supabase_jwt_secret: str = Field(..., alias="SUPABASE_JWT_SECRET")
+
+    # Backend API key for Supabase REST / Storage. Supabase's 2025 key model: the
+    # new secret key (sb_secret_...) replaces the legacy service_role JWT; both
+    # work until end of 2026. Accept either env name.
+    supabase_service_key: str = Field(
+        "", validation_alias=AliasChoices("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_KEY")
+    )
+
+    # User access-token verification. Supabase's new JWT signing keys are
+    # asymmetric (ES256 / RS256) and published at the project's JWKS endpoint —
+    # verified locally, rotated with no redeploy. Projects still on the legacy
+    # shared secret sign HS256; we verify those against SUPABASE_JWT_SECRET.
+    # Set at least one path: SUPABASE_URL (→ JWKS) and/or SUPABASE_JWT_SECRET.
+    supabase_jwt_secret: str = Field("", alias="SUPABASE_JWT_SECRET")
+    supabase_jwks_url: str = Field("", alias="SUPABASE_JWKS_URL")
     supabase_jwt_aud: str = Field("authenticated", alias="SUPABASE_JWT_AUD")
+
+    # HMAC key for the stateless OAuth `state` token (oauth_state.py). Its own
+    # value if set, else the JWT secret, else the DB URL — server-only either way.
+    oauth_state_secret: str = Field("", alias="OAUTH_STATE_SECRET")
 
     # CORS — comma-separated list of allowed frontend origins.
     allowed_origins: str = Field("http://localhost:5173", alias="ALLOWED_ORIGINS")
@@ -47,6 +64,30 @@ class Settings(BaseSettings):
     @property
     def frontend(self) -> str:
         return (self.frontend_base or (self.origins[0] if self.origins else "")).rstrip("/")
+
+    @property
+    def jwks_url(self) -> str:
+        """Where to fetch the project's public JWT signing keys. Explicit override
+        wins; otherwise derived from the project URL."""
+        if self.supabase_jwks_url:
+            return self.supabase_jwks_url
+        if self.supabase_url:
+            return f"{self.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
+        return ""
+
+    @property
+    def state_secret(self) -> str:
+        return self.oauth_state_secret or self.supabase_jwt_secret or self.database_url
+
+    @model_validator(mode="after")
+    def _need_a_verification_path(self) -> "Settings":
+        if not self.supabase_jwt_secret and not self.jwks_url:
+            raise ValueError(
+                "No way to verify access tokens: set SUPABASE_URL (asymmetric JWT "
+                "signing keys, verified via JWKS) and/or SUPABASE_JWT_SECRET "
+                "(legacy HS256 shared secret)."
+            )
+        return self
 
 
 @lru_cache

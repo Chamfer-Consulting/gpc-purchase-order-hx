@@ -57,6 +57,8 @@ jobs:
           QBO_REDIRECT_URI: ${{ secrets.QBO_REDIRECT_URI }}
           QBO_ENVIRONMENT: ${{ secrets.QBO_ENVIRONMENT }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          # New key model (sb_secret_...) or the legacy service_role key — either works.
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SOURCES: ${{ github.event.inputs.sources || 'gmail,qbo' }}
           LIMIT: ${{ github.event.inputs.limit || '200' }}

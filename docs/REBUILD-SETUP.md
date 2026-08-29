@@ -34,14 +34,25 @@ Cloudflare Pages needs no CLI — it builds from the GitHub repo.
    - **Connection string → Transaction pooler** (`...pooler.supabase.com:6543/postgres`) → this is `DATABASE_URL` for the **API**.
    - **Connection string → Session** (`...pooler.supabase.com:5432/postgres` or the direct `db.<ref>.supabase.co:5432`) → this is `DATABASE_URL` for the **pipeline scripts / GitHub Actions**.
    - Swap the password placeholder for the real password in both.
-4. **Project Settings → API**, copy:
-   - Project URL (`https://<ref>.supabase.co`)
-   - `anon` public key
-   - `service_role` secret key
-5. **Project Settings → API → JWT Settings**, copy the **JWT Secret**.
-6. **Database → Extensions**, enable `pg_cron` (needed in Phase 5).
+4. **Project Settings → API**, copy the **Project URL** (`https://<ref>.supabase.co`).
+5. **Project Settings → API Keys** — Supabase's current key model (the legacy
+   `anon` / `service_role` keys still work until **end of 2026**, so either set
+   is fine for now):
+   - **Publishable key** (`sb_publishable_...`) → the SPA (`VITE_SUPABASE_PUBLISHABLE_KEY`).
+     Legacy equivalent: `anon` → `VITE_SUPABASE_ANON_KEY`.
+   - **Secret key** (`sb_secret_...`) → the backend, for Storage-backed document
+     capture only (`SUPABASE_SECRET_KEY`). Legacy equivalent: `service_role` →
+     `SUPABASE_SERVICE_KEY`. Not needed to boot the API.
+6. **Access tokens** — the API verifies the SPA's bearer token one of two ways:
+   - **Preferred:** just set `SUPABASE_URL`. The API fetches the project's
+     asymmetric JWT signing keys from `<url>/auth/v1/.well-known/jwks.json` and
+     verifies ES256/RS256 tokens locally — key rotation then needs no redeploy.
+   - **Legacy:** if the project still signs HS256, copy **Settings → API Keys →
+     JWT Keys → "Legacy JWT Secret"** into `SUPABASE_JWT_SECRET`.
+   Setting both is fine (each token's `alg` header picks the path).
+7. **Database → Extensions**, enable `pg_cron` (needed in Phase 5).
 
-> Keep a scratch note with all seven values — you'll paste them into Railway,
+> Keep a scratch note with these values — you'll paste them into Railway,
 > GitHub Actions, and the Cloudflare Pages env in later steps.
 
 ---
@@ -107,7 +118,8 @@ Do this once §2 verifies clean. **This is the switch** — after it, Neon is id
    - `eval_extraction.yml`
    - `doc_capture.yml` — captures the emailed PO PDF + the QuickBooks invoice PDF
      onto each PO. Reuses `DATABASE_URL`, `GMAIL_CLIENT_*`, `QBO_*`; optionally
-     `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` (see §3.1).
+     `SUPABASE_URL` + `SUPABASE_SECRET_KEY` (or legacy `SUPABASE_SERVICE_KEY`),
+     see §3.1.
 4. Leave Neon running (read-only fallback) until Phase 4, then delete it.
 
 ### 3.1 Document storage (optional)
@@ -116,8 +128,9 @@ Do this once §2 verifies clean. **This is the switch** — after it, Neon is id
 setup needed, it just works. To offload them to Supabase Storage instead:
 
 1. Supabase → **Storage** → create a **private** bucket named `po-documents`.
-2. Set `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` on Railway **and** as GitHub
-   Actions secrets (so `doc_capture.yml` uploads there too).
+2. Set `SUPABASE_URL` + `SUPABASE_SECRET_KEY` (or legacy `SUPABASE_SERVICE_KEY`)
+   on Railway **and** as GitHub Actions secrets (so `doc_capture.yml` uploads
+   there too).
 
 New captures then go to Storage (`content` NULL, `storage_path` set); reads are
 proxied by the API. Existing inline rows stay inline until re-captured.
@@ -135,7 +148,8 @@ proxied by the API. Existing inline rows stay inline until re-captured.
    | Variable | Value | |
    |---|---|---|
    | `DATABASE_URL` | Supabase **transaction pooler** URL (`:6543`) | required |
-   | `SUPABASE_JWT_SECRET` | Supabase → API → JWT Settings | required |
+   | `SUPABASE_URL` | `https://<ref>.supabase.co` | required — token verification (JWKS) + Storage |
+   | `SUPABASE_JWT_SECRET` | Supabase → API Keys → JWT Keys → Legacy JWT Secret | only if the project still signs HS256 (§1.6) |
    | `ALLOWED_ORIGINS` | `https://<pages-project>.pages.dev` | required in prod |
    | `FRONTEND_BASE` | `https://<pages-project>.pages.dev` | required in prod |
    | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | from `.streamlit/secrets.toml` | Gmail connect |
@@ -143,7 +157,7 @@ proxied by the API. Existing inline rows stay inline until re-captured.
    | `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | from `.streamlit/secrets.toml` | QBO connect |
    | `QBO_REDIRECT_URI` | `https://<railway-domain>/auth/qbo/callback` | QBO connect |
    | `QBO_ENVIRONMENT` | `production` | QBO connect |
-   | `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | from §1.4 | optional — only for Storage-backed document capture (§3.1) |
+   | `SUPABASE_SECRET_KEY` (or legacy `SUPABASE_SERVICE_KEY`) | from §1.5 | optional — only for Storage-backed document capture (§3.1) |
 
    The API never calls Claude — `ANTHROPIC_API_KEY` stays on the pipeline (GitHub
    Actions), not here.
@@ -172,7 +186,7 @@ backend/fly.toml --dockerfile backend/Dockerfile` from the repo root, secrets vi
    - Root directory: `web`
 3. Environment variables (Production **and** Preview):
    - `VITE_SUPABASE_URL` = `https://<ref>.supabase.co`
-   - `VITE_SUPABASE_ANON_KEY` = `<anon key>`
+   - `VITE_SUPABASE_PUBLISHABLE_KEY` = `sb_publishable_...` (or legacy `VITE_SUPABASE_ANON_KEY` = `<anon key>`)
    - `VITE_API_BASE` = `https://<railway-domain>`
 4. Save & Deploy. Note the `*.pages.dev` URL, set it as the backend's
    `ALLOWED_ORIGINS` **and** `FRONTEND_BASE` in Railway (§4) — Railway redeploys
@@ -227,10 +241,10 @@ Env-var name in **bold**. "Railway" = the API service's Variables tab.
 |---|:---:|:---:|:---:|:---:|
 | Supabase **transaction pooler** URL (`:6543`) | ✅ `database_url` | | ✅ **DATABASE_URL** | |
 | Supabase **session** URL (`:5432`) | | ✅ **DATABASE_URL** | | |
-| Supabase project URL | | | ✅ **SUPABASE_URL** (optional) | ✅ **VITE_SUPABASE_URL** |
-| Supabase `anon` key | | | | ✅ **VITE_SUPABASE_ANON_KEY** |
-| Supabase `service_role` key | | | ✅ **SUPABASE_SERVICE_KEY** (optional) | |
-| Supabase JWT secret | | | ✅ **SUPABASE_JWT_SECRET** *(required)* | |
+| Supabase project URL | | ✅ (doc_capture) | ✅ **SUPABASE_URL** *(token verification + Storage)* | ✅ **VITE_SUPABASE_URL** |
+| Supabase publishable / `anon` key | | | | ✅ **VITE_SUPABASE_PUBLISHABLE_KEY** (or **_ANON_KEY**) |
+| Supabase secret / `service_role` key | | ✅ (doc_capture) | ✅ **SUPABASE_SECRET_KEY** (or **_SERVICE_KEY**) — optional, Storage only | |
+| Supabase legacy JWT secret | | | ✅ **SUPABASE_JWT_SECRET** — only if the project still signs HS256 | |
 | Backend public URL | | | | ✅ **VITE_API_BASE** = `https://<railway-domain>` |
 | Frontend public URL | | | ✅ **ALLOWED_ORIGINS** + **FRONTEND_BASE** = `https://<pages>.pages.dev` | |
 | `ANTHROPIC_API_KEY` | ✅ | ✅ | — (API doesn't call Claude) | |
@@ -240,7 +254,10 @@ Env-var name in **bold**. "Railway" = the API service's Variables tab.
 | `QBO_REDIRECT_URI` | ✅ | | ✅ = `https://<railway-domain>/auth/qbo/callback` | |
 | `QBO_ENVIRONMENT` | ✅ | ✅ | ✅ (`production`) | |
 
-Minimum to boot the API: **DATABASE_URL** + **SUPABASE_JWT_SECRET**. The frontend
-only ever holds public-safe values (Supabase URL + `anon` key + the API base);
-everything sensitive stays server-side. Full local template: `backend/.env.example`,
-`web/.env.example`.
+Minimum to boot the API: **DATABASE_URL** + a token-verification path — either
+**SUPABASE_URL** (asymmetric JWT signing keys, verified via JWKS; the current
+model) or **SUPABASE_JWT_SECRET** (legacy HS256). The frontend only ever holds
+public-safe values (Supabase URL + publishable/`anon` key + the API base);
+everything sensitive stays server-side. Legacy `anon` / `service_role` keys and
+the shared JWT secret remain valid until **end of 2026**. Full local template:
+`backend/.env.example`, `web/.env.example`.

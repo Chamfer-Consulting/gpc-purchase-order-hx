@@ -14,7 +14,10 @@ account owner / a browser · **(code)** = doable in the repo.
 - [ ] **(you)** Create the Supabase project (region nearest the team). — see SETUP §1
 - [ ] **(you)** Enable the `pg_cron` extension (Database → Extensions).
 - [ ] **(you)** Grab both connection strings: transaction pooler (`:6543`) and session (`:5432`).
-- [ ] **(you)** Grab the project URL, `anon` key, `service_role` key, and JWT secret.
+- [ ] **(you)** Grab the project URL, the **publishable** key (SPA) and **secret**
+      key (backend Storage); set `SUPABASE_URL` so the API verifies tokens via the
+      JWKS endpoint. Only copy the legacy JWT secret if the project still signs
+      HS256. (Legacy `anon`/`service_role`/JWT-secret work until end of 2026.)
 
 ### 0.2 Migrate the database
 - [ ] **(you)** `pg_dump` the Neon database (`--no-owner --no-privileges`). — see SETUP §2
@@ -199,7 +202,7 @@ account owner / a browser · **(code)** = doable in the repo.
 ## Cross-cutting checklist (revisit each phase)
 
 - [ ] Every new endpoint requires a valid Supabase JWT.
-- [ ] No secret in `web/` beyond the Supabase URL + `anon` key + API base.
+- [ ] No secret in `web/` beyond the Supabase URL + publishable/`anon` key + API base.
 - [ ] Pipeline scripts on the **session** connection; API on the **transaction pooler**.
 - [ ] Each merged phase leaves `po-dashboard-rebuild` in a deployable state.
 

@@ -39,6 +39,31 @@ def test_auth_required():
     assert client.get("/api/customers", headers={"Authorization": "Bearer nope"}).status_code == 401
 
 
+def test_hs256_token_accepted():
+    """The legacy HS256 shared-secret path still verifies a well-formed token
+    (the new asymmetric/JWKS path is selected only for ES256/RS256 headers)."""
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    from app.auth import current_user
+
+    user = current_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=_token()))
+    assert user.email == "test@example.com"
+
+
+def test_config_needs_a_verification_path(monkeypatch):
+    """Boot fails clearly if neither SUPABASE_URL (JWKS) nor SUPABASE_JWT_SECRET is set."""
+    import pydantic
+
+    from app.config import Settings
+
+    monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_JWKS_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://localhost/x")
+    with pytest.raises(pydantic.ValidationError):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+
 def test_filter_params_parsing():
     """FilterParams is the contract the SPA's useFilters mirrors."""
     from app.deps import filter_params
