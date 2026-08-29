@@ -1,16 +1,18 @@
 """GET /api/overview — PageResponse shape, same as the other analytics pages.
-KPIs + the "needs attention" digest are real (direct SQL + the reused matcher);
-charts land when home.py's series logic moves into services/overview.py."""
+Scoped KPIs + monthly and year-over-year charts come from services/overview.py;
+the "needs attention" digest is assembled here (it needs a live conn)."""
 
 import qbo_client  # dashboard/, via app.reuse
 import qbo_matcher  # dashboard/, via app.reuse
 from fastapi import APIRouter, Depends
 
 from ..auth import AuthedUser, current_user
+from ..cache import cached
 from ..deps import FilterParams, filter_params
 from ..reused_db import reused_conn
-from ..schemas import AttentionItem, Kpi, PageResponse, Scope
+from ..schemas import AttentionItem, PageResponse
 from ..services import review_queue
+from ..services.overview import overview_page
 
 router = APIRouter(prefix="/api", tags=["overview"])
 
@@ -82,35 +84,18 @@ def _attention(conn) -> list[AttentionItem]:
     return items
 
 
+@cached(lambda fp: fp.cache_key())
+def _cached_page(fp: FilterParams) -> PageResponse:
+    """The analytics half — pure fp → PageResponse, safe to memoise. The attention
+    digest is recomputed per request (live counts) and attached by the route."""
+    return overview_page(fp)
+
+
 @router.get("/overview", response_model=PageResponse)
 def overview(
     fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)
 ) -> PageResponse:
+    resp = _cached_page(fp).model_copy()
     with reused_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT count(*) FROM purchase_orders "
-                "WHERE status = 'active' AND (error IS NULL OR error = '')"
-            )
-            clean_pos = cur.fetchone()[0]
-            cur.execute("SELECT count(*) FROM qbo_invoices")
-            invoices = cur.fetchone()[0]
-            cur.execute(
-                "SELECT coalesce(sum(line_total), 0) FROM qbo_invoice_items WHERE category = 'product'"
-            )
-            revenue = float(cur.fetchone()[0] or 0)
-        attention = _attention(conn)
-
-    return PageResponse(
-        stub=True,
-        scope=Scope(
-            count=clean_pos, noun="POs", start=fp.start, end=fp.end,
-            note="Charts + date-scoped KPIs land with services/overview.py.",
-        ),
-        attention=attention,
-        kpis=[
-            Kpi(label="Product revenue (all time)", value=revenue, format="currency"),
-            Kpi(label="Clean POs", value=clean_pos, format="int"),
-            Kpi(label="Invoices synced", value=invoices, format="int"),
-        ],
-    )
+        resp.attention = _attention(conn)
+    return resp

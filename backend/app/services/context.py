@@ -29,19 +29,14 @@ class Context:
         return int(self.f_inv["id"].nunique()) if not self.f_inv.empty else 0
 
 
-def build_context(fp: FilterParams) -> Context:
+def prepared_frames(fp: FilterParams) -> tuple[pd.DataFrame, pd.DataFrame, set[str]]:
+    """Everything build_context does EXCEPT the date range: load, prepare, apply the
+    customer / product / size / sample / hidden filters. A caller that needs more
+    than one date window over the same base (Overview's prev-period deltas) slices
+    these once instead of re-querying per window."""
     inv_df, inv_items_df = _dash.load_invoice_data()
     inv, items = _dash.prepare_invoices(inv_df, inv_items_df)
     hidden = set(_dash.load_hidden_products()) | {"UNKNOWN"}
-
-    # date range on effective_date
-    if fp.start:
-        inv = inv[inv["effective_date"] >= pd.Timestamp(fp.start)]
-        items = items[items["effective_date"] >= pd.Timestamp(fp.start)]
-    if fp.end:
-        end = pd.Timestamp(fp.end) + pd.Timedelta(days=1)
-        inv = inv[inv["effective_date"] < end]
-        items = items[items["effective_date"] < end]
 
     # customer filter — fuzzy (PO short names vs invoice long names)
     if fp.customers:
@@ -65,6 +60,28 @@ def build_context(fp: FilterParams) -> Context:
     if fp.products or fp.sizes:
         inv = inv[inv["id"].isin(prod["invoice_id"])]
 
+    return inv, prod, hidden
+
+
+def slice_by_date(
+    inv: pd.DataFrame, prod: pd.DataFrame, start: str | pd.Timestamp | None, end: str | pd.Timestamp | None
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Restrict already-filtered frames to [start, end] on effective_date (end
+    inclusive). Either bound may be None."""
+    if start is not None:
+        s = pd.Timestamp(start)
+        inv = inv[inv["effective_date"] >= s]
+        prod = prod[prod["effective_date"] >= s]
+    if end is not None:
+        e = pd.Timestamp(end) + pd.Timedelta(days=1)
+        inv = inv[inv["effective_date"] < e]
+        prod = prod[prod["effective_date"] < e]
+    return inv, prod
+
+
+def build_context(fp: FilterParams) -> Context:
+    inv, prod, hidden = prepared_frames(fp)
+    inv, prod = slice_by_date(inv, prod, fp.start, fp.end)
     return Context(f_inv=inv, f_prod=prod, hidden=hidden, fp=fp)
 
 
