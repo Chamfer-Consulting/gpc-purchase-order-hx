@@ -27,7 +27,6 @@ import {
   useLinkInvoice,
   usePo,
   useRegroup,
-  useRestorePo,
   useSavePo,
   useSetStatus,
   useSoftDelete,
@@ -68,7 +67,6 @@ export function EditPoPage() {
   const save = useSavePo(poId);
   const setStatus = useSetStatus(poId);
   const softDelete = useSoftDelete(poId);
-  const restore = useRestorePo(poId);
   const voidLine = useVoidLine(poId);
 
   const [header, setHeader] = useState<Partial<PoHeader>>({});
@@ -80,6 +78,7 @@ export function EditPoPage() {
 
   const [statusDraft, setStatusDraft] = useState<PoStatus>("active");
   const [statusReason, setStatusReason] = useState("");
+  const [pendingReactivate, setPendingReactivate] = useState(false);
 
   useEffect(() => {
     if (data) {
@@ -96,6 +95,11 @@ export function EditPoPage() {
   if (!data) return null;
 
   const status = data.header.status ?? "active";
+  // Moving a non-active PO back to 'active' is the one status change gated by a
+  // warning block — it re-enters every report and revenue total.
+  const reactivating = status !== "active" && statusDraft === "active";
+  const applyStatus = () =>
+    setStatus.mutate({ status: statusDraft, reason: statusReason || null });
   const set = (k: keyof PoHeader, v: unknown) => setHeader((h) => ({ ...h, [k]: v }));
   const setItem = (i: number, k: keyof PoLineItem, v: unknown) =>
     setItems((rows) => rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
@@ -268,30 +272,82 @@ export function EditPoPage() {
             variant="light"
             loading={setStatus.isPending}
             disabled={statusDraft === status && statusReason === (data.header.status_reason ?? "")}
-            onClick={() => setStatus.mutate({ status: statusDraft, reason: statusReason || null })}
+            onClick={() => (reactivating ? setPendingReactivate(true) : applyStatus())}
           >
             Apply
           </Button>
         </Group>
+
         <Group mt="sm">
-          {status === "deleted" ? (
-            <Button color="teal" variant="light" loading={restore.isPending} onClick={() => restore.mutate()}>
-              Restore
-            </Button>
-          ) : (
+          {status === "active" ? (
             <Button
               color="red"
               variant="light"
               loading={softDelete.isPending}
               onClick={() => {
-                if (window.confirm("Soft-delete this PO? It stays in the database but is hidden everywhere and can be restored."))
+                if (
+                  window.confirm(
+                    "Soft-delete this PO? It stays in the database but is hidden everywhere and can be restored.",
+                  )
+                )
                   softDelete.mutate({ reason: window.prompt("Delete reason (optional)") ?? null });
               }}
             >
               Delete PO
             </Button>
+          ) : (
+            <Button
+              color="orange"
+              variant="light"
+              onClick={() => {
+                setStatusDraft("active");
+                setPendingReactivate(true);
+              }}
+            >
+              Reactivate order…
+            </Button>
           )}
         </Group>
+
+        {pendingReactivate && (
+          <Alert
+            mt="md"
+            color="orange"
+            variant="light"
+            title={`Reactivate PO ${data.header.po_number ?? poId}?`}
+          >
+            <Text size="sm">
+              This order is currently <b>{status}</b>. Bringing it back to <b>active</b> will:
+            </Text>
+            <ul style={{ margin: "6px 0 6px 18px", padding: 0 }}>
+              <li>return it to every report, chart and analytics total — its revenue counts again</li>
+              <li>put it back in the extraction review queue if it still has unresolved issues</li>
+              <li>make it visible to invoice matching again</li>
+            </ul>
+            <Text size="sm">
+              It stays marked <b>edited</b>, so the extraction pipeline still won&apos;t overwrite it.
+              The change is recorded on the audit trail
+              {statusReason ? <> with the reason “{statusReason}”</> : " (add a reason above if you want one)"}.
+            </Text>
+            <Group mt="sm">
+              <Button
+                color="orange"
+                loading={setStatus.isPending}
+                onClick={() =>
+                  setStatus.mutate(
+                    { status: "active", reason: statusReason || null },
+                    { onSuccess: () => setPendingReactivate(false) },
+                  )
+                }
+              >
+                Reactivate order
+              </Button>
+              <Button variant="subtle" onClick={() => setPendingReactivate(false)}>
+                Keep it {status}
+              </Button>
+            </Group>
+          </Alert>
+        )}
       </Paper>
 
       <RevisionsPanel poId={poId} revisions={data.revisions ?? []} />
