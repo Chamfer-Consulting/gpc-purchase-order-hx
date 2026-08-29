@@ -1,5 +1,5 @@
 # PO Dashboard API. Build context is the REPO ROOT (not backend/) so the reused
-# repo modules (qbo_matcher, product_catalog, dashboard/*, ...) are available.
+# repo modules (qbo_matcher, product_catalog, shared/*, ...) are available.
 #   docker build -f backend/Dockerfile -t po-dashboard-api .
 FROM python:3.12-slim
 
@@ -10,9 +10,9 @@ WORKDIR /app
 COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install -r backend/requirements.txt
 
-# Reused Python from the repo root + the (transitional) dashboard service layer.
+# Reused Python: the repo-root modules + the three shared data modules in shared/.
 COPY *.py ./
-COPY dashboard/ ./dashboard/
+COPY shared/ ./shared/
 COPY schema.sql ./schema.sql
 COPY backend/ ./backend/
 

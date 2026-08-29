@@ -64,8 +64,7 @@ export function PageRenderer({ data }: { data: PageResponse }) {
 
       {data.stub && (
         <Alert color="yellow" variant="light" title="Preview">
-          Some numbers on this page come from a service that isn't wired yet — the ones marked
-          below. Use the Streamlit dashboard for those until this phase lands.
+          Some numbers on this page come from a service that isn't fully wired yet.
         </Alert>
       )}
 

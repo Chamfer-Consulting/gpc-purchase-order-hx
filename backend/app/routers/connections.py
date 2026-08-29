@@ -3,7 +3,7 @@
 carry no bearer token; everything here requires one."""
 
 import gmail_client  # repo root, via app.reuse
-import qbo_client  # dashboard/, via app.reuse
+import qbo_client  # shared/, via app.reuse
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import oauth_state

@@ -7,8 +7,8 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-import data as _dash  # dashboard/data.py, via app.reuse
-from qbo_matcher import customers_match  # dashboard/, via app.reuse
+import data as _dash  # shared/data.py, via app.reuse
+from qbo_matcher import customers_match  # shared/, via app.reuse
 
 from ..deps import FilterParams
 

@@ -1,14 +1,11 @@
 """
-Shared palette, chart/format helpers, and Postgres data access for the dashboard.
+Palette, chart/format helpers, and Postgres data access shared by the FastAPI
+backend (`backend/`) and the scheduled pipeline scripts. Formerly
+`dashboard/data.py` under the retired Streamlit app; imports cleanly without
+Streamlit (see the `try: import streamlit` shim below). See `shared/README.md`.
 
-Extracted from the former monolithic app.py so both app.py (the composition root)
-and every dashboard/views/*.py page can import the same helpers and cached loaders
-without duplicating them.
-
-Redesign (Phases A–F) additions live further down: load_saved_views / save_view /
-delete_view, _lifecycle_rows / customer_order_lifecycle / order_lifecycle,
-typical_sizes, and the AppContext fields fs / f_inv_lines / selected_sizes /
-compare_mode / prev_start / prev_end / line_types.
+Some plotly-figure helpers (`style`, `yoy_annual_chart`, `color_map_for`) are
+kept for reference / possible reuse; the live charts are built in the React app.
 """
 
 import json

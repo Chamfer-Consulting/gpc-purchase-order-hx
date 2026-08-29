@@ -1,8 +1,7 @@
 /**
- * The house palette, ported verbatim from dashboard/data.py (LIGHT / DARK) — a
+ * The house palette, ported verbatim from `shared/data.py` (LIGHT / DARK) — a
  * validated colour-blind-safe set. Same categorical order in both themes; only the
- * neutrals and grid swap. Keep these in sync if the Streamlit palette ever changes
- * before Phase 4.
+ * neutrals and grid swap. Keep in sync if `shared/data.py`'s palette ever changes.
  */
 export interface Palette {
   categorical: string[];

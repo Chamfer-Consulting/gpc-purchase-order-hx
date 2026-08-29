@@ -4,8 +4,8 @@ built on dashboard/data.py's prepare / order_lifecycle / load_matched_line_items
 
 import pandas as pd
 
-import data as _dash  # dashboard/data.py, via app.reuse
-from qbo_matcher import customers_match  # dashboard/, via app.reuse
+import data as _dash  # shared/data.py, via app.reuse
+from qbo_matcher import customers_match  # shared/, via app.reuse
 
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope, Table, TableColumn

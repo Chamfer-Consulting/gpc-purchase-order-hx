@@ -13,10 +13,9 @@ extraction pipeline itself are separate work.
 - Decide whether your Gmail account is a **Google Workspace** account (business
   domain, e.g. `you@yourcompany.com` managed by an admin) or a **personal**
   `@gmail.com` account — it changes one choice in step 2 below.
-- Have your dashboard's URL(s) handy — the same one(s) already set as
-  `qbo_redirect_uri` in `.streamlit/secrets.toml` (typically
-  `http://localhost:8501/` for local dev, plus your `*.streamlit.app` URL once
-  deployed).
+- Have the backend's OAuth callback URL(s) handy — `http://localhost:8000/auth/gmail/callback`
+  for local dev, plus `https://<railway-domain>/auth/gmail/callback` once deployed
+  (the `GMAIL_REDIRECT_URI` value; see `docs/REBUILD-SETUP.md` §4).
 
 ## 1. Enable the Gmail API
 
@@ -64,36 +63,34 @@ Left menu → **APIs & Services** → **Credentials** → **Create Credentials**
 
 - **Application type**: **Web application**.
 - **Name**: anything, e.g. "GPC PO Dashboard — Gmail".
-- **Authorized redirect URIs**: add the *exact* same URL(s) you're already using
-  for `qbo_redirect_uri` — e.g. `http://localhost:8501/` for local dev, and your
-  production Streamlit Cloud URL (e.g. `https://your-app.streamlit.app/`). Google
-  matches this exactly (trailing slash and all), so copy it rather than retyping.
+- **Authorized redirect URIs**: add the backend's Gmail callback URL exactly —
+  `http://localhost:8000/auth/gmail/callback` for local dev, and
+  `https://<railway-domain>/auth/gmail/callback` once deployed. Google matches this
+  exactly, so copy it rather than retyping.
 - **Create**. Google shows a **Client ID** and **Client secret** — copy both now;
   the secret isn't shown again (you can always generate a new one from this same
   Credentials page if you lose it).
 
 ## 4. Save the credentials
 
-Add to `.streamlit/secrets.toml` (and the same keys in Streamlit Community Cloud's
-App Settings → Secrets, once deployed):
+The backend reads these from its environment (`backend/.env` locally, Railway
+Variables in prod — see `backend/.env.example`):
 
-```toml
-gmail_client_id = "...apps.googleusercontent.com"
-gmail_client_secret = "..."
-gmail_redirect_uri = "http://localhost:8501/"  # same value as qbo_redirect_uri
+```bash
+GMAIL_CLIENT_ID=...apps.googleusercontent.com
+GMAIL_CLIENT_SECRET=...
+GMAIL_REDIRECT_URI=http://localhost:8000/auth/gmail/callback
 ```
 
-(`.streamlit/secrets.toml` is gitignored — never commit real values. These three
-keys will also need to go into GitHub Actions repo secrets later, alongside
-`ANTHROPIC_API_KEY` and `DATABASE_URL`, for the scheduled/manual extraction job —
-that wiring comes in a later step, not part of this guide.)
+Never commit real values (`.env` files are gitignored). `GMAIL_CLIENT_ID` /
+`GMAIL_CLIENT_SECRET` also go into GitHub Actions repo secrets for the scheduled
+extraction job (§6).
 
 ## 5. Configured labels (GMAIL_LABELS)
 
-Pulled directly via the Gmail API (through the dashboard's ✉️ Email Ingestion page,
-after connecting) rather than hand-typed, so nested names with apostrophes/parens
-are byte-exact. This is the current `GMAIL_LABELS` value — a comma-separated list
-of exact label names, one per customer:
+Pulled directly via the Gmail API rather than hand-typed, so nested names with
+apostrophes/parens are byte-exact. This is the current `GMAIL_LABELS` value — a
+comma-separated list of exact label names, one per customer:
 
 ```
 1. Customers/Anthony Marano's (AMC),1. Customers/Get Fresh Produce,1. Customers/Hillside Food Pantry,1. Customers/Inspiration Corporation,1. Customers/Local Foods,1. Customers/Marillac House (Tramaine & Holly),1. Customers/Midwest Foods,1. Customers/Post Marketplace,1. Customers/Restaurants,1. Customers/Skoufis Foodservice,1. Customers/Testa Produce,1. Customers/The Original Pancake House,1. Customers/The Urban Canopy,1. Customers/UChicago,1. Customers/Village Farm Stand,1. Customers/West Suburban Community Pantry
@@ -118,16 +115,15 @@ The extraction script itself (`run_cloud_extraction.py`) runs via
 to change cadence) plus a manual `workflow_dispatch` trigger (repo's **Actions**
 tab → the workflow → **Run workflow**, with a **Full backlog scan** checkbox; or
 `gh workflow run extract_pos.yml -f full_backlog=true` from a terminal). It reads
-plain environment variables, not Streamlit secrets, so these need to be added as
-**repo secrets** (Settings → Secrets and variables → Actions → New repository
-secret) separately from everything in `.streamlit/secrets.toml`:
+plain environment variables, so these need to be added as **repo secrets**
+(Settings → Secrets and variables → Actions → New repository secret):
 
 | Secret name | Value |
 |---|---|
-| `ANTHROPIC_API_KEY` | Your Anthropic API key — **only** needed here, the dashboard never calls Claude |
-| `DATABASE_URL` | Same Neon connection string as the `database_url` Streamlit secret |
-| `GMAIL_CLIENT_ID` | Same value as the `gmail_client_id` Streamlit secret |
-| `GMAIL_CLIENT_SECRET` | Same value as the `gmail_client_secret` Streamlit secret |
+| `ANTHROPIC_API_KEY` | Your Anthropic API key — **only** needed here; the API never calls Claude |
+| `DATABASE_URL` | The Supabase **session** connection string (`:5432`) |
+| `GMAIL_CLIENT_ID` | From the Google Cloud OAuth client (§3) |
+| `GMAIL_CLIENT_SECRET` | From the Google Cloud OAuth client (§3) |
 | `GMAIL_LABELS` | The comma-separated value from step 5 above |
 
 Note there's no `GMAIL_REDIRECT_URI` here — the Action only refreshes an

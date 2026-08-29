@@ -2,8 +2,8 @@
 Scoped KPIs + monthly and year-over-year charts come from services/overview.py;
 the "needs attention" digest is assembled here (it needs a live conn)."""
 
-import qbo_client  # dashboard/, via app.reuse
-import qbo_matcher  # dashboard/, via app.reuse
+import qbo_client  # shared/, via app.reuse
+import qbo_matcher  # shared/, via app.reuse
 from fastapi import APIRouter, Depends
 
 from ..auth import AuthedUser, current_user

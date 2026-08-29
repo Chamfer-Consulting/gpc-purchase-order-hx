@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 import psycopg2
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "shared"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import qbo_client  # noqa: E402

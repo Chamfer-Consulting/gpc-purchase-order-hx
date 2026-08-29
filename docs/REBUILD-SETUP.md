@@ -3,7 +3,9 @@
 Everything the account owner needs to provision. Work top to bottom; the Todo Plan
 (`docs/REBUILD-TODO.md`) references these section numbers.
 
-Nothing here changes the running Streamlit app or the scheduled jobs until §3.
+Nothing here changes the live scheduled jobs until §3. (There is no Streamlit app
+in this build — it was removed; the pipeline scripts and the FastAPI backend are
+all that read the database.)
 
 ---
 
@@ -59,8 +61,9 @@ Cloudflare Pages needs no CLI — it builds from the GitHub repo.
 
 ## 2. Migrate the database (Neon → Supabase)
 
-Run locally. `NEON_URL` = the current `database_url` from `.streamlit/secrets.toml`;
-`SUPABASE_SESSION_URL` = the §1.3 session string.
+Run locally. `NEON_URL` = the current Neon connection string (the `DATABASE_URL`
+GitHub Actions secret / your local `backend/.env`); `SUPABASE_SESSION_URL` = the
+§1.3 session string.
 
 ```bash
 # 1. dump (schema + data, no ownership/ACL noise)
@@ -107,11 +110,14 @@ the change is explicit.)
 
 Do this once §2 verifies clean. **This is the switch** — after it, Neon is idle.
 
-1. `.streamlit/secrets.toml` → set `database_url` to the Supabase **transaction
-   pooler** string. Restart the Streamlit app. Click through every page — numbers
-   must be identical to before.
-2. GitHub → repo **Settings → Secrets and variables → Actions** → edit
-   `DATABASE_URL` to the Supabase **session** string.
+1. GitHub → repo **Settings → Secrets and variables → Actions** → edit
+   `DATABASE_URL` to the Supabase **session** string (`:5432`). This is what the
+   scheduled jobs use. (The API uses the transaction pooler `:6543` — set that as
+   its `DATABASE_URL` in §4 / your local `backend/.env`.)
+2. Sanity-check against Supabase before relying on it: run
+   `python scripts/verify_migration.py` (row-count diff) and, with the pooler URL
+   in `backend/.env`, `uvicorn app.main:app` from `backend/` then
+   `curl localhost:8000/api/overview` with a valid token — numbers should match §2.
 3. Manually trigger each workflow once and confirm green:
    - `extract_pos.yml` (with `limit = 5`)
    - `qbo_sync.yml`
@@ -152,9 +158,9 @@ proxied by the API. Existing inline rows stay inline until re-captured.
    | `SUPABASE_JWT_SECRET` | Supabase → API Keys → JWT Keys → Legacy JWT Secret | only if the project still signs HS256 (§1.6) |
    | `ALLOWED_ORIGINS` | `https://<pages-project>.pages.dev` | required in prod |
    | `FRONTEND_BASE` | `https://<pages-project>.pages.dev` | required in prod |
-   | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | from `.streamlit/secrets.toml` | Gmail connect |
+   | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | from the GitHub Actions secrets (same values the pipeline uses) | Gmail connect |
    | `GMAIL_REDIRECT_URI` | `https://<railway-domain>/auth/gmail/callback` | Gmail connect |
-   | `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | from `.streamlit/secrets.toml` | QBO connect |
+   | `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | from the GitHub Actions secrets | QBO connect |
    | `QBO_REDIRECT_URI` | `https://<railway-domain>/auth/qbo/callback` | QBO connect |
    | `QBO_ENVIRONMENT` | `production` | QBO connect |
    | `SUPABASE_SECRET_KEY` (or legacy `SUPABASE_SERVICE_KEY`) | from §1.5 | optional — only for Storage-backed document capture (§3.1) |
@@ -212,8 +218,9 @@ Cost: free.
 
 ## 7. OAuth redirect URIs (Phase 1.5)
 
-Add the new callback URLs **alongside** the existing Streamlit ones — don't remove
-the old ones until Phase 4.
+Add the new callback URLs **alongside** any redirect URIs already registered (e.g.
+from an earlier deployment) — you can prune stale ones once the Railway backend is
+verified.
 
 - **Google Cloud Console → APIs & Services → Credentials → the OAuth client**:
   add `https://<railway-domain>/auth/gmail/callback` to *Authorized redirect URIs*.
@@ -237,22 +244,22 @@ the old ones until Phase 4.
 
 Env-var name in **bold**. "Railway" = the API service's Variables tab.
 
-| Value | `.streamlit/secrets.toml` (Streamlit, until Phase 4) | GitHub Actions | Railway (API) | Cloudflare Pages (SPA) |
-|---|:---:|:---:|:---:|:---:|
-| Supabase **transaction pooler** URL (`:6543`) | ✅ `database_url` | | ✅ **DATABASE_URL** | |
-| Supabase **session** URL (`:5432`) | | ✅ **DATABASE_URL** | | |
-| Supabase project URL | | ✅ (doc_capture) | ✅ **SUPABASE_URL** *(token verification + Storage)* | ✅ **VITE_SUPABASE_URL** |
-| Supabase publishable / `anon` key | | | | ✅ **VITE_SUPABASE_PUBLISHABLE_KEY** (or **_ANON_KEY**) |
-| Supabase secret / `service_role` key | | ✅ (doc_capture) | ✅ **SUPABASE_SECRET_KEY** (or **_SERVICE_KEY**) — optional, Storage only | |
-| Supabase legacy JWT secret | | | ✅ **SUPABASE_JWT_SECRET** — only if the project still signs HS256 | |
-| Backend public URL | | | | ✅ **VITE_API_BASE** = `https://<railway-domain>` |
-| Frontend public URL | | | ✅ **ALLOWED_ORIGINS** + **FRONTEND_BASE** = `https://<pages>.pages.dev` | |
-| `ANTHROPIC_API_KEY` | ✅ | ✅ | — (API doesn't call Claude) | |
-| `GMAIL_CLIENT_ID` / `_SECRET` | ✅ | ✅ | ✅ (connect flow) | |
-| `GMAIL_REDIRECT_URI` | ✅ | | ✅ = `https://<railway-domain>/auth/gmail/callback` | |
-| `QBO_CLIENT_ID` / `_SECRET` | ✅ | ✅ | ✅ (connect flow) | |
-| `QBO_REDIRECT_URI` | ✅ | | ✅ = `https://<railway-domain>/auth/qbo/callback` | |
-| `QBO_ENVIRONMENT` | ✅ | ✅ | ✅ (`production`) | |
+| Value | GitHub Actions (pipeline) | Railway (API) | Cloudflare Pages (SPA) |
+|---|:---:|:---:|:---:|
+| Supabase **session** URL (`:5432`) | ✅ **DATABASE_URL** | | |
+| Supabase **transaction pooler** URL (`:6543`) | | ✅ **DATABASE_URL** | |
+| Supabase project URL | ✅ (doc_capture) | ✅ **SUPABASE_URL** *(token verification + Storage)* | ✅ **VITE_SUPABASE_URL** |
+| Supabase publishable / `anon` key | | | ✅ **VITE_SUPABASE_PUBLISHABLE_KEY** (or **_ANON_KEY**) |
+| Supabase secret / `service_role` key | ✅ (doc_capture) | ✅ **SUPABASE_SECRET_KEY** (or **_SERVICE_KEY**) — optional, Storage only | |
+| Supabase legacy JWT secret | | ✅ **SUPABASE_JWT_SECRET** — only if the project still signs HS256 | |
+| Backend public URL | | | ✅ **VITE_API_BASE** = `https://<railway-domain>` |
+| Frontend public URL | | ✅ **ALLOWED_ORIGINS** + **FRONTEND_BASE** = `https://<pages>.pages.dev` | |
+| `ANTHROPIC_API_KEY` | ✅ | — (API doesn't call Claude) | |
+| `GMAIL_CLIENT_ID` / `_SECRET` | ✅ | ✅ (connect flow) | |
+| `GMAIL_REDIRECT_URI` | | ✅ = `https://<railway-domain>/auth/gmail/callback` | |
+| `QBO_CLIENT_ID` / `_SECRET` | ✅ | ✅ (connect flow) | |
+| `QBO_REDIRECT_URI` | | ✅ = `https://<railway-domain>/auth/qbo/callback` | |
+| `QBO_ENVIRONMENT` | ✅ | ✅ (`production`) | |
 
 Minimum to boot the API: **DATABASE_URL** + a token-verification path — either
 **SUPABASE_URL** (asymmetric JWT signing keys, verified via JWKS; the current

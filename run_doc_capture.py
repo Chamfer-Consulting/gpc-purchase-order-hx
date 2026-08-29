@@ -13,12 +13,12 @@ within the day. Also runnable by hand. Idempotent — every document is
 sha256-deduped, so re-running only fills gaps.
 
 Bytes land inline in po_documents.content, or in Supabase Storage when
-SUPABASE_URL + SUPABASE_SERVICE_KEY are set.
+SUPABASE_URL + a Supabase key are set.
 
 Environment: DATABASE_URL (required); GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET (for
 --sources gmail); QBO_CLIENT_ID / QBO_CLIENT_SECRET / QBO_REDIRECT_URI /
-QBO_ENVIRONMENT (for --sources qbo); SUPABASE_URL / SUPABASE_SERVICE_KEY
-(optional).
+QBO_ENVIRONMENT (for --sources qbo); SUPABASE_URL + SUPABASE_SECRET_KEY (or the
+legacy SUPABASE_SERVICE_KEY) for Storage (optional).
 """
 
 import argparse
@@ -28,7 +28,7 @@ import sys
 
 import psycopg2
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "shared"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import doc_storage  # noqa: E402

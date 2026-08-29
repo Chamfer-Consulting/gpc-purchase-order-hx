@@ -26,12 +26,12 @@ account owner / a browser · **(code)** = doable in the repo.
 - [ ] Sign-off: row counts match on every table.
 
 ### 0.3 Repoint connection strings
-- [ ] **(you)** `.streamlit/secrets.toml` → `database_url` = Supabase **transaction pooler**.
-- [ ] **(you)** GitHub Actions secret `DATABASE_URL` → Supabase **session** string (used by `extract_pos.yml`, `qbo_sync.yml`, `eval_extraction.yml`).
-- [ ] Run the Streamlit dashboard against Supabase — every page loads, numbers unchanged.
+- [ ] **(you)** GitHub Actions secret `DATABASE_URL` → Supabase **session** string (used by `extract_pos.yml`, `qbo_sync.yml`, `eval_extraction.yml`, `doc_capture.yml`).
+- [ ] **(you)** Railway / local `backend/.env` `DATABASE_URL` → Supabase **transaction pooler** string.
+- [ ] Run `scripts/verify_migration.py` + a local `uvicorn app.main:app` smoke check against Supabase — analytics numbers unchanged.
 - [ ] Manually run `run_cloud_extraction.py --limit 5` against Supabase — succeeds.
 - [ ] Manually run `run_qbo_sync.py` against Supabase — succeeds.
-- [ ] Trigger each of the 3 GitHub Actions once — all green.
+- [ ] Trigger each GitHub Action once — all green.
 
 ### 0.4 Service layer  *(done — approach changed: `data.py` stays the source of truth)*
 - [x] `backend/` scaffold.
@@ -99,7 +99,7 @@ account owner / a browser · **(code)** = doable in the repo.
 ### 1.5 OAuth callbacks + connections
 - [x] `backend/app/routers/oauth.py` — `GET /auth/gmail/callback` + `GET /auth/qbo/callback`: verify the signed state, exchange the code (reused `gmail_client` / `qbo_client`), 302 back to `/settings?connect=...`.
 - [x] `backend/app/routers/connections.py` — `GET /api/connections` (status), `/{provider}/authorize`, `/{provider}/disconnect`, `/qbo/sync`.
-- [ ] **(you)** Add the new redirect URIs in Google Cloud Console + the Intuit app (keep the Streamlit ones during overlap). — SETUP §7
+- [ ] **(you)** Add the Railway redirect URIs in Google Cloud Console + the Intuit app (leave any older ones in place until the backend is verified, then prune). — SETUP §7
 
 **Exit:** a teammate logs in at the production URL, sees the live Overview page, < 1s warm.
 
@@ -176,10 +176,20 @@ account owner / a browser · **(code)** = doable in the repo.
 
 ## Phase 4 — Cut over & retire Streamlit  ·  ~2–3 days
 
-- [ ] Parallel run 1–2 weeks; Streamlit stays reachable.
-- [ ] **(you)** Remove the Streamlit OAuth redirect URIs from Google + Intuit.
-- [ ] **(you)** Turn off the Streamlit deployment.
-- [ ] `git rm -r dashboard/` (history keeps it); update `AGENTS.md`, `README.md`, `GMAIL_SETUP.md` references.
+- [x] Streamlit removed from the branch — `dashboard/app.py`, `dashboard/views/`,
+      `ui_kit`/`theme`/`filters`/`labels`/`attention`, `dashboard/requirements.txt`,
+      `.streamlit/secrets.toml.example` deleted; `streamlit` dep gone. The three
+      shared data modules moved to **`shared/`** (`data.py`, `qbo_client.py`,
+      `qbo_matcher.py`) — imported by the API (`backend/app/reuse.py`) and the
+      runner scripts (`run_qbo_sync.py`, `run_doc_capture.py`); `backend/Dockerfile`
+      copies `shared/`. They still carry a no-Streamlit import shim.
+- [ ] **(you)** Turn off the Streamlit Community Cloud deployment (it runs off
+      `main`; unaffected until this branch merges).
+- [ ] **(you)** Remove stale Streamlit OAuth redirect URIs from Google + Intuit
+      once the Railway backend's URIs are verified.
+- [ ] Rewrite the legacy setup guides for the new stack — `SETUP.md` /
+      `GMAIL_SETUP.md` still describe the Streamlit deployment; `docs/REBUILD-SETUP.md`
+      is the current runbook. (No `AGENTS.md` / `README.md` at the repo root.)
 - [ ] Merge `po-dashboard-rebuild` → `main`.
 
 **Exit:** Streamlit is off and nobody has asked for it back.

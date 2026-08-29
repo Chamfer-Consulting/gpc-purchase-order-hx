@@ -1,15 +1,17 @@
-"""During the strangler-fig migration the backend reuses the repo's existing Python
-directly — the extraction/matching/catalog logic and, transitionally, the dashboard
-service functions. Importing this module puts the repo root and dashboard/ on
+"""The backend reuses the repo's existing Python directly — the extraction /
+matching / catalog logic at the repo root, plus the three shared data modules in
+`shared/` (`data.py`, `qbo_client.py`, `qbo_matcher.py`, formerly under
+`dashboard/`). Importing this module puts the repo root and `shared/` on
 sys.path so `import qbo_matcher`, `import product_catalog`, `from data import ...`
-resolve. Delete this once every service function has moved into app/services/."""
+resolve. These modules import cleanly without Streamlit.
+"""
 
 import os
 import sys
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_DASHBOARD = os.path.join(_REPO_ROOT, "dashboard")
+_SHARED = os.path.join(_REPO_ROOT, "shared")
 
-for p in (_DASHBOARD, _REPO_ROOT):
+for p in (_SHARED, _REPO_ROOT):
     if p not in sys.path:
         sys.path.insert(0, p)

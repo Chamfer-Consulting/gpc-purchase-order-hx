@@ -3,7 +3,7 @@ these carry NO bearer token. Each verifies the signed `state`, exchanges the
 code, stores the tokens, then 302s the browser back to the SPA's Settings page."""
 
 import gmail_client  # repo root, via app.reuse
-import qbo_client  # dashboard/, via app.reuse
+import qbo_client  # shared/, via app.reuse
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 

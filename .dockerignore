@@ -1,8 +1,7 @@
 .git
 .github
 .venv
-.venv312
-.venv_dashboard
+.venv*
 bin
 lib
 lib64

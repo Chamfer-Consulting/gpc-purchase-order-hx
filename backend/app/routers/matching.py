@@ -1,7 +1,7 @@
 """PO <-> invoice matching. Thin wrappers over dashboard/qbo_matcher.py (reused
 verbatim), on psycopg2 connections."""
 
-import qbo_matcher  # dashboard/, via app.reuse
+import qbo_matcher  # shared/, via app.reuse
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 

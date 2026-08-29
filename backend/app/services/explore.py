@@ -7,7 +7,7 @@ import pandas as pd
 
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope, Table, TableColumn
-import data as _dash  # dashboard/data.py, via app.reuse
+import data as _dash  # shared/data.py, via app.reuse
 from .context import build_context, monthly_revenue, prepared_frames, slice_by_date
 from ._util import records
 

@@ -13,8 +13,8 @@ import uuid
 import psycopg2.extras
 
 import extraction_reviews  # repo root, via app.reuse
-import qbo_client  # dashboard/, via app.reuse
-import qbo_matcher  # dashboard/, via app.reuse
+import qbo_client  # shared/, via app.reuse
+import qbo_matcher  # shared/, via app.reuse
 from math_check import validate_math  # repo root, via app.reuse
 
 from . import audit
