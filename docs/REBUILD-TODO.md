@@ -196,8 +196,10 @@ Model: **soft delete** (a `status` enum, rows preserved) + an **audit_log**.
 - [x] Archive page (`/archive`, in the nav) — `GET /api/archive`; tabs per status bucket (All / Cancelled / Withdrawn / Voided / Deleted / Draft) with counts, each row tagged with its status badge and linking to the PO. This is how non-active POs are found.
 - [x] Document capture — `po_documents` table (bytes inline). `services/po_docs.py` + `routers/po_docs.py`: `GET /api/po/{id}/documents`, `GET .../documents/{doc_id}` (streams the PDF), `POST .../documents/capture` `{sources:["gmail","qbo"]}`, `POST .../documents/upload` (base64), `DELETE .../documents/{doc_id}`. Gmail = the thread's PDF attachments (`gmail_client`); QBO = `qbo_client.fetch_invoice_pdf` (new — the Print/Save-as-PDF endpoint) for each confirmed linked invoice. `GET /api/po/{id}` now also returns `sources` (Drive PDF + email-thread deep links) and `links[].qbo_url`. Frontend: a Documents panel in `EditPoPage` (capture buttons, upload, view/delete, deep links).
 - [x] Tests — auth guards for every new route + mutation (`backend/tests/test_health.py`).
-- [ ] **(you)** Run the migrations in `supabase/migrations/` against Supabase (or `supabase db push`) — see SETUP §2.1.
-- [ ] Follow-up: auto-capture PDFs at ingestion (a pipeline step) + a bulk backfill endpoint like `gdrive_client.sync_drive_links`; optional move of `po_documents.content` bytes to Supabase Storage.
+- [x] Backfill + scheduled capture — `po_doc_capture.py` (repo-root core, no FastAPI), `run_doc_capture.py` + `.github/workflows/doc_capture.yml` (nightly sweep after extract + qbo_sync), `POST /api/po/documents/backfill` (on-demand, capped at 1000/source), a "Backfill missing PDFs" card on Settings.
+- [x] Supabase Storage offload — `doc_storage.py` (REST, no SDK); `store_document` uploads there + leaves `content` NULL when `SUPABASE_URL`+`SUPABASE_SERVICE_KEY` are set (bucket `po-documents`), reads proxy through the API. Inert/inline when unset. SETUP §3.1.
+- [ ] **(you)** Run the migrations in `supabase/migrations/` against Supabase (or `supabase db push`) — see SETUP §2.1. Add `doc_capture.yml`'s secrets in GitHub Actions; optionally create the `po-documents` Storage bucket (§3.1).
+- [ ] Optional: capture *inside* the extraction pipeline too (so a brand-new PO has its PDF before the nightly sweep) — currently the sweep covers it within a day.
 - [ ] Follow-up: `status` as a column/filter on the analytics tables too; a bulk "cancel these" action from the review queue.
 
 ---

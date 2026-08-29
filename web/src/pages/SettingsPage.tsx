@@ -18,6 +18,7 @@ import {
   useQboSyncNow,
   type ConnectionsStatus,
 } from "@/api/connections";
+import { useBackfillDocs } from "@/api/poDocs";
 
 const CALLBACK_MESSAGES: Record<string, { color: string; text: string }> = {
   qbo_ok: { color: "green", text: "QuickBooks connected." },
@@ -74,7 +75,68 @@ export function SettingsPage() {
           <GmailCard gmail={data.gmail} />
         </>
       )}
+
+      <DocumentsCard />
     </Stack>
+  );
+}
+
+function DocumentsCard() {
+  const backfill = useBackfillDocs();
+  const r = backfill.data;
+
+  return (
+    <Card withBorder radius="md" p="lg">
+      <Title order={4} mb="xs">
+        Document capture
+      </Title>
+      <Text size="sm" c="dimmed" mb="xs">
+        Pulls the emailed PO PDF (Gmail) and the invoice PDF (QuickBooks) onto each PO.
+        Runs nightly; use this to fill gaps now. Idempotent.
+      </Text>
+      <Group>
+        <Button
+          size="xs"
+          onClick={() => backfill.mutate({ sources: ["gmail", "qbo"] })}
+          loading={backfill.isPending}
+        >
+          Backfill missing PDFs
+        </Button>
+        <Button
+          size="xs"
+          variant="default"
+          onClick={() => backfill.mutate({ sources: ["gmail"] })}
+          loading={backfill.isPending}
+        >
+          Gmail only
+        </Button>
+        <Button
+          size="xs"
+          variant="default"
+          onClick={() => backfill.mutate({ sources: ["qbo"] })}
+          loading={backfill.isPending}
+        >
+          QuickBooks only
+        </Button>
+      </Group>
+      {r && (
+        <Stack gap={2} mt="xs">
+          {(["gmail", "qbo"] as const).map((k) =>
+            r[k] ? (
+              <Text key={k} size="xs" c="dimmed">
+                {k}: {r[k]!.captured} captured across {r[k]!.scanned} PO(s),{" "}
+                {r[k]!.failed} failed, {r[k]!.remaining} still to do.
+              </Text>
+            ) : null,
+          )}
+        </Stack>
+      )}
+      {backfill.error && (
+        <Text size="xs" c="red" mt="xs">
+          {(backfill.error as Error).message}
+        </Text>
+      )}
+    </Card>
   );
 }
 

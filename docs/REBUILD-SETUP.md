@@ -105,7 +105,22 @@ Do this once §2 verifies clean. **This is the switch** — after it, Neon is id
    - `extract_pos.yml` (with `limit = 5`)
    - `qbo_sync.yml`
    - `eval_extraction.yml`
+   - `doc_capture.yml` — captures the emailed PO PDF + the QuickBooks invoice PDF
+     onto each PO. Reuses `DATABASE_URL`, `GMAIL_CLIENT_*`, `QBO_*`; optionally
+     `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` (see §3.1).
 4. Leave Neon running (read-only fallback) until Phase 4, then delete it.
+
+### 3.1 Document storage (optional)
+
+`po_documents` stores captured PDF bytes **inline in Postgres** by default — no
+setup needed, it just works. To offload them to Supabase Storage instead:
+
+1. Supabase → **Storage** → create a **private** bucket named `po-documents`.
+2. Set `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` on Railway **and** as GitHub
+   Actions secrets (so `doc_capture.yml` uploads there too).
+
+New captures then go to Storage (`content` NULL, `storage_path` set); reads are
+proxied by the API. Existing inline rows stay inline until re-captured.
 
 ---
 
@@ -128,7 +143,7 @@ Do this once §2 verifies clean. **This is the switch** — after it, Neon is id
    | `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | from `.streamlit/secrets.toml` | QBO connect |
    | `QBO_REDIRECT_URI` | `https://<railway-domain>/auth/qbo/callback` | QBO connect |
    | `QBO_ENVIRONMENT` | `production` | QBO connect |
-   | `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | from §1.4 | optional (unused today) |
+   | `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | from §1.4 | optional — only for Storage-backed document capture (§3.1) |
 
    The API never calls Claude — `ANTHROPIC_API_KEY` stays on the pipeline (GitHub
    Actions), not here.

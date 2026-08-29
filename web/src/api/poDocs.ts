@@ -64,6 +64,31 @@ export function useUploadDoc(poId: number) {
   });
 }
 
+interface BackfillBucket {
+  scanned: number;
+  captured: number;
+  failed: number;
+  remaining: number;
+  errors: string[];
+}
+export interface BackfillResponse {
+  ok: boolean;
+  gmail?: BackfillBucket;
+  qbo?: BackfillBucket;
+}
+
+export function useBackfillDocs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { sources: ("gmail" | "qbo")[]; limit?: number }) =>
+      apiSend<BackfillResponse>("POST", "/api/po/documents/backfill", {
+        sources: body.sources,
+        limit: body.limit ?? 200,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["po-docs"] }),
+  });
+}
+
 export function useDeleteDoc(poId: number) {
   const qc = useQueryClient();
   return useMutation({

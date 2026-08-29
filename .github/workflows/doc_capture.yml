@@ -1,0 +1,86 @@
+name: Capture PO / invoice PDFs
+
+# Sweeps purchase orders that are missing their source PDFs and pulls them in:
+#   * po_pdf      — the PDF attachment(s) on the PO's Gmail thread
+#   * invoice_pdf — the rendered invoice PDF for each confirmed linked invoice
+# Runs after the Gmail extract (12:00) and the QuickBooks sync (12:30) so new
+# POs get their documents the same day. Idempotent — sha256-deduped, so a run
+# only fills gaps. Also triggerable from the "Run workflow" button.
+
+on:
+  schedule:
+    - cron: "0 13 * * *"  # ~8:00am US Central, 30 min after the QuickBooks sync
+  workflow_dispatch:
+    inputs:
+      sources:
+        description: "Sources to capture from"
+        type: choice
+        options: ["gmail,qbo", "gmail", "qbo"]
+        default: "gmail,qbo"
+      limit:
+        description: "Max POs per source"
+        type: string
+        default: "200"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doc-capture
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Capture PDFs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          QBO_CLIENT_ID: ${{ secrets.QBO_CLIENT_ID }}
+          QBO_CLIENT_SECRET: ${{ secrets.QBO_CLIENT_SECRET }}
+          QBO_REDIRECT_URI: ${{ secrets.QBO_REDIRECT_URI }}
+          QBO_ENVIRONMENT: ${{ secrets.QBO_ENVIRONMENT }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SOURCES: ${{ github.event.inputs.sources || 'gmail,qbo' }}
+          LIMIT: ${{ github.event.inputs.limit || '200' }}
+        run: python run_doc_capture.py --sources "$SOURCES" --limit "$LIMIT"
+
+      # Exit 3 = the QuickBooks connection needs reauthorising.
+      - name: Upload log
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-doc-capture-log
+          path: run_doc_capture.log
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Flag failed run on the job summary
+        if: failure() || cancelled()
+        run: |
+          {
+            echo "### ⚠️ PDF capture did not finish cleanly"
+            echo ""
+            echo "Status: **${{ job.status }}**"
+            echo ""
+            echo "If the log shows a QuickBooks reauthorisation error, reconnect from"
+            echo "the app's Settings → QuickBooks page. Otherwise download the"
+            echo "\`run-doc-capture-log\` artifact for details."
+          } >> "$GITHUB_STEP_SUMMARY"

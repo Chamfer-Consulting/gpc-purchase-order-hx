@@ -27,8 +27,12 @@ from .routers import (
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    import doc_storage  # repo root, via app.reuse
+
     init_pool()
     ensure_admin_schema()
+    _s = get_settings()
+    doc_storage.configure(_s.supabase_url, _s.supabase_service_key)
     yield
     close_pool()
 

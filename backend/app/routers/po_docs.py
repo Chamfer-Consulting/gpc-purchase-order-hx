@@ -32,10 +32,31 @@ class CaptureIn(BaseModel):
     sources: list[str] = ["gmail", "qbo"]  # any of: gmail, qbo
 
 
+class BackfillIn(BaseModel):
+    sources: list[str] = ["gmail", "qbo"]
+    limit: int = 100
+
+
 class UploadIn(BaseModel):
     filename: str
     content_b64: str
     mime_type: str = "application/pdf"
+
+
+@router.post("/documents/backfill")
+def backfill(body: BackfillIn, user: AuthedUser = Depends(current_user)) -> dict:
+    """Sweep POs missing their captured PDFs, up to `limit` per source. Safe to
+    re-run (sha256-deduped). The scheduled job (run_doc_capture.py) does the same
+    on a timer."""
+    s = get_settings()
+    limit = max(1, min(body.limit, 1000))
+    with reused_conn() as conn:
+        out = po_docs.backfill(
+            conn, sources=body.sources, limit=limit,
+            captured_by=f"backfill:{_actor(user)}",
+            gmail_client_id=s.gmail_client_id, gmail_client_secret=s.gmail_client_secret,
+        )
+    return {"ok": True, **out}
 
 
 @router.get("/{po_id}/documents")

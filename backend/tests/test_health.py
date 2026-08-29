@@ -103,6 +103,7 @@ def test_all_data_routes_require_auth(path):
         ("delete", "/api/links?po_id=1&invoice_id=1", None),
         ("post", "/api/po/1/documents/capture", {"sources": ["gmail"]}),
         ("post", "/api/po/1/documents/upload", {"filename": "x.pdf", "content_b64": "eA=="}),
+        ("post", "/api/po/documents/backfill", {"sources": ["gmail"], "limit": 5}),
         ("delete", "/api/po/1/documents/1", None),
     ],
 )
