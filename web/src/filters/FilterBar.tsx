@@ -1,3 +1,4 @@
+import dayjs from "dayjs";
 import { Group, MultiSelect, Switch } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import { useFilters } from "./useFilters";
@@ -9,8 +10,11 @@ interface FilterBarProps {
   showSamples?: boolean;
 }
 
-const toDate = (s: string | null) => (s ? new Date(s) : null);
-const iso = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
+// dayjs parses a bare ISO "YYYY-MM-DD" as LOCAL start-of-day (native `new Date`
+// treats it as UTC), and formats in local time — so the picked day survives a
+// URL round-trip in any timezone instead of shifting ±1.
+const toDate = (s: string | null) => (s ? dayjs(s).toDate() : null);
+const iso = (d: Date | null) => (d ? dayjs(d).format("YYYY-MM-DD") : null);
 
 /** The scope controls. State lives in the URL (useFilters) so views are shareable. */
 export function FilterBar({

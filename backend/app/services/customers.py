@@ -4,6 +4,7 @@ product-revenue basis. Ported from dashboard/views/customer_360.py."""
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope, Table, TableColumn
 from .context import build_context, monthly_revenue
+from ._util import records
 
 _TOP_N = 15
 
@@ -64,7 +65,7 @@ def customer_360(fp: FilterParams) -> PageResponse:
                     TableColumn(key="orders", label="Orders", kind="int"),
                     TableColumn(key="avg_order", label="Avg order", kind="currency2"),
                 ],
-                rows=g.to_dict("records"),
+                rows=records(g),
                 export_name="customers",
             )
         },

@@ -7,6 +7,7 @@ from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, PageResponse, Scope, Table, TableColumn
 import data as _dash  # dashboard/data.py, via app.reuse
 from .context import build_context, monthly_revenue
+from ._util import records
 
 _TOP_N = 15
 
@@ -21,7 +22,9 @@ def explore(fp: FilterParams) -> PageResponse:
     by_cust = (
         prod.groupby("customer_name")["line_total"].sum().sort_values(ascending=False).head(_TOP_N)
     )
-    by_prod = prod.groupby("product_name")["line_total"].sum().sort_values(ascending=False)
+    by_prod = (
+        prod.groupby("product_name")["line_total"].sum().sort_values(ascending=False).head(_TOP_N)
+    )
 
     charts = [
         Chart(id="rev_month", title="Product revenue by month", kind="line", x=months,
@@ -29,7 +32,7 @@ def explore(fp: FilterParams) -> PageResponse:
         Chart(id="rev_customer", title=f"Revenue by customer (top {_TOP_N})", kind="hbar",
               x=list(by_cust.index), series=[ChartSeries(name="Revenue", data=[float(v) for v in by_cust.values])],
               y_format="currency"),
-        Chart(id="rev_product", title="Revenue by product", kind="hbar",
+        Chart(id="rev_product", title=f"Revenue by product (top {_TOP_N})", kind="hbar",
               x=list(by_prod.index), series=[ChartSeries(name="Revenue", data=[float(v) for v in by_prod.values])],
               y_format="currency"),
     ]
@@ -39,7 +42,7 @@ def explore(fp: FilterParams) -> PageResponse:
     if mom is not None:
         merged, curr_m, prev_m, skipped = mom
         # merged cols: customer_name, prev, curr, delta, Change (drop the pre-formatted Change)
-        rows = merged.drop(columns=[c for c in ("Change",) if c in merged.columns]).round(2).to_dict("records")
+        rows = records(merged.drop(columns=[c for c in ("Change",) if c in merged.columns]).round(2))
         note = f"{prev_m} → {curr_m}" + (" (current partial month skipped)" if skipped else "")
         tables["movers"] = Table(
             title=f"Biggest movers by customer · {note}",

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
   ActionIcon,
@@ -34,13 +34,18 @@ export function EditPoPage() {
   const save = useSavePo(poId);
 
   const [header, setHeader] = useState<Partial<PoHeader>>({});
-  const [items, setItems] = useState<PoLineItem[]>([]);
+  // Each row carries a stable client key (_rk) so React doesn't reattach an input's
+  // state to the wrong line when a middle row is deleted.
+  const [items, setItems] = useState<(PoLineItem & { _rk: string })[]>([]);
+  const rk = useRef(0);
+  const nextRk = () => `r${rk.current++}`;
 
   useEffect(() => {
     if (data) {
       setHeader(data.header);
-      setItems(data.items);
+      setItems(data.items.map((it) => ({ ...it, _rk: nextRk() })));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
   if (isLoading) return <Loader />;
@@ -90,7 +95,7 @@ export function EditPoPage() {
           </Table.Thead>
           <Table.Tbody>
             {items.map((it, i) => (
-              <Table.Tr key={i}>
+              <Table.Tr key={it._rk}>
                 <Table.Td>
                   <TextInput size="xs" value={it.product_name ?? it.product_raw ?? ""} onChange={(e) => setItem(i, "product_name", e.currentTarget.value)} />
                 </Table.Td>
@@ -119,7 +124,7 @@ export function EditPoPage() {
           </Table.Tbody>
         </Table>
       </div>
-      <Button size="xs" variant="default" w="fit-content" onClick={() => setItems((r) => [...r, { ...EMPTY }])}>
+      <Button size="xs" variant="default" w="fit-content" onClick={() => setItems((r) => [...r, { ...EMPTY, _rk: nextRk() }])}>
         Add line
       </Button>
 
@@ -128,6 +133,7 @@ export function EditPoPage() {
       <Group>
         <Button
           onClick={() =>
+            // _rk is a client-only key; the backend's LineItemIn ignores extra fields.
             save.mutate({ header, items, removed_items: data.removed_items })
           }
           loading={save.isPending}

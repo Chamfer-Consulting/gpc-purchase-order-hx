@@ -73,6 +73,9 @@ def test_oauth_callback_state_guard():
         "/api/connections",
         "/api/po/1",
         "/api/overview",
+        "/api/filters/options",
+        "/api/customers",
+        "/api/products",
     ],
 )
 def test_all_data_routes_require_auth(path):

@@ -135,6 +135,9 @@ export function DataGrid<Row extends Record<string, unknown>>({
 
 function csvCell(v: unknown): string {
   if (v == null) return "";
-  const s = String(v);
+  let s = String(v);
+  // Neutralise spreadsheet formula injection — some columns (email subject / from)
+  // are attacker-controlled. Excel/Sheets treat a leading =,+,-,@ as a formula.
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }

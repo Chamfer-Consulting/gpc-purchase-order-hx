@@ -43,6 +43,12 @@ def review_queue(conn, limit: int = 300) -> list[dict]:
         cur.execute(_QUEUE_SQL)
         rows = [dict(r) for r in cur.fetchall()]
 
+    # The extraction_reviews / extraction_snapshots joins are ON (thread) OR (file);
+    # if a PO ever matches under both keyings it fans out to >1 row. Keep the first
+    # per po_id so the queue + the needs-attention counts never double.
+    seen: set[int] = set()
+    rows = [r for r in rows if not (r["po_id"] in seen or seen.add(r["po_id"]))]
+
     out = []
     for r in rows:
         kind, key = _target(r)

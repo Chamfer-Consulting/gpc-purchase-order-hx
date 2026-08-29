@@ -34,14 +34,22 @@ export function SettingsPage() {
   const callback = sp.get("connect");
 
   useEffect(() => {
-    if (callback) {
-      const t = setTimeout(() => {
-        sp.delete("connect");
-        setSp(sp, { replace: true });
-      }, 6000);
-      return () => clearTimeout(t);
-    }
-  }, [callback, sp, setSp]);
+    if (!callback) return;
+    // Deps are [callback] only — `sp` is a fresh object every render, so listing it
+    // would restart this timer on any re-render inside the 6s window.
+    const t = setTimeout(() => {
+      setSp(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("connect");
+          return next;
+        },
+        { replace: true },
+      );
+    }, 6000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callback]);
 
   return (
     <Stack gap="lg" maw={720}>

@@ -178,3 +178,19 @@ account owner / a browser · **(code)** = doable in the repo.
 - [ ] No secret in `web/` beyond the Supabase URL + `anon` key + API base.
 - [ ] Pipeline scripts on the **session** connection; API on the **transaction pooler**.
 - [ ] Each merged phase leaves `po-dashboard-rebuild` in a deployable state.
+
+---
+
+## Code-review fixes (2026-08-28)
+
+Nine findings from `/code-review` on the branch, all resolved:
+- [x] `cache.py` — `threading.Lock` + snapshot reads (no `in`/`[]` TOCTOU); FastAPI runs sync endpoints on a threadpool.
+- [x] `FilterBar` dates — parse/format via `dayjs` (local), was UTC round-trip → off-by-one day.
+- [x] `FilterBar` options were dead — new `GET /api/filters/options` + `useFilterOptions`, wired in `AnalyticsPage`.
+- [x] `services/review_queue.py` — dedupe by `po_id` after the `OR`-join (fan-out doubled the attention counts).
+- [x] `services/explore.py` — `by_prod.head(_TOP_N)` (was plotting every product).
+- [x] `DataGrid` CSV — prefix `=+-@` cells with `'` (formula injection via email subject/from).
+- [x] `EditPoPage` — stable `_rk` row keys (index keys misattached input state on mid-row delete).
+- [x] `services/lifecycle.py` — null-safe date + numeric columns (`"NaT"` string / bare `NaN` in JSON).
+- [x] `SettingsPage` — auto-dismiss effect deps `[callback]` only (`sp` object churned the timer).
+- [x] extra: `services/_util.records()` — NaN/NaT → None on every `to_dict("records")` path.

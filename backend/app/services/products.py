@@ -6,6 +6,7 @@ import pandas as pd
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope, Table, TableColumn
 from .context import build_context
+from ._util import records
 
 _SIZE_NULL = "(no size)"
 
@@ -112,4 +113,4 @@ def _round(df: pd.DataFrame) -> list[dict]:
     for c in ("revenue", "quantity"):
         if c in df.columns:
             df[c] = df[c].round(2)
-    return df.to_dict("records")
+    return records(df)

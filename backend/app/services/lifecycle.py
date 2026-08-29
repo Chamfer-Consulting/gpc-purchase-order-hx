@@ -9,6 +9,7 @@ from qbo_matcher import customers_match  # dashboard/, via app.reuse
 
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope, Table, TableColumn
+from ._util import records
 
 
 def order_lifecycle(fp: FilterParams) -> PageResponse:
@@ -57,8 +58,10 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
 
     disp = lc.copy()
     for c in ("requested_amount", "revised_amount", "shipped_amount", "fulfillment_pct"):
-        disp[c] = pd.to_numeric(disp[c], errors="coerce").round(2)
-    disp["effective_date"] = pd.to_datetime(disp["effective_date"], errors="coerce").dt.date.astype(str)
+        col = pd.to_numeric(disp[c], errors="coerce").round(2)
+        disp[c] = col.where(col.notna(), None)  # NaN -> None (invalid in JSON otherwise)
+    _ed = pd.to_datetime(disp["effective_date"], errors="coerce")
+    disp["effective_date"] = _ed.dt.strftime("%Y-%m-%d").where(_ed.notna(), None)
 
     return PageResponse(
         scope=Scope(count=int(len(lc)), noun="orders", start=fp.start, end=fp.end,
@@ -86,10 +89,10 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
                     TableColumn(key="shipped_amount", label="Shipped", kind="currency"),
                     TableColumn(key="fulfillment_pct", label="Fulfilment %", kind="percent"),
                 ],
-                rows=disp[
+                rows=records(disp[
                     ["po_id", "po_number", "customer_name", "effective_date",
                      "requested_amount", "revised_amount", "shipped_amount", "fulfillment_pct"]
-                ].to_dict("records"),
+                ]),
                 export_name="order_lifecycle",
             )
         },
