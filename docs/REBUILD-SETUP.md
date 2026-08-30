@@ -7,6 +7,16 @@ Nothing here changes the live scheduled jobs until §3. (There is no Streamlit a
 in this build — it was removed; the pipeline scripts and the FastAPI backend are
 all that read the database.)
 
+**Final URLs** (DNS at DreamHost — see §5.1):
+
+| | Host | URL |
+|---|---|---|
+| Frontend (React SPA) | Cloudflare Pages | `https://dashboard.garfieldproduce.com` |
+| Backend (FastAPI API) | Railway | `https://api.garfieldproduce.com` |
+
+Both are subdomains of `garfieldproduce.com`, so the SPA→API calls are still
+cross-origin — `ALLOWED_ORIGINS` on the backend must name the frontend host.
+
 ---
 
 ## 0. Local tooling
@@ -96,13 +106,16 @@ supabase link --project-ref <ref> && supabase db push
 psql "$SUPABASE_SESSION_URL" -f supabase/migrations/20260828120000_admin_crud.sql
 ```
 
-Current migrations:
+Current migrations, in order:
 - `20260828120000_admin_crud.sql` — PO lifecycle `status` + soft delete, per-line
   `voided`, `audit_log`.
 - `20260828130000_po_documents.sql` — `po_documents` (captured PO/invoice PDFs).
+- `20260829000000_drop_gdrive.sql` — drops the retired `drive_file_id` /
+  `drive_synced_at` columns. Run a document-capture backfill first (§3.1 / the
+  Settings "Backfill missing PDFs" card) so POs have a captured `po_pdf`.
 
-(The API also self-applies both on boot, so it's safe to defer, but run them so
-the change is explicit.)
+(The API self-applies the admin-CRUD + `po_documents` DDL on boot, so those two
+are safe to defer; `drop_gdrive` is not self-applied — run it explicitly.)
 
 ---
 
@@ -169,21 +182,24 @@ proxied by the API. Existing inline rows stay inline until re-captured.
    | `DATABASE_URL` | Supabase **transaction pooler** URL (`:6543`) | required |
    | `SUPABASE_URL` | `https://<ref>.supabase.co` | required — token verification (JWKS) + Storage |
    | `SUPABASE_JWT_SECRET` | Supabase → API Keys → JWT Keys → Legacy JWT Secret | only if the project still signs HS256 (§1.6) |
-   | `ALLOWED_ORIGINS` | `https://<pages-project>.pages.dev` | required in prod |
-   | `FRONTEND_BASE` | `https://<pages-project>.pages.dev` | required in prod |
+   | `ALLOWED_ORIGINS` | `https://dashboard.garfieldproduce.com` | required in prod |
+   | `FRONTEND_BASE` | `https://dashboard.garfieldproduce.com` | required in prod |
    | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | from the GitHub Actions secrets (same values the pipeline uses) | Gmail connect |
-   | `GMAIL_REDIRECT_URI` | `https://<railway-domain>/auth/gmail/callback` | Gmail connect |
+   | `GMAIL_REDIRECT_URI` | `https://api.garfieldproduce.com/auth/gmail/callback` | Gmail connect |
    | `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | from the GitHub Actions secrets | QBO connect |
-   | `QBO_REDIRECT_URI` | `https://<railway-domain>/auth/qbo/callback` | QBO connect |
+   | `QBO_REDIRECT_URI` | `https://api.garfieldproduce.com/auth/qbo/callback` | QBO connect |
    | `QBO_ENVIRONMENT` | `production` | QBO connect |
    | `SUPABASE_SECRET_KEY` (or legacy `SUPABASE_SERVICE_KEY`) | from §1.5 | optional — only for Storage-backed document capture (§3.1) |
 
    The API never calls Claude — `ANTHROPIC_API_KEY` stays on the pipeline (GitHub
-   Actions), not here.
+   Actions), not here. The `*.garfieldproduce.com` URLs above only resolve once
+   §5.1 (DNS) is done; the API still boots without them — just don't run the Gmail
+   / QuickBooks connect flows until the custom domain is live.
 
-6. **Settings → Networking → Generate Domain** for the public URL. Railway injects
-   `$PORT`; the Dockerfile `CMD` reads it.
-7. Deploy, then `curl https://<railway-domain>/health`.
+6. **Settings → Networking → Generate Domain** — Railway gives the service a
+   `*.up.railway.app` URL. Use it for the smoke test now; the permanent
+   `api.garfieldproduce.com` custom domain is added in §5.1.
+7. Deploy, then `curl https://<service>.up.railway.app/health` → `{"status":"ok"}`.
 
 Railway's paid usage plan keeps the service always running (no scale-to-zero).
 A 512 MB–1 GB instance for an internal tool is ~$5–10/mo of usage.
@@ -206,12 +222,47 @@ backend/fly.toml --dockerfile backend/Dockerfile` from the repo root, secrets vi
 3. Environment variables (Production **and** Preview):
    - `VITE_SUPABASE_URL` = `https://<ref>.supabase.co`
    - `VITE_SUPABASE_PUBLISHABLE_KEY` = `sb_publishable_...` (or legacy `VITE_SUPABASE_ANON_KEY` = `<anon key>`)
-   - `VITE_API_BASE` = `https://<railway-domain>`
-4. Save & Deploy. Note the `*.pages.dev` URL, set it as the backend's
-   `ALLOWED_ORIGINS` **and** `FRONTEND_BASE` in Railway (§4) — Railway redeploys
-   on the variable change.
+   - `VITE_API_BASE` = `https://api.garfieldproduce.com`
+4. Save & Deploy. Pages builds to a `*.pages.dev` URL — use it to check the app
+   loads; the permanent `dashboard.garfieldproduce.com` domain is added in §5.1.
+   (`_redirects` in `web/public/` gives React Router its SPA fallback, so deep
+   links and refreshes work.)
 
 Cost: free.
+
+---
+
+## 5.1 Custom domains (DNS at DreamHost)
+
+DreamHost is only the DNS authority for `garfieldproduce.com` — it hosts nothing
+here. Both hosts issue their own TLS cert once the CNAME resolves.
+
+1. **Cloudflare Pages** → the project → **Custom domains → Set up a domain** →
+   `dashboard.garfieldproduce.com`. Cloudflare sees the zone isn't on its DNS and
+   shows a **CNAME target** (e.g. `<project>.pages.dev`).
+2. **Railway** → the service → **Settings → Networking → Custom Domain** →
+   `api.garfieldproduce.com`. Railway shows a **CNAME target** (e.g.
+   `<hash>.up.railway.app`).
+3. **DreamHost** → **Panel → Domains → Manage Domains →** the `DNS` link for
+   `garfieldproduce.com` → **Add a custom record** (twice):
+
+   | Name | Type | Value |
+   |---|---|---|
+   | `dashboard` | `CNAME` | the target from step 1 |
+   | `api` | `CNAME` | the target from step 2 |
+
+   Leave TTL at the default. Do **not** "add hosting" for the subdomains — that
+   creates A records to DreamHost's web servers and breaks this.
+4. Wait for propagation + cert issue (minutes to a few hours). Verify:
+   `curl https://api.garfieldproduce.com/health` and open
+   `https://dashboard.garfieldproduce.com`.
+5. Confirm the env vars already point at the custom domains (they do, per §4/§5):
+   `VITE_API_BASE`, `ALLOWED_ORIGINS`, `FRONTEND_BASE`, `GMAIL_REDIRECT_URI`,
+   `QBO_REDIRECT_URI`. Redeploy the Pages project so the built bundle picks up
+   `VITE_API_BASE`.
+
+> Keeping the API on the raw `*.up.railway.app` URL instead is fine — just use
+> that URL everywhere `api.garfieldproduce.com` appears above and skip step 2.
 
 ---
 
@@ -221,8 +272,9 @@ Cost: free.
    **Confirm email** off and **Allow new users to sign up** off.
 2. **Authentication → Users → Add user** for each teammate (email + temp password),
    or use **Send magic link**.
-3. **Authentication → URL Configuration**: set the Site URL to the Pages URL and
-   add it to the redirect allowlist.
+3. **Authentication → URL Configuration**: set the Site URL to
+   `https://dashboard.garfieldproduce.com` and add it to the redirect allowlist
+   (add the `*.pages.dev` URL too while you're still testing on it).
 4. **Realtime** (for the live review queue): Database → Publications →
    `supabase_realtime` → add `purchase_orders` and `extraction_reviews`. Without
    this the queue just doesn't auto-refresh; nothing breaks.
@@ -231,14 +283,14 @@ Cost: free.
 
 ## 7. OAuth redirect URIs (Phase 1.5)
 
-Add the new callback URLs **alongside** any redirect URIs already registered (e.g.
-from an earlier deployment) — you can prune stale ones once the Railway backend is
-verified.
+Register these once the `api.` custom domain is live (§5.1). Add them **alongside**
+any redirect URIs already registered — prune stale ones later. They must match the
+`GMAIL_REDIRECT_URI` / `QBO_REDIRECT_URI` set on Railway (§4) exactly.
 
 - **Google Cloud Console → APIs & Services → Credentials → the OAuth client**:
-  add `https://<railway-domain>/auth/gmail/callback` to *Authorized redirect URIs*.
+  add `https://api.garfieldproduce.com/auth/gmail/callback` to *Authorized redirect URIs*.
 - **Intuit developer dashboard → your app → Keys & OAuth**:
-  add `https://<railway-domain>/auth/qbo/callback` to *Redirect URIs*.
+  add `https://api.garfieldproduce.com/auth/qbo/callback` to *Redirect URIs*.
 
 ---
 
@@ -247,7 +299,7 @@ verified.
 - **Sentry**: create two projects (`po-dashboard-api`, `po-dashboard-web`); set
   `SENTRY_DSN` as a Railway variable and `VITE_SENTRY_DSN` in Pages.
 - **Uptime**: a Cloudflare Health Check or an UptimeRobot monitor on
-  `https://<railway-domain>/health`.
+  `https://api.garfieldproduce.com/health`.
 - **`pg_cron`**: SQL to schedule the materialized-view refresh (added with the
   views in Phase 5).
 
@@ -265,13 +317,13 @@ Env-var name in **bold**. "Railway" = the API service's Variables tab.
 | Supabase publishable / `anon` key | | | ✅ **VITE_SUPABASE_PUBLISHABLE_KEY** (or **_ANON_KEY**) |
 | Supabase secret / `service_role` key | ✅ (doc_capture) | ✅ **SUPABASE_SECRET_KEY** (or **_SERVICE_KEY**) — optional, Storage only | |
 | Supabase legacy JWT secret | | ✅ **SUPABASE_JWT_SECRET** — only if the project still signs HS256 | |
-| Backend public URL | | | ✅ **VITE_API_BASE** = `https://<railway-domain>` |
-| Frontend public URL | | ✅ **ALLOWED_ORIGINS** + **FRONTEND_BASE** = `https://<pages>.pages.dev` | |
+| Backend public URL | | | ✅ **VITE_API_BASE** = `https://api.garfieldproduce.com` |
+| Frontend public URL | | ✅ **ALLOWED_ORIGINS** + **FRONTEND_BASE** = `https://dashboard.garfieldproduce.com` | |
 | `ANTHROPIC_API_KEY` | ✅ | — (API doesn't call Claude) | |
 | `GMAIL_CLIENT_ID` / `_SECRET` | ✅ | ✅ (connect flow) | |
-| `GMAIL_REDIRECT_URI` | | ✅ = `https://<railway-domain>/auth/gmail/callback` | |
+| `GMAIL_REDIRECT_URI` | | ✅ = `https://api.garfieldproduce.com/auth/gmail/callback` | |
 | `QBO_CLIENT_ID` / `_SECRET` | ✅ | ✅ (connect flow) | |
-| `QBO_REDIRECT_URI` | | ✅ = `https://<railway-domain>/auth/qbo/callback` | |
+| `QBO_REDIRECT_URI` | | ✅ = `https://api.garfieldproduce.com/auth/qbo/callback` | |
 | `QBO_ENVIRONMENT` | ✅ | ✅ (`production`) | |
 
 Minimum to boot the API: **DATABASE_URL** + a token-verification path — either

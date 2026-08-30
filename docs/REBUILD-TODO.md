@@ -91,12 +91,12 @@ account owner / a browser · **(code)** = doable in the repo.
 - [x] `src/filters/useFilters.ts` + `src/filters/FilterBar.tsx` — scope bound to the URL query string.
 - [x] `src/pages/OverviewPage.tsx` — renders `PageRenderer` (real KPIs + the needs-attention digest). Revenue charts land with `services/overview.py`.
 
-### 1.4 Deploy
-- [x] `backend/Dockerfile` (`$PORT`-aware, repo-root build context) + `backend/fly.toml` (alt). *(Railway Config-as-Code deprecated 2026-08-28 — configure the service in the dashboard per SETUP §4; no `railway.toml`.)*
+### 1.4 Deploy — target: `api.garfieldproduce.com` (Railway) + `dashboard.garfieldproduce.com` (Cloudflare Pages), DNS at DreamHost
+- [x] `backend/Dockerfile` (`$PORT`-aware, repo-root build context) + `backend/fly.toml` (alt). *(Railway Config-as-Code deprecated 2026-08-28 — configure the service in the dashboard per SETUP §4; no `railway.toml`.)* `web/public/_redirects` = the SPA fallback for Pages.
 - [ ] **(you)** Create the Railway project from the repo; set Build = Dockerfile `backend/Dockerfile`, healthcheck `/health`, then the Variables (SETUP §4).
-- [ ] **(you)** Generate the Railway domain; `curl https://<railway-domain>/health`.
+- [ ] **(you)** Smoke-test the generated `*.up.railway.app` `/health`.
 - [ ] **(you)** Create the Cloudflare Pages project (root `web/`, output `web/dist`); set the 3 `VITE_` vars (SETUP §5).
-- [ ] **(you)** Set the backend `ALLOWED_ORIGINS` + `FRONTEND_BASE` to the Pages URL.
+- [ ] **(you)** Custom domains — add `dashboard.` on Pages + `api.` on Railway, then the two CNAMEs at DreamHost (SETUP §5.1). Redeploy Pages so `VITE_API_BASE` takes.
 
 ### 1.5 OAuth callbacks + connections
 - [x] `backend/app/routers/oauth.py` — `GET /auth/gmail/callback` + `GET /auth/qbo/callback`: verify the signed state, exchange the code (reused `gmail_client` / `qbo_client`), 302 back to `/settings?connect=...`.
