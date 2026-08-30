@@ -298,16 +298,48 @@ here. Both hosts issue their own TLS cert once the CNAME resolves.
 
 ## 6. Supabase Auth
 
+The login page offers **Continue with Google** (SSO) and email + password.
+
 1. **Authentication → Providers → Email**: enable. For an internal tool, turn
-   **Confirm email** off and **Allow new users to sign up** off.
-2. **Authentication → Users → Add user** for each teammate (email + temp password),
-   or use **Send magic link**.
-3. **Authentication → URL Configuration**: set the Site URL to
-   `https://dashboard.garfieldproduce.com` and add it to the redirect allowlist
-   (add the `*.pages.dev` URL too while you're still testing on it).
+   **Confirm email** off. Leave **Allow new users to sign up** *on* if you want
+   Google SSO to create accounts on first sign-in (see §6.1 for restricting to
+   your domain); turn it *off* and pre-create every user if you'd rather gate it
+   that way.
+2. **Authentication → Users → Add user** for anyone using email + password (or a
+   Google user you pre-create — the email must equal their Google address).
+3. **Authentication → URL Configuration**:
+   - **Site URL** = `https://dashboard.garfieldproduce.com`
+   - **Redirect URLs** — add `https://dashboard.garfieldproduce.com/auth/callback`
+     (and `http://localhost:5173/auth/callback` for local dev, plus the
+     `*.pages.dev` URL while testing). The SPA sends the browser back here after
+     Google.
 4. **Realtime** (for the live review queue): Database → Publications →
    `supabase_realtime` → add `purchase_orders` and `extraction_reviews`. Without
    this the queue just doesn't auto-refresh; nothing breaks.
+
+### 6.1 Google SSO
+
+1. **Google Cloud Console → APIs & Services → Credentials** — reuse the existing
+   OAuth client (the one from `GMAIL_SETUP.md`) or **Create Credentials → OAuth
+   client ID → Web application**. To its **Authorized redirect URIs** add exactly:
+   `https://<ref>.supabase.co/auth/v1/callback` (shown on the Supabase Google
+   provider page). No new scopes — SSO only needs `openid email profile`.
+2. **OAuth consent screen**:
+   - `garfieldproduce.com` is a **Google Workspace** domain → set it to
+     **Internal**. Only org members can sign in, no Google verification needed,
+     and you get automatic domain restriction for free.
+   - Not Workspace → it must be **In production** (Google review may apply);
+     restrict who gets in via §6.1 step 4.
+3. **Supabase → Authentication → Providers → Google** → enable → paste the
+   **Client ID** and **Client Secret** from step 1 → save.
+4. **Restrict to your domain** (skip if the consent screen is Internal):
+   - Supabase → **Authentication → Auth Hooks → Before User Created** → a Postgres
+     function or Edge Function that rejects any `email` not ending in
+     `@garfieldproduce.com`, **or**
+   - turn **Allow new users to sign up** off (§6, step 1) and pre-create every
+     user.
+5. Test: open `https://dashboard.garfieldproduce.com`, click **Continue with
+   Google**, approve — you land back on `/auth/callback`, then the Overview page.
 
 ---
 

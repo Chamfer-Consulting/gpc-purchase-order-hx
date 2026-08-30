@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/AppShell";
 import { AuthProvider } from "@/auth/AuthProvider";
 import { LoginPage } from "@/auth/LoginPage";
+import { AuthCallback } from "@/auth/AuthCallback";
 import { RequireAuth } from "@/auth/RequireAuth";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
@@ -22,6 +23,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
           <Route
             path="/*"
             element={

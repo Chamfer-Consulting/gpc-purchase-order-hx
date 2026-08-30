@@ -78,15 +78,17 @@ account owner / a browser · **(code)** = doable in the repo.
 - [x] `backend/tests/` — `/health`, auth guards on every data route, `FilterParams` contract, OAuth state guard. `pytest` green (12).
 
 ### 1.2 Supabase Auth
-- [ ] **(you)** Create the team's user accounts (Auth → Users), or enable email magic-link.
-- [ ] **(you)** Restrict sign-ups (allowlist domain or disable public sign-up).
+- [x] Login UI does **Google SSO** (`signInWithOAuth`, `/auth/callback` route) + email/password (`LoginPage.tsx`, `AuthCallback.tsx`).
+- [ ] **(you)** Enable the Google provider in Supabase + add the Supabase callback URL to the Google OAuth client; set Redirect URLs to `.../auth/callback` (SETUP §6 / §6.1).
+- [ ] **(you)** Create any email/password accounts (Auth → Users).
+- [ ] **(you)** Restrict sign-ups — OAuth consent screen = Internal (Workspace), or a Before-User-Created hook allowlisting `@garfieldproduce.com`, or disable public sign-up + pre-create users.
 
 ### 1.3 Frontend
 - [x] `web/` — Vite + React + TS scaffold. Installs, typechecks, builds.
 - [x] `src/lib/supabase.ts` — Supabase client.
 - [x] `src/lib/api.ts` — fetch wrapper attaching the Supabase access token.
 - [x] `src/lib/format.ts` — currency / int / percent / delta formatters (labels.py counterpart).
-- [x] `src/auth/` — `AuthProvider`, `LoginPage`, `RequireAuth`.
+- [x] `src/auth/` — `AuthProvider`, `LoginPage` (Google SSO + password), `AuthCallback`, `RequireAuth`.
 - [x] `src/components/AppShell.tsx` — nav rail + header (Mantine).
 - [x] `src/filters/useFilters.ts` + `src/filters/FilterBar.tsx` — scope bound to the URL query string.
 - [x] `src/pages/OverviewPage.tsx` — renders `PageRenderer` (real KPIs + the needs-attention digest). Revenue charts land with `services/overview.py`.
