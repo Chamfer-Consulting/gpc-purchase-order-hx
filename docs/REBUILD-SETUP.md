@@ -214,11 +214,14 @@ backend/fly.toml --dockerfile backend/Dockerfile` from the repo root, secrets vi
 
 1. Cloudflare dashboard → **Workers & Pages → Create → Pages → Connect to Git** →
    pick this repo, branch `po-dashboard-rebuild` (switch to `main` after Phase 4).
-2. Build settings:
+2. Build settings — **Root directory is the one that matters**: the React app is in
+   `web/`, and the repo root has a Python `requirements.txt` (the pipeline's) that
+   Cloudflare will otherwise try to `pip install` before failing on a missing
+   root `package.json`.
+   - **Root directory** (under *Build configurations* → advanced): `web`
    - Framework preset: **Vite**
    - Build command: `npm run build`
-   - Build output directory: `web/dist`
-   - Root directory: `web`
+   - Build output directory: `dist`  ← relative to the root directory, **not** `web/dist`
 3. Environment variables (Production **and** Preview):
    - `VITE_SUPABASE_URL` = `https://<ref>.supabase.co`
    - `VITE_SUPABASE_PUBLISHABLE_KEY` = `sb_publishable_...` (or legacy `VITE_SUPABASE_ANON_KEY` = `<anon key>`)
@@ -229,6 +232,12 @@ backend/fly.toml --dockerfile backend/Dockerfile` from the repo root, secrets vi
    links and refreshes work.)
 
 Cost: free.
+
+**If the build ran `pip install -r requirements.txt` then failed with
+`npm error … Could not read package.json … /opt/buildhome/repo/package.json`:**
+the Root directory isn't set to `web`. Fix it in *Settings → Builds & deployments
+→ Build configurations → Root directory* = `web`, set output directory to `dist`,
+and retry the deployment.
 
 ---
 

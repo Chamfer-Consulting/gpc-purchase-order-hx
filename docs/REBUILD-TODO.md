@@ -95,7 +95,7 @@ account owner / a browser · **(code)** = doable in the repo.
 - [x] `backend/Dockerfile` (`$PORT`-aware, repo-root build context) + `backend/fly.toml` (alt). *(Railway Config-as-Code deprecated 2026-08-28 — configure the service in the dashboard per SETUP §4; no `railway.toml`.)* `web/public/_redirects` = the SPA fallback for Pages.
 - [ ] **(you)** Create the Railway project from the repo; set Build = Dockerfile `backend/Dockerfile`, healthcheck `/health`, then the Variables (SETUP §4).
 - [ ] **(you)** Smoke-test the generated `*.up.railway.app` `/health`.
-- [ ] **(you)** Create the Cloudflare Pages project (root `web/`, output `web/dist`); set the 3 `VITE_` vars (SETUP §5).
+- [ ] **(you)** Create the Cloudflare Pages project — **Root directory = `web`**, output `dist`, framework Vite; set the 3 `VITE_` vars (SETUP §5).
 - [ ] **(you)** Custom domains — add `dashboard.` on Pages + `api.` on Railway, then the two CNAMEs at DreamHost (SETUP §5.1). Redeploy Pages so `VITE_API_BASE` takes.
 
 ### 1.5 OAuth callbacks + connections
