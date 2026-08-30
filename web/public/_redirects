@@ -1,0 +1,5 @@
+# SPA fallback for Cloudflare Pages — React Router uses BrowserRouter, so any
+# path that isn't a built asset must serve the app shell (200, not a redirect)
+# and let the client router take it. Without this, a deep link or a refresh on
+# e.g. /match returns a 404.
+/*    /index.html    200
