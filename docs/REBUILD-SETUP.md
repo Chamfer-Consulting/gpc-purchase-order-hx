@@ -219,8 +219,11 @@ Two Cloudflare products can host the SPA; the choice hinges on **where DNS lives
 | **Pages** (classic) | ✅ CNAME from DreamHost works | — |
 | **Workers** (static assets) | ✗ (custom domains require the Cloudflare zone) | ✅ |
 
-DreamHost is the plan (§5.1), so use **Pages**. The repo also carries
-`web/wrangler.jsonc` for the Workers path if you ever move the zone to Cloudflare.
+DreamHost is the plan (§5.1), so use **Pages**. (The Worker path would need an
+assets-only `web/wrangler.jsonc` with `not_found_handling:
+"single-page-application"` — don't add it for Pages, it makes Pages log a
+"Wrangler configuration file … does not appear to be valid" warning on every
+build.)
 
 ### Pages (recommended)
 
@@ -232,7 +235,9 @@ DreamHost is the plan (§5.1), so use **Pages**. The repo also carries
    - **Root directory**: `web`  ← the setting that matters
    - Framework preset: **Vite**
    - Build command: `npm run build`
-   - Build output directory: `dist`  ← relative to the root directory, **not** `web/dist`
+   - Build output directory: `dist`  ← relative to the root directory. Setting it
+     to `web/dist` with root directory `web` makes Pages look for `web/web/dist`
+     and fail with *Output directory "web/web/dist" not found*.
 3. Environment variables (Production **and** Preview):
    - `VITE_SUPABASE_URL` = `https://<ref>.supabase.co`
    - `VITE_SUPABASE_PUBLISHABLE_KEY` = `sb_publishable_...` (or legacy `VITE_SUPABASE_ANON_KEY` = `<anon key>`)
@@ -243,13 +248,13 @@ DreamHost is the plan (§5.1), so use **Pages**. The repo also carries
 
 Cost: free.
 
-> **Already made a *Worker* instead?** (Its deploy command reads
-> `npx wrangler versions upload` and it has a "Build token".) A Worker custom
-> domain needs the zone on Cloudflare DNS, which conflicts with the DreamHost
-> plan — delete it and create a **Pages** project as above. Keep it only if you
-> intend to move `garfieldproduce.com` DNS to Cloudflare, in which case set its
-> Root directory to `web`, deploy command to `npx wrangler deploy`, and make
-> `web/wrangler.jsonc`'s `name` match the Worker.
+> **Made a *Worker* instead?** (Deploy command `npx wrangler versions upload`, a
+> "Build token".) A Worker custom domain needs the zone on Cloudflare DNS, which
+> conflicts with the DreamHost plan — delete it and create a **Pages** project.
+> Only keep the Worker if you'll move `garfieldproduce.com` DNS to Cloudflare;
+> then add `web/wrangler.jsonc` (`name` matching the Worker, `assets.directory`
+> `./dist`, `assets.not_found_handling` `single-page-application`), Root directory
+> `web`, deploy command `npx wrangler deploy`.
 
 **Build ran `pip install -r requirements.txt` then failed with `npm error … Could
 not read package.json … /opt/buildhome/repo/package.json`:** Root directory is
