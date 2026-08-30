@@ -816,7 +816,7 @@ footer {
         <li><b>Repoint the connection strings</b><span class="d">Supabase pooler string into <code>.streamlit/secrets.toml</code>; Supabase session string into the three GitHub Actions <code>DATABASE_URL</code> secrets. Run the dashboard, one extraction, and one QBO sync &mdash; confirm nothing regresses.</span></li>
         <li><b>Scaffold the two new folders</b><span class="d"><code>backend/</code> (FastAPI, <code>/health</code>) and <code>web/</code> (Vite + React + TS). Get both running locally.</span></li>
         <li><b>Lift the service layer</b><span class="d">Move <code>dashboard/data.py</code>'s query and transform functions into <code>backend/services/</code>; leave a thin re-export in <code>data.py</code> so Streamlit keeps working.</span></li>
-        <li><b>Deploy the empty stack</b><span class="d">FastAPI to Railway (repo has <code>railway.toml</code>); the React shell to Cloudflare Pages. Wire Supabase Auth login and confirm a protected route.</span></li>
+        <li><b>Deploy the empty stack</b><span class="d">FastAPI to Railway (Dockerfile build, configured in the Railway dashboard &mdash; Config-as-Code is deprecated); the React shell to Cloudflare Pages. Wire Supabase Auth login and confirm a protected route.</span></li>
       </ol>
     </section>
 

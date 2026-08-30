@@ -32,13 +32,17 @@ app/
 
 ## Deploy
 
-Fly.io, from the repo root (Dockerfile needs repo-root context):
+Primary target is **Railway** (Dockerfile build, configured in the Railway
+dashboard — its Config-as-Code was deprecated 2026-08-28). Full steps +
+variables: `../docs/REBUILD-SETUP.md` §4.
+
+Fly.io alternative, from the repo root (the Dockerfile needs repo-root context):
 
 ```bash
 fly deploy --config backend/fly.toml --dockerfile backend/Dockerfile
 ```
 
-Secrets via `fly secrets set` — see `../docs/REBUILD-SETUP.md` §4.
+Secrets via `fly secrets set`.
 
 ## Connection strings
 

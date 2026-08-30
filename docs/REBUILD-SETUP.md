@@ -145,11 +145,24 @@ proxied by the API. Existing inline rows stay inline until re-captured.
 
 ## 4. Backend host — Railway
 
+> Railway deprecated **Config as Code** (`railway.toml` / `railway.json`) on
+> 2026-08-28: a service that never used one can no longer opt in, and existing
+> files stop working on 2026-12-01. So there is **no `railway.toml` in this repo** —
+> configure the service in the dashboard (steps below). If you want the config
+> version-controlled, use Railway's Infrastructure-as-Code / Terraform provider
+> against the same settings.
+
 1. railway.app → **New Project → Deploy from GitHub repo** → this repo.
-2. In the service's **Settings**: leave *Root Directory* at `/`. `railway.toml`
-   (committed at the repo root) points the build at `backend/Dockerfile` with the
-   repo root as context, so the reused Python modules are included.
-3. **Variables** tab — add these (full annotated list: `backend/.env.example`):
+2. Service **Settings → Source**: *Root Directory* = `/` (the Dockerfile copies the
+   reused modules from the repo root).
+3. Service **Settings → Build**: *Builder* = **Dockerfile**, *Dockerfile Path* =
+   `backend/Dockerfile`.
+4. Service **Settings → Deploy**:
+   - *Start Command* — leave blank; the image's `CMD` already runs
+     `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
+   - *Health Check Path* = `/health`, *Health Check Timeout* = `10`.
+   - *Restart Policy* = **On Failure**, max **3** retries.
+5. **Variables** tab — add these (full annotated list: `backend/.env.example`):
 
    | Variable | Value | |
    |---|---|---|
@@ -168,9 +181,9 @@ proxied by the API. Existing inline rows stay inline until re-captured.
    The API never calls Claude — `ANTHROPIC_API_KEY` stays on the pipeline (GitHub
    Actions), not here.
 
-4. **Settings → Networking → Generate Domain** to get the public URL. Railway
-   injects `$PORT`; the Dockerfile CMD and `railway.toml` both honour it.
-5. Deploy, then `curl https://<railway-domain>/health`.
+6. **Settings → Networking → Generate Domain** for the public URL. Railway injects
+   `$PORT`; the Dockerfile `CMD` reads it.
+7. Deploy, then `curl https://<railway-domain>/health`.
 
 Railway's paid usage plan keeps the service always running (no scale-to-zero).
 A 512 MB–1 GB instance for an internal tool is ~$5–10/mo of usage.

@@ -61,8 +61,10 @@ account owner / a browser · **(code)** = doable in the repo.
 
 ## Phase 1 — Skeleton, auth & first deploy  ·  ~1 week
 
-> Deploy target is **Railway** (backend) + Cloudflare Pages (SPA). `railway.toml`
-> at the repo root; `backend/fly.toml` kept as an alt. See SETUP §4.
+> Deploy target is **Railway** (backend) + Cloudflare Pages (SPA). Railway is
+> configured in its dashboard — its Config-as-Code (`railway.toml`) was deprecated
+> 2026-08-28 and a new service can't opt in, so there's no `railway.toml` in the
+> repo. `backend/fly.toml` is kept as an alt (Fly's config is unaffected). See SETUP §4.
 
 ### 1.1 Backend
 - [x] `backend/app/main.py` — FastAPI app, CORS, gzip, `/health`, lifespan opens the pool, all routers registered.
@@ -90,8 +92,8 @@ account owner / a browser · **(code)** = doable in the repo.
 - [x] `src/pages/OverviewPage.tsx` — renders `PageRenderer` (real KPIs + the needs-attention digest). Revenue charts land with `services/overview.py`.
 
 ### 1.4 Deploy
-- [x] `railway.toml` (repo root) + `backend/Dockerfile` (`$PORT`-aware) + `backend/fly.toml` (alt). *(scaffolded)*
-- [ ] **(you)** Create the Railway project from the repo; set the Variables (SETUP §4).
+- [x] `backend/Dockerfile` (`$PORT`-aware, repo-root build context) + `backend/fly.toml` (alt). *(Railway Config-as-Code deprecated 2026-08-28 — configure the service in the dashboard per SETUP §4; no `railway.toml`.)*
+- [ ] **(you)** Create the Railway project from the repo; set Build = Dockerfile `backend/Dockerfile`, healthcheck `/health`, then the Variables (SETUP §4).
 - [ ] **(you)** Generate the Railway domain; `curl https://<railway-domain>/health`.
 - [ ] **(you)** Create the Cloudflare Pages project (root `web/`, output `web/dist`); set the 3 `VITE_` vars (SETUP §5).
 - [ ] **(you)** Set the backend `ALLOWED_ORIGINS` + `FRONTEND_BASE` to the Pages URL.
