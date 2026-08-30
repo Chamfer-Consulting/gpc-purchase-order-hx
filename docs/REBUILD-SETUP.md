@@ -32,7 +32,7 @@ Install once:
 | Railway CLI *(optional)* | backend deploy / logs (the dashboard works too) | `brew install railway` |
 | GitHub CLI (`gh`) *(optional)* | trigger workflows | `brew install gh` |
 
-Cloudflare Pages needs no CLI — it builds from the GitHub repo.
+Cloudflare needs no local CLI — it builds the frontend from the GitHub repo.
 
 ---
 
@@ -65,7 +65,7 @@ Cloudflare Pages needs no CLI — it builds from the GitHub repo.
 7. **Database → Extensions**, enable `pg_cron` (needed in Phase 5).
 
 > Keep a scratch note with these values — you'll paste them into Railway,
-> GitHub Actions, and the Cloudflare Pages env in later steps.
+> GitHub Actions, and the Cloudflare build variables in later steps.
 
 ---
 
@@ -210,15 +210,26 @@ backend/fly.toml --dockerfile backend/Dockerfile` from the repo root, secrets vi
 
 ---
 
-## 5. Frontend host — Cloudflare Pages
+## 5. Frontend host — Cloudflare
 
-1. Cloudflare dashboard → **Workers & Pages → Create → Pages → Connect to Git** →
-   pick this repo, branch `po-dashboard-rebuild` (switch to `main` after Phase 4).
-2. Build settings — **Root directory is the one that matters**: the React app is in
-   `web/`, and the repo root has a Python `requirements.txt` (the pipeline's) that
-   Cloudflare will otherwise try to `pip install` before failing on a missing
-   root `package.json`.
-   - **Root directory** (under *Build configurations* → advanced): `web`
+Two Cloudflare products can host the SPA; the choice hinges on **where DNS lives**:
+
+| | Custom domain with DNS **staying at DreamHost** | Needs DNS **on Cloudflare** |
+|---|:---:|:---:|
+| **Pages** (classic) | ✅ CNAME from DreamHost works | — |
+| **Workers** (static assets) | ✗ (custom domains require the Cloudflare zone) | ✅ |
+
+DreamHost is the plan (§5.1), so use **Pages**. The repo also carries
+`web/wrangler.jsonc` for the Workers path if you ever move the zone to Cloudflare.
+
+### Pages (recommended)
+
+1. Cloudflare → **Workers & Pages → Create → Pages → Connect to Git** → this repo,
+   branch `po-dashboard-rebuild` (switch to `main` after Phase 4).
+2. **Build configuration** — the React app is in `web/`, and the repo root has a
+   Python `requirements.txt` (the pipeline's) that Cloudflare will otherwise try to
+   `pip install` before failing on a missing root `package.json`:
+   - **Root directory**: `web`  ← the setting that matters
    - Framework preset: **Vite**
    - Build command: `npm run build`
    - Build output directory: `dist`  ← relative to the root directory, **not** `web/dist`
@@ -226,18 +237,23 @@ backend/fly.toml --dockerfile backend/Dockerfile` from the repo root, secrets vi
    - `VITE_SUPABASE_URL` = `https://<ref>.supabase.co`
    - `VITE_SUPABASE_PUBLISHABLE_KEY` = `sb_publishable_...` (or legacy `VITE_SUPABASE_ANON_KEY` = `<anon key>`)
    - `VITE_API_BASE` = `https://api.garfieldproduce.com`
-4. Save & Deploy. Pages builds to a `*.pages.dev` URL — use it to check the app
-   loads; the permanent `dashboard.garfieldproduce.com` domain is added in §5.1.
-   (`_redirects` in `web/public/` gives React Router its SPA fallback, so deep
-   links and refreshes work.)
+4. Save & deploy → a `*.pages.dev` URL. Check the app loads; the permanent
+   `dashboard.garfieldproduce.com` domain is added in §5.1. `web/public/_redirects`
+   gives React Router its SPA fallback so deep links and refreshes work.
 
 Cost: free.
 
-**If the build ran `pip install -r requirements.txt` then failed with
-`npm error … Could not read package.json … /opt/buildhome/repo/package.json`:**
-the Root directory isn't set to `web`. Fix it in *Settings → Builds & deployments
-→ Build configurations → Root directory* = `web`, set output directory to `dist`,
-and retry the deployment.
+> **Already made a *Worker* instead?** (Its deploy command reads
+> `npx wrangler versions upload` and it has a "Build token".) A Worker custom
+> domain needs the zone on Cloudflare DNS, which conflicts with the DreamHost
+> plan — delete it and create a **Pages** project as above. Keep it only if you
+> intend to move `garfieldproduce.com` DNS to Cloudflare, in which case set its
+> Root directory to `web`, deploy command to `npx wrangler deploy`, and make
+> `web/wrangler.jsonc`'s `name` match the Worker.
+
+**Build ran `pip install -r requirements.txt` then failed with `npm error … Could
+not read package.json … /opt/buildhome/repo/package.json`:** Root directory is
+still `/`. Set it to `web` and retry.
 
 ---
 
@@ -247,7 +263,7 @@ DreamHost is only the DNS authority for `garfieldproduce.com` — it hosts nothi
 here. Both hosts issue their own TLS cert once the CNAME resolves.
 
 1. **Cloudflare Pages** → the project → **Custom domains → Set up a domain** →
-   `dashboard.garfieldproduce.com`. Cloudflare sees the zone isn't on its DNS and
+   `dashboard.garfieldproduce.com`. Pages sees the zone isn't on its DNS and
    shows a **CNAME target** (e.g. `<project>.pages.dev`).
 2. **Railway** → the service → **Settings → Networking → Custom Domain** →
    `api.garfieldproduce.com`. Railway shows a **CNAME target** (e.g.
