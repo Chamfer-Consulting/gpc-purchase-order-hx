@@ -27,7 +27,7 @@ Install once:
 |---|---|---|
 | Python 3.12 | backend (matches the pipeline) | already have it (`.venv312`) |
 | Node.js 20 LTS + npm | React frontend build | `brew install node@20` |
-| `psql` / `pg_dump` (v16+) | database migration | `brew install postgresql@16` |
+| `psql` / `pg_dump` / `pg_restore` (**v17**, ≥ the server major) | database migration (§2) | `brew install postgresql@17` |
 | Supabase CLI | project management, local dev | `brew install supabase/tap/supabase` |
 | Railway CLI *(optional)* | backend deploy / logs (the dashboard works too) | `brew install railway` |
 | GitHub CLI (`gh`) *(optional)* | trigger workflows | `brew install gh` |
@@ -71,9 +71,18 @@ Cloudflare needs no local CLI — it builds the frontend from the GitHub repo.
 
 ## 2. Get the schema + data into Supabase
 
-`SUPABASE_SESSION_URL` = the §1.3 session string (`:5432`).
-`NEON_URL` = the current Neon connection string (the `DATABASE_URL` GitHub Actions
-secret / your local `backend/.env`).
+Run everything from the repo root, on a machine with **Postgres 17 client tools**
+(`pg_dump` / `pg_restore` / `psql` ≥ the server's major — Supabase is PG 17;
+`brew install postgresql@17`).
+
+Set the two connection strings first:
+
+```bash
+# Supabase → Settings → Database → Connection string → Session mode  (port 5432)
+export SUPABASE_SESSION_URL='postgresql://postgres.<ref>:<db-password>@aws-0-<region>.pooler.supabase.com:5432/postgres'
+# the pipeline's current database — the DATABASE_URL GitHub Actions secret / your backend/.env
+export NEON_URL='postgresql://<user>:<pw>@<host>/<db>?sslmode=require'
+```
 
 ### 2.1 Schema — run the migrations
 
@@ -85,59 +94,79 @@ done
 
 `0001_init.sql` builds every table; `0002`–`0003` add two CHECK constraints;
 `0004` drops the retired Drive columns; `0005` enables RLS on every table and
-revokes the `anon`/`authenticated` grants (see §6.2). All idempotent.
-`supabase db push` does the same and records versions — the `psql` loop is the
-reliable path. See `supabase/migrations/README.md`.
+revokes the `anon`/`authenticated` grants (see §6.2). All idempotent. `supabase db
+push` does the same and records versions — the `psql` loop is the reliable path.
+See `supabase/migrations/README.md`.
 
 ### 2.2 Data — data-only dump from Neon
 
-The schema is already in place from 2.1, so this is a **`--data-only`** load, not
-a full restore (a full `pg_restore --clean` would wipe the migrated schema,
-including the RLS lockdown).
+The schema already exists from 2.1, so this is a **`--data-only`** load. Do **not**
+do a full `pg_restore --clean` of a schema+data dump — it would drop the migrated
+schema, RLS lockdown included.
+
+**Step 1 — open the schema for the load.** Neon (pre-cutover) still has
+`purchase_orders.drive_file_id` / `drive_synced_at`; `0004` removed them from
+Supabase, so a data-only `COPY` of those columns would fail. Re-add them
+temporarily:
 
 ```bash
-# 1. dump just the rows
-pg_dump "$NEON_URL" --data-only --no-owner --no-privileges \
-  --format=custom --file=neon_data.pgcustom
+psql "$SUPABASE_SESSION_URL" -c "
+  ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS drive_file_id  TEXT;
+  ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS drive_synced_at TIMESTAMPTZ;"
+```
 
-# 2. load into Supabase (FK checks off during load; sequences come across)
+**Step 2 — dump the rows from Neon.** Add
+`--exclude-table-data='qbo_connection' --exclude-table-data='gmail_connection'`
+here if you'd rather reconnect Gmail / QuickBooks from the app's Settings page
+than carry the OAuth tokens over (see the note below).
+
+```bash
+pg_dump "$NEON_URL" --data-only --no-owner --no-privileges --no-comments \
+  --format=custom --file=neon_data.pgcustom
+```
+
+**Step 3 — load into Supabase.** `--disable-triggers` turns off FK/constraint
+checks for the load (the source data is already consistent) and needs table
+ownership — the migrations ran as `postgres`, which owns them, so it's fine. If it
+still errors on permissions, drop that flag; `pg_dump` orders the tables by FK
+dependency so it loads anyway.
+
+```bash
 pg_restore --data-only --no-owner --no-privileges --disable-triggers \
   --single-transaction --dbname "$SUPABASE_SESSION_URL" neon_data.pgcustom
+```
 
-# 3. verify row counts match
+If it errors `column "X" does not exist` for some column other than the two Drive
+ones, `ALTER TABLE … ADD COLUMN IF NOT EXISTS X …`, rerun, and drop it in step 5.
+
+**Step 4 — verify.** Compares `count(*)` per table between the two databases;
+tables that exist only on Supabase (`audit_log`, `po_documents`, …) are new and
+expected to be empty.
+
+```bash
 python scripts/verify_migration.py "$NEON_URL" "$SUPABASE_SESSION_URL"
 ```
 
-**Schema drift to handle:** Neon (pre-cutover) still has
-`purchase_orders.drive_file_id` / `drive_synced_at`, which `0004` removed from
-Supabase — a data-only COPY would fail on the missing columns. Add them back for
-the load, then drop them again:
+**Step 5 — close the schema back up** (re-applies `0004`):
 
-```sql
--- before step 2
-ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS drive_file_id  TEXT;
-ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS drive_synced_at TIMESTAMPTZ;
--- after step 3 (re-runs 0004)
-ALTER TABLE purchase_orders DROP COLUMN IF EXISTS drive_file_id;
-ALTER TABLE purchase_orders DROP COLUMN IF EXISTS drive_synced_at;
+```bash
+psql "$SUPABASE_SESSION_URL" -c "
+  ALTER TABLE purchase_orders DROP COLUMN IF EXISTS drive_file_id;
+  ALTER TABLE purchase_orders DROP COLUMN IF EXISTS drive_synced_at;"
 ```
 
-(If `pg_restore` still errors `column "X" does not exist`, add that column too and
-drop it after — the new admin-CRUD columns only *add* to Supabase, they don't
-collide.)
+**Step 6 — clean up.** `rm neon_data.pgcustom` — it holds customer data.
 
-`qbo_connection` / `gmail_connection` (OAuth tokens) come across in the dump. That
-means the Supabase app is "already connected" — but then run the pipeline **only**
-against Supabase from here on, or refresh-token rotation will fight the Neon copy.
-Alternatively exclude them (`--exclude-table-data 'qbo_connection' --exclude-table-data 'gmail_connection'`)
-and reconnect Gmail / QuickBooks from the app's Settings page after cutover.
-
-Delete `neon_data.pgcustom` afterward — it holds customer data.
+> **OAuth tokens:** unless excluded in step 2, `qbo_connection` / `gmail_connection`
+> come across, so the Supabase app is immediately "connected" to QuickBooks +
+> Gmail. From that point run the extraction / sync jobs **only** against Supabase —
+> two databases sharing one refresh token means whichever refreshes first
+> invalidates the other.
 
 ### 2.3 No data to carry?
 
-Skip 2.2. Load data later by pointing the extraction pipeline's `DATABASE_URL` at
-Supabase and letting it publish, or with a data-only dump when you have one.
+Skip 2.2 entirely. Load data later by pointing the extraction pipeline's
+`DATABASE_URL` at Supabase and letting it publish.
 
 Do not proceed to §3 until the data is in and `verify_migration.py` is clean.
 
@@ -149,12 +178,11 @@ Do this once §2 verifies clean. **This is the switch** — after it, Neon is id
 
 1. GitHub → repo **Settings → Secrets and variables → Actions** → edit
    `DATABASE_URL` to the Supabase **session** string (`:5432`). This is what the
-   scheduled jobs use. (The API uses the transaction pooler `:6543` — set that as
-   its `DATABASE_URL` in §4 / your local `backend/.env`.)
-2. Sanity-check against Supabase before relying on it: run
-   `python scripts/verify_migration.py` (row-count diff) and, with the pooler URL
-   in `backend/.env`, `uvicorn app.main:app` from `backend/` then
-   `curl localhost:8000/api/overview` with a valid token — numbers should match §2.
+   scheduled jobs use. (The API on Railway uses the transaction pooler `:6543` —
+   set that as its `DATABASE_URL` in §4 / your local `backend/.env`.)
+2. Sanity-check the deployed app: open `https://dashboard.garfieldproduce.com`,
+   sign in, and confirm the analytics pages load numbers that match §2.2's
+   `verify_migration.py` output (re-run it any time with the two URLs).
 3. Manually trigger each workflow once and confirm green:
    - `extract_pos.yml` (with `limit = 5`)
    - `qbo_sync.yml`
