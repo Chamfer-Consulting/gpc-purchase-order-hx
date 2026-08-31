@@ -26,7 +26,7 @@ feed.)
 
 ## Applying
 
-### A — fresh Supabase database, no data to carry over
+Run all five, in order, against the **session** connection:
 
 ```bash
 # SUPABASE_SESSION_URL = Supabase → Settings → Database → Connection string → Session (:5432)
@@ -35,30 +35,16 @@ for f in supabase/migrations/[0-9]*.sql; do
 done
 ```
 
-`0001` builds the schema; `0002`–`0003` add two CHECK constraints; `0004` is a
-no-op on a fresh DB; `0005` enables RLS + revokes the browser-role grants. Bring
-data in afterward by running the extraction pipeline against the new
-`DATABASE_URL`, or with a data-only dump.
+All idempotent. `0001` builds the schema; `0002`–`0003` add two CHECK constraints;
+`0004` drops the retired Drive columns; `0005` enables RLS + revokes the
+browser-role grants. Then load data — a **data-only** `pg_dump`/`pg_restore` from
+Neon (`docs/REBUILD-SETUP.md` §2.2), or by running the extraction pipeline against
+the new `DATABASE_URL`.
 
-### B — migrating an existing (pre-cutover) Neon database
-
-Restore the Neon dump first (see `docs/REBUILD-SETUP.md` §2), **then** apply the
-deltas the old schema predates:
-
-```bash
-for f in supabase/migrations/000[2-9]_*.sql; do
-  echo ">>> $f"; psql "$SUPABASE_SESSION_URL" -v ON_ERROR_STOP=1 -f "$f" || break
-done
-```
-
-Running `0001` after a Neon restore is also harmless (all `IF NOT EXISTS`).
-
-### Supabase CLI
-
-`supabase db push` applies every file not yet recorded in
-`supabase_migrations.schema_migrations`, in filename order — so `0001` → `0004`.
-The plain-`psql` loop above is the reliable path for this repo; use `db push` if
-you want the CLI to track applied versions.
+`supabase db push` does the same and records versions in
+`supabase_migrations.schema_migrations`; the `psql` loop is the reliable path.
+Don't do a full `pg_restore --clean` of a Neon dump *after* the migrations — it
+would drop the migrated schema (RLS lockdown included).
 
 ## Relationship to `schema.sql`
 

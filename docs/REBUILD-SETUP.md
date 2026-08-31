@@ -71,40 +71,11 @@ Cloudflare needs no local CLI — it builds the frontend from the GitHub repo.
 
 ## 2. Get the schema + data into Supabase
 
-`SUPABASE_SESSION_URL` = the §1.3 session string (`:5432`). Two paths:
-
-### 2A. Carry the existing data over (Neon → Supabase)
-
-Use this if the current Neon database has PO/invoice history you want to keep.
+`SUPABASE_SESSION_URL` = the §1.3 session string (`:5432`).
 `NEON_URL` = the current Neon connection string (the `DATABASE_URL` GitHub Actions
 secret / your local `backend/.env`).
 
-```bash
-# 1. dump (schema + data, no ownership/ACL noise)
-pg_dump "$NEON_URL" --no-owner --no-privileges --no-comments \
-  --format=custom --file=neon_dump.pgcustom
-
-# 2. restore into Supabase
-pg_restore --no-owner --no-privileges --clean --if-exists \
-  --dbname "$SUPABASE_SESSION_URL" neon_dump.pgcustom
-
-# 3. verify
-python scripts/verify_migration.py "$NEON_URL" "$SUPABASE_SESSION_URL"
-```
-
-`verify_migration.py` prints `count(*)` per table for both databases and exits
-non-zero on a mismatch. Then apply the **post-cutover deltas** the old schema
-predates:
-
-```bash
-for f in supabase/migrations/000[2-9]_*.sql; do
-  echo ">>> $f"; psql "$SUPABASE_SESSION_URL" -v ON_ERROR_STOP=1 -f "$f" || break
-done
-```
-
-Delete `neon_dump.pgcustom` afterward — it holds customer data.
-
-### 2B. Fresh schema from the migration files (no data to carry)
+### 2.1 Schema — run the migrations
 
 ```bash
 for f in supabase/migrations/[0-9]*.sql; do
@@ -113,22 +84,62 @@ done
 ```
 
 `0001_init.sql` builds every table; `0002`–`0003` add two CHECK constraints;
-`0004` is a no-op on a fresh DB; `0005` enables RLS on every table and revokes the
-`anon`/`authenticated` grants (see §6.2). Load data afterward by running the
-extraction pipeline against the new `DATABASE_URL`, or with a data-only dump.
+`0004` drops the retired Drive columns; `0005` enables RLS on every table and
+revokes the `anon`/`authenticated` grants (see §6.2). All idempotent.
+`supabase db push` does the same and records versions — the `psql` loop is the
+reliable path. See `supabase/migrations/README.md`.
 
-### Notes
+### 2.2 Data — data-only dump from Neon
 
-- `supabase link --project-ref <ref> && supabase db push` applies the same files
-  and records them in `supabase_migrations.schema_migrations`. The `psql` loop
-  above is the reliable path; see `supabase/migrations/README.md`.
-- `0004_drop_gdrive.sql` removes `drive_file_id` — before running it on a
-  Neon-restored DB, do a document-capture backfill (§3.1 / the Settings "Backfill
-  missing PDFs" card) so POs keep a captured `po_pdf`.
-- The API self-applies the `0002`/`0003` DDL on boot, so those two are safe to
-  defer; `0001` and `0004` are not self-applied — run them.
+The schema is already in place from 2.1, so this is a **`--data-only`** load, not
+a full restore (a full `pg_restore --clean` would wipe the migrated schema,
+including the RLS lockdown).
 
-Do not proceed to §3 until the schema is in place.
+```bash
+# 1. dump just the rows
+pg_dump "$NEON_URL" --data-only --no-owner --no-privileges \
+  --format=custom --file=neon_data.pgcustom
+
+# 2. load into Supabase (FK checks off during load; sequences come across)
+pg_restore --data-only --no-owner --no-privileges --disable-triggers \
+  --single-transaction --dbname "$SUPABASE_SESSION_URL" neon_data.pgcustom
+
+# 3. verify row counts match
+python scripts/verify_migration.py "$NEON_URL" "$SUPABASE_SESSION_URL"
+```
+
+**Schema drift to handle:** Neon (pre-cutover) still has
+`purchase_orders.drive_file_id` / `drive_synced_at`, which `0004` removed from
+Supabase — a data-only COPY would fail on the missing columns. Add them back for
+the load, then drop them again:
+
+```sql
+-- before step 2
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS drive_file_id  TEXT;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS drive_synced_at TIMESTAMPTZ;
+-- after step 3 (re-runs 0004)
+ALTER TABLE purchase_orders DROP COLUMN IF EXISTS drive_file_id;
+ALTER TABLE purchase_orders DROP COLUMN IF EXISTS drive_synced_at;
+```
+
+(If `pg_restore` still errors `column "X" does not exist`, add that column too and
+drop it after — the new admin-CRUD columns only *add* to Supabase, they don't
+collide.)
+
+`qbo_connection` / `gmail_connection` (OAuth tokens) come across in the dump. That
+means the Supabase app is "already connected" — but then run the pipeline **only**
+against Supabase from here on, or refresh-token rotation will fight the Neon copy.
+Alternatively exclude them (`--exclude-table-data 'qbo_connection' --exclude-table-data 'gmail_connection'`)
+and reconnect Gmail / QuickBooks from the app's Settings page after cutover.
+
+Delete `neon_data.pgcustom` afterward — it holds customer data.
+
+### 2.3 No data to carry?
+
+Skip 2.2. Load data later by pointing the extraction pipeline's `DATABASE_URL` at
+Supabase and letting it publish, or with a data-only dump when you have one.
+
+Do not proceed to §3 until the data is in and `verify_migration.py` is clean.
 
 ---
 
