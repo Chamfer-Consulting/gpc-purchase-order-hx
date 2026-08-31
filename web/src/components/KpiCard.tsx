@@ -61,13 +61,13 @@ export function KpiCard({
             {value}
           </Text>
           {delta != null && (
-            <Group gap={4} mt={4} wrap="nowrap">
+            <Group gap={4} mt={4} wrap="wrap">
               <DeltaIcon size={14} style={{ color: deltaColor, flex: "none" }} />
               <Text size="sm" style={{ color: deltaColor, ...NUMERIC_STYLE }}>
                 {delta}
               </Text>
               {deltaLabel && (
-                <Text size="xs" c="dimmed" truncate>
+                <Text size="xs" c="dimmed">
                   {deltaLabel}
                 </Text>
               )}
