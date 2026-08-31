@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..auth import AuthedUser, current_user, require_editor
+from ..cache import clear as clear_cache
 from ..reused_db import reused_conn
 from ..services import settings as svc
 
@@ -46,6 +47,7 @@ def set_hidden(body: HideIn, _: AuthedUser = Depends(require_editor)) -> dict:
         raise HTTPException(422, "name is required")
     with reused_conn() as conn:
         svc.set_product_hidden(conn, body.name, body.hidden)
+    clear_cache()  # analytics pages are cached by filter params only — rebuild them
     return {"ok": True}
 
 
@@ -61,6 +63,7 @@ def set_customer_hidden(body: HideIn, _: AuthedUser = Depends(require_editor)) -
         raise HTTPException(422, "name is required")
     with reused_conn() as conn:
         svc.set_customer_hidden(conn, body.name, body.hidden)
+    clear_cache()
     return {"ok": True}
 
 

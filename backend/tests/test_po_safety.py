@@ -157,6 +157,25 @@ def test_line_diff_clean_match():
     assert d["totals"] == {"po": 25.0, "inv": 25.0, "delta": 0.0}
 
 
+def test_ghost_invoice_ids():
+    import pandas as pd
+
+    from app.services.context import ghost_invoice_ids
+
+    items = pd.DataFrame(
+        [
+            {"invoice_id": 1, "category": "product", "product_name": "Arugula"},
+            {"invoice_id": 1, "category": "product", "product_name": "Basil"},    # mixed -> kept
+            {"invoice_id": 2, "category": "product", "product_name": "Arugula"},  # all hidden -> ghost
+            {"invoice_id": 3, "category": "delivery", "product_name": None},      # no product lines -> not ghost
+            {"invoice_id": 4, "category": "product", "product_name": "Cilantro"}, # visible -> kept
+        ]
+    )
+    assert ghost_invoice_ids(items, {"Arugula"}) == {2}
+    assert ghost_invoice_ids(items, set()) == set()
+    assert ghost_invoice_ids(items, {"Arugula", "Basil"}) == {1, 2}
+
+
 def test_line_diff_qty_and_only_rows():
     po = [_li("Arugula", "4oz", 10, 2.5, 25.0), _li("Basil", "2oz", 4, 3.0, 12.0)]
     inv = [_li("Arugula", "4oz", 12, 2.5, 30.0), _li("Cilantro", "2oz", 1, 5.0, 5.0)]

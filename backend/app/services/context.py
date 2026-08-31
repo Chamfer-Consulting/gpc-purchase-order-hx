@@ -29,6 +29,19 @@ class Context:
         return int(self.f_inv["id"].nunique()) if not self.f_inv.empty else 0
 
 
+def ghost_invoice_ids(items: pd.DataFrame, real_hidden: set[str]) -> set:
+    """Invoice ids whose every category='product' line is a hidden product — they
+    had product lines, and none survive the hidden set. Such an invoice is
+    dropped from the dataset entirely (a "ghost"); a mixed invoice with at least
+    one visible product line is kept."""
+    if not real_hidden:
+        return set()
+    prod_lines = items[items["category"] == "product"]
+    had = set(prod_lines["invoice_id"])
+    kept = set(prod_lines[~prod_lines["product_name"].isin(real_hidden)]["invoice_id"])
+    return had - kept
+
+
 def prepared_frames(fp: FilterParams) -> tuple[pd.DataFrame, pd.DataFrame, set[str]]:
     """Everything build_context does EXCEPT the date range: load, prepare, apply the
     customer / product / size / sample / hidden filters. A caller that needs more
@@ -36,13 +49,27 @@ def prepared_frames(fp: FilterParams) -> tuple[pd.DataFrame, pd.DataFrame, set[s
     these once instead of re-querying per window."""
     inv_df, inv_items_df = _dash.load_invoice_data()
     inv, items = _dash.prepare_invoices(inv_df, inv_items_df)
-    hidden = set(_dash.load_hidden_products()) | {"UNKNOWN"}
+    # `real_hidden` = products a human hid in Settings; `hidden` also folds in the
+    # data-quality "UNKNOWN" bucket for line-level filtering. Only `real_hidden`
+    # ghosts an invoice (see below) — UNKNOWN stays line-level-only.
+    real_hidden = set(_dash.load_hidden_products())
+    hidden = real_hidden | {"UNKNOWN"}
 
     # persistent customer visibility — a hidden customer drops out of every page
     hidden_cust = set(_dash.load_hidden_customers())
     if hidden_cust:
         inv = inv[~inv["customer_name"].fillna("").isin(hidden_cust)]
         items = items[items["invoice_id"].isin(inv["id"])]
+
+    # Ghost invoices: an invoice whose *every* product line is a hidden product
+    # contributes nothing, so drop it entirely (invoice count / gross adjust too).
+    # A mixed invoice — at least one still-visible product line — is kept; only
+    # the hidden lines are netted out of the revenue math (below).
+    if real_hidden:
+        ghost_ids = ghost_invoice_ids(items, real_hidden)
+        if ghost_ids:
+            inv = inv[~inv["id"].isin(ghost_ids)]
+            items = items[~items["invoice_id"].isin(ghost_ids)]
 
     # customer filter — fuzzy (PO short names vs invoice long names)
     if fp.customers:

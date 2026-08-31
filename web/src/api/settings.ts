@@ -39,7 +39,13 @@ export function useSetVisible(dim: VisibilityDim) {
     onError: (_e, _v, ctx) => {
       if (ctx?.prev) qc.setQueryData(key, ctx.prev);
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: key }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: key });
+      // every analytics page's numbers depend on the hidden sets
+      for (const k of ["overview", "customers", "products", "explore", "lifecycle", "data-quality"]) {
+        qc.invalidateQueries({ queryKey: [k] });
+      }
+    },
   });
 }
 
