@@ -42,10 +42,18 @@ Cloudflare needs no local CLI — it builds the frontend from the GitHub repo.
    team (US East if unsure). Set a strong database password and save it.
 2. Choose the **Pro** plan ($25/mo) — the free tier pauses after 7 idle days and
    caps the database at 500 MB. Pro gives no pause, 8 GB, daily backups.
-3. When it finishes provisioning, go to **Project Settings → Database** and copy:
-   - **Connection string → Transaction pooler** (`...pooler.supabase.com:6543/postgres`) → this is `DATABASE_URL` for the **API**.
-   - **Connection string → Session** (`...pooler.supabase.com:5432/postgres` or the direct `db.<ref>.supabase.co:5432`) → this is `DATABASE_URL` for the **pipeline scripts / GitHub Actions**.
-   - Swap the password placeholder for the real password in both.
+3. When it finishes provisioning, go to **Project Settings → Database** and copy
+   the **pooler** strings (both are on `aws-0-<region>.pooler.supabase.com`, user
+   `postgres.<ref>`). **Do not use the `db.<ref>.supabase.co` direct host** — it's
+   IPv6-only, so Railway / most PaaS can't reach it (symptom: a bare
+   `OperationalError` on every request).
+   - **Session pooler** (`…pooler.supabase.com:5432`) → `DATABASE_URL` for **both**
+     the API and the pipeline scripts / GitHub Actions. Simplest; supports
+     everything.
+   - **Transaction pooler** (`…pooler.supabase.com:6543`) also works for the API
+     (the pool sets `prepare_threshold=None` for it) — use it only if you later
+     need more concurrent connections.
+   - Swap the password placeholder for the real password.
 4. **Project Settings → API**, copy the **Project URL** (`https://<ref>.supabase.co`).
 5. **Project Settings → API Keys** — Supabase's current key model (the legacy
    `anon` / `service_role` keys still work until **end of 2026**, so either set
@@ -195,7 +203,7 @@ Do this once §2 verifies clean. **This is the switch** — after it, Neon is id
 
 1. GitHub → repo **Settings → Secrets and variables → Actions** → edit
    `DATABASE_URL` to the Supabase **session** string (`:5432`). This is what the
-   scheduled jobs use. (The API on Railway uses the transaction pooler `:6543` —
+   scheduled jobs use. (The API on Railway uses the SAME session pooler string —
    set that as its `DATABASE_URL` in §4 / your local `backend/.env`.)
 2. Sanity-check the deployed app: open `https://dashboard.garfieldproduce.com`,
    sign in, and confirm the analytics pages load numbers that match §2.2's
@@ -248,7 +256,7 @@ proxied by the API. Existing inline rows stay inline until re-captured.
 
    | Variable | Value | |
    |---|---|---|
-   | `DATABASE_URL` | Supabase **transaction pooler** URL (`:6543`) | required |
+   | `DATABASE_URL` | Supabase **session pooler** URL (`aws-0-<region>.pooler.supabase.com:5432`, user `postgres.<ref>`) — NOT the `db.<ref>.supabase.co` direct host | required |
    | `SUPABASE_URL` | `https://<ref>.supabase.co` | required — token verification (JWKS) + Storage |
    | `SUPABASE_JWT_SECRET` | Supabase → API Keys → JWT Keys → Legacy JWT Secret | only if the project still signs HS256 (§1.6) |
    | `ALLOWED_ORIGINS` | `https://dashboard.garfieldproduce.com` | required in prod |
@@ -490,8 +498,7 @@ Env-var name in **bold**. "Railway" = the API service's Variables tab.
 
 | Value | GitHub Actions (pipeline) | Railway (API) | Cloudflare Pages (SPA) |
 |---|:---:|:---:|:---:|
-| Supabase **session** URL (`:5432`) | ✅ **DATABASE_URL** | | |
-| Supabase **transaction pooler** URL (`:6543`) | | ✅ **DATABASE_URL** | |
+| Supabase **session pooler** URL (`:5432`) | ✅ **DATABASE_URL** | ✅ **DATABASE_URL** | |
 | Supabase project URL | ✅ (doc_capture) | ✅ **SUPABASE_URL** *(token verification + Storage)* | ✅ **VITE_SUPABASE_URL** |
 | Supabase publishable / `anon` key | | | ✅ **VITE_SUPABASE_PUBLISHABLE_KEY** (or **_ANON_KEY**) |
 | Supabase secret / `service_role` key | ✅ (doc_capture) | ✅ **SUPABASE_SECRET_KEY** (or **_SERVICE_KEY**) — optional, Storage only | |
