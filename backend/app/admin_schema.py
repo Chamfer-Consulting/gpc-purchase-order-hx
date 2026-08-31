@@ -80,6 +80,12 @@ BEGIN
             ADD CONSTRAINT uq_saved_views_owner_kind_name UNIQUE (owner, kind, name);
     END IF;
 END $$;
+
+-- Customer visibility — the customer analogue of hidden_products (0008).
+CREATE TABLE IF NOT EXISTS hidden_customers (
+    customer_name TEXT PRIMARY KEY,
+    hidden_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
 
 

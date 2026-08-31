@@ -8,6 +8,7 @@ import {
   Code,
   Group,
   ScrollArea,
+  SegmentedControl,
   Stack,
   Switch,
   Text,
@@ -21,7 +22,7 @@ import {
   type ConnectionsStatus,
 } from "@/api/connections";
 import { useBackfillDocs } from "@/api/poDocs";
-import { useHiddenProducts, useSetHidden } from "@/api/settings";
+import { useSetVisible, useVisibility, type VisibilityDim } from "@/api/settings";
 import { useMe } from "@/api/me";
 import { confirmAction } from "@/lib/modals";
 import { notifySuccess } from "@/lib/notify";
@@ -123,80 +124,132 @@ export function SettingsPage() {
         </QueryBoundary>
 
         <DocumentsCard />
-        <ProductVisibilityCard />
+        <VisibilityCard />
       </Stack>
     </PageLayout>
   );
 }
 
-function ProductVisibilityCard() {
-  const { data, isLoading, error, refetch } = useHiddenProducts();
-  const { canEdit } = useMe();
-  const setHidden = useSetHidden();
-  const [q, setQ] = useState("");
-
-  const shown = useMemo(() => {
-    const rows = data ?? [];
-    const needle = q.trim().toLowerCase();
-    const filtered = needle
-      ? rows.filter((r) => r.product_name.toLowerCase().includes(needle))
-      : rows;
-    // Stable order (most-used first) so toggling a switch doesn't make the row jump.
-    return [...filtered].sort((a, b) => b.n_lines - a.n_lines || a.product_name.localeCompare(b.product_name));
-  }, [data, q]);
-
-  const hiddenCount = (data ?? []).filter((r) => r.hidden).length;
-
+function VisibilityCard() {
+  const [dim, setDim] = useState<VisibilityDim>("products");
   return (
     <SectionCard
-      title="Product visibility"
-      subtitle={`Hidden products are excluded from every analytics page and the reference-price table. ${hiddenCount} hidden now.`}
+      title="Visibility"
+      subtitle="Hidden products and customers are dropped from every analytics page (and hidden products from the reference-price table)."
+      actions={
+        <SegmentedControl
+          size="xs"
+          value={dim}
+          onChange={(v) => setDim(v as VisibilityDim)}
+          data={[
+            { value: "products", label: "Products" },
+            { value: "customers", label: "Customers" },
+          ]}
+        />
+      }
     >
-      <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
-        {data && (
-          <>
-            <TextInput
-              size="xs"
-              aria-label="Filter products"
-              placeholder="Filter products…"
-              value={q}
-              onChange={(e) => setQ(e.currentTarget.value)}
-            />
-            <ScrollArea.Autosize mah={320}>
-              <Stack gap={2}>
-                {shown.map((r) => (
-                  <Group key={r.product_name} justify="space-between" wrap="nowrap">
-                    <Text size="sm" truncate>
-                      {r.product_name}{" "}
-                      <Text span size="xs" c="dimmed">
-                        ({r.n_lines} lines)
-                      </Text>
-                    </Text>
-                    <Switch
-                      size="xs"
-                      aria-label={`Hide ${r.product_name}`}
-                      disabled={!canEdit}
-                      checked={r.hidden}
-                      onChange={(e) =>
-                        setHidden.mutate({
-                          product_name: r.product_name,
-                          hidden: e.currentTarget.checked,
-                        })
-                      }
-                    />
-                  </Group>
-                ))}
-                {shown.length === 0 && (
-                  <Text size="xs" c="dimmed">
-                    No matches.
-                  </Text>
-                )}
-              </Stack>
-            </ScrollArea.Autosize>
-          </>
-        )}
-      </QueryBoundary>
+      <VisibilityList key={dim} dim={dim} />
     </SectionCard>
+  );
+}
+
+const UNIT: Record<VisibilityDim, string> = { products: "lines", customers: "invoices" };
+
+function VisibilityList({ dim }: { dim: VisibilityDim }) {
+  const { data, isLoading, error, refetch } = useVisibility(dim);
+  const { canEdit } = useMe();
+  const setVisible = useSetVisible(dim);
+  const [q, setQ] = useState("");
+  const [show, setShow] = useState<"all" | "visible" | "hidden">("all");
+
+  const rows = data ?? [];
+  const hiddenCount = rows.filter((r) => r.hidden).length;
+  const visibleCount = rows.length - hiddenCount;
+
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return rows
+      .filter((r) => (needle ? r.name.toLowerCase().includes(needle) : true))
+      .filter((r) => (show === "all" ? true : show === "hidden" ? r.hidden : !r.hidden))
+      // stable order (most-used first) so toggling a switch never makes a row jump
+      .sort((a, b) => b.n_lines - a.n_lines || a.name.localeCompare(b.name));
+  }, [rows, q, show]);
+
+  return (
+    <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
+      <Group gap="sm" wrap="wrap">
+        <Text size="sm" fw={600}>
+          <Text span c="var(--gp-status-good)">
+            {visibleCount}
+          </Text>{" "}
+          visible ·{" "}
+          <Text span c={hiddenCount ? "orange" : undefined}>
+            {hiddenCount}
+          </Text>{" "}
+          hidden
+        </Text>
+        <SegmentedControl
+          size="xs"
+          ml="auto"
+          value={show}
+          onChange={(v) => setShow(v as typeof show)}
+          data={[
+            { value: "all", label: "All" },
+            { value: "visible", label: "Visible" },
+            { value: "hidden", label: "Hidden" },
+          ]}
+        />
+      </Group>
+
+      <TextInput
+        size="xs"
+        aria-label={`Filter ${dim}`}
+        placeholder={`Filter ${dim}…`}
+        value={q}
+        onChange={(e) => setQ(e.currentTarget.value)}
+      />
+
+      <ScrollArea.Autosize mah={360}>
+        <Stack gap={0}>
+          {shown.map((r) => (
+            <Group
+              key={r.name}
+              justify="space-between"
+              wrap="nowrap"
+              py={4}
+              px={2}
+              style={{ borderTop: "1px solid var(--mantine-color-default-border)" }}
+            >
+              <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+                <Text size="sm" truncate c={r.hidden ? "dimmed" : undefined}>
+                  {r.name}
+                </Text>
+                <Text span size="xs" c="dimmed" style={{ flex: "none" }}>
+                  ({r.n_lines} {UNIT[dim]})
+                </Text>
+                {r.hidden && (
+                  <Badge size="xs" color="orange" variant="light" style={{ flex: "none" }}>
+                    hidden
+                  </Badge>
+                )}
+              </Group>
+              <Switch
+                size="xs"
+                aria-label={`${r.hidden ? "Show" : "Hide"} ${r.name}`}
+                disabled={!canEdit}
+                checked={!r.hidden}
+                onChange={(e) => setVisible.mutate({ name: r.name, hidden: !e.currentTarget.checked })}
+              />
+            </Group>
+          ))}
+          {shown.length === 0 && (
+            <Text size="xs" c="dimmed" py="sm">
+              {rows.length === 0 ? `No ${dim} yet.` : "No matches."}
+            </Text>
+          )}
+        </Stack>
+      </ScrollArea.Autosize>
+    </QueryBoundary>
   );
 }
 

@@ -38,6 +38,12 @@ def prepared_frames(fp: FilterParams) -> tuple[pd.DataFrame, pd.DataFrame, set[s
     inv, items = _dash.prepare_invoices(inv_df, inv_items_df)
     hidden = set(_dash.load_hidden_products()) | {"UNKNOWN"}
 
+    # persistent customer visibility — a hidden customer drops out of every page
+    hidden_cust = set(_dash.load_hidden_customers())
+    if hidden_cust:
+        inv = inv[~inv["customer_name"].fillna("").isin(hidden_cust)]
+        items = items[items["invoice_id"].isin(inv["id"])]
+
     # customer filter — fuzzy (PO short names vs invoice long names)
     if fp.customers:
         def _match(name: str) -> bool:

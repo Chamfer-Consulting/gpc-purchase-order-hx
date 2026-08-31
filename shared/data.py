@@ -726,6 +726,22 @@ def load_hidden_products() -> set[str]:
         conn.close()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_hidden_customers() -> set[str]:
+    """Invoice customer_name values excluded from every analytics page (the
+    customer analogue of load_hidden_products; hidden_customers, 0008)."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT customer_name FROM hidden_customers")
+            return {row[0] for row in cur.fetchall()}
+    except psycopg2.Error:
+        conn.rollback()
+        return set()
+    finally:
+        conn.close()
+
+
 def set_product_hidden(product_name: str, hidden: bool) -> None:
     conn = psycopg2.connect(get_database_url())
     try:

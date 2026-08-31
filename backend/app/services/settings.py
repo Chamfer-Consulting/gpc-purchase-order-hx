@@ -24,7 +24,7 @@ def list_products(conn) -> list[dict]:
                   AND li.product_name IS NOT NULL AND li.product_name <> ''
                 GROUP BY li.product_name
             )
-            SELECT COALESCE(s.product_name, h.product_name) AS product_name,
+            SELECT COALESCE(s.product_name, h.product_name) AS name,
                    COALESCE(s.n_lines, 0) AS n_lines,
                    (h.product_name IS NOT NULL) AS hidden
             FROM seen s
@@ -36,15 +36,46 @@ def list_products(conn) -> list[dict]:
 
 
 def set_product_hidden(conn, product_name: str, hidden: bool) -> None:
+    _set_hidden(conn, "hidden_products", "product_name", product_name, hidden)
+
+
+def list_customers(conn) -> list[dict]:
+    """Every customer_name seen on an invoice (plus any still-hidden name that no
+    longer appears), each with its current hidden flag and an invoice count.
+    Keyed on the invoice customer_name — the value services/context.py groups by."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            WITH seen AS (
+                SELECT customer_name, count(*) AS n_lines
+                FROM qbo_invoices
+                WHERE customer_name IS NOT NULL AND customer_name <> ''
+                GROUP BY customer_name
+            )
+            SELECT COALESCE(s.customer_name, h.customer_name) AS name,
+                   COALESCE(s.n_lines, 0) AS n_lines,
+                   (h.customer_name IS NOT NULL) AS hidden
+            FROM seen s
+            FULL OUTER JOIN hidden_customers h ON h.customer_name = s.customer_name
+            ORDER BY 1
+            """
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def set_customer_hidden(conn, customer_name: str, hidden: bool) -> None:
+    _set_hidden(conn, "hidden_customers", "customer_name", customer_name, hidden)
+
+
+def _set_hidden(conn, table: str, col: str, value: str, hidden: bool) -> None:
     with conn.cursor() as cur:
         if hidden:
             cur.execute(
-                "INSERT INTO hidden_products (product_name) VALUES (%s) "
-                "ON CONFLICT (product_name) DO NOTHING",
-                (product_name,),
+                f"INSERT INTO {table} ({col}) VALUES (%s) ON CONFLICT ({col}) DO NOTHING",
+                (value,),
             )
         else:
-            cur.execute("DELETE FROM hidden_products WHERE product_name = %s", (product_name,))
+            cur.execute(f"DELETE FROM {table} WHERE {col} = %s", (value,))
     conn.commit()
 
 

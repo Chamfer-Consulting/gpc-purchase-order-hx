@@ -99,7 +99,7 @@ export const NAV_SECTIONS: NavSection[] = [
         label: "Settings",
         to: "/settings",
         icon: IconSettings,
-        description: "Connections, product visibility and saved views.",
+        description: "Connections, product and customer visibility, saved views.",
       },
     ],
   },

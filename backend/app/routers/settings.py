@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
 class HideIn(BaseModel):
-    product_name: str
+    name: str
     hidden: bool
 
 
@@ -42,10 +42,25 @@ def hidden_products(_: AuthedUser = Depends(current_user)) -> list[dict]:
 
 @router.post("/hidden-products")
 def set_hidden(body: HideIn, _: AuthedUser = Depends(require_editor)) -> dict:
-    if not body.product_name.strip():
-        raise HTTPException(422, "product_name is required")
+    if not body.name.strip():
+        raise HTTPException(422, "name is required")
     with reused_conn() as conn:
-        svc.set_product_hidden(conn, body.product_name, body.hidden)
+        svc.set_product_hidden(conn, body.name, body.hidden)
+    return {"ok": True}
+
+
+@router.get("/hidden-customers")
+def hidden_customers(_: AuthedUser = Depends(current_user)) -> list[dict]:
+    with reused_conn() as conn:
+        return svc.list_customers(conn)
+
+
+@router.post("/hidden-customers")
+def set_customer_hidden(body: HideIn, _: AuthedUser = Depends(require_editor)) -> dict:
+    if not body.name.strip():
+        raise HTTPException(422, "name is required")
+    with reused_conn() as conn:
+        svc.set_customer_hidden(conn, body.name, body.hidden)
     return {"ok": True}
 
 

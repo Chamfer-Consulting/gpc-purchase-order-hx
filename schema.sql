@@ -286,6 +286,13 @@ CREATE TABLE IF NOT EXISTS hidden_products (
     hidden_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Same idea for customers (keyed on the invoice customer_name the analytics
+-- context groups by). Excluded from every analytics page (0008).
+CREATE TABLE IF NOT EXISTS hidden_customers (
+    customer_name TEXT PRIMARY KEY,
+    hidden_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Gmail OAuth connection for the cloud extraction pipeline (run_cloud_extraction.py,
 -- run manually or via a scheduled GitHub Action) — same shape as qbo_connection above,
 -- minus a realm_id since Gmail has no equivalent concept. last_synced_at is the

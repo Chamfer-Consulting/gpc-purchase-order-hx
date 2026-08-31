@@ -110,6 +110,7 @@ def test_oauth_callback_state_guard():
         "/api/explore/pivot",
         "/api/explore/compare?a_start=2026-01-01&a_end=2026-01-31&b_start=2026-02-01&b_end=2026-02-28",
         "/api/settings/hidden-products",
+        "/api/settings/hidden-customers",
         "/api/settings/views?kind=customers",
         "/api/overview",
         "/api/filters/options",
@@ -143,9 +144,10 @@ def test_all_data_routes_require_auth(path):
         ("post", "/api/po/documents/backfill", {"sources": ["gmail"], "limit": 5}),
         ("delete", "/api/po/1/documents/1", None),
         ("post", "/api/pricing", {"rows": [], "delete": []}),
-        ("post", "/api/settings/hidden-products", {"product_name": "x", "hidden": True}),
+        ("post", "/api/settings/hidden-products", {"name": "x", "hidden": True}),
+        ("post", "/api/settings/hidden-customers", {"name": "x", "hidden": True}),
         ("post", "/api/settings/views", {"kind": "customers", "name": "x", "config": {}}),
-        ("delete", "/api/settings/views", {"name": "x"}),
+        ("delete", "/api/settings/views", {"kind": "customers", "name": "x"}),
     ],
 )
 def test_admin_mutations_require_auth(method, path, body):

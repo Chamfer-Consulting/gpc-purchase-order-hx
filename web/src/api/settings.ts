@@ -1,42 +1,45 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiSend } from "@/lib/api";
 
-export interface ProductVisibility {
-  product_name: string;
+export type VisibilityDim = "products" | "customers";
+
+export interface VisibilityRow {
+  name: string;
   n_lines: number;
   hidden: boolean;
 }
 
-export function useHiddenProducts() {
+const visKey = (dim: VisibilityDim) => ["visibility", dim] as const;
+
+export function useVisibility(dim: VisibilityDim) {
   return useQuery({
-    queryKey: ["hidden-products"],
-    queryFn: () => apiGet<ProductVisibility[]>("/api/settings/hidden-products"),
+    queryKey: visKey(dim),
+    queryFn: () => apiGet<VisibilityRow[]>(`/api/settings/hidden-${dim}`),
     staleTime: 5 * 60_000,
   });
 }
 
-export function useSetHidden() {
+export function useSetVisible(dim: VisibilityDim) {
   const qc = useQueryClient();
+  const key = visKey(dim);
   return useMutation({
-    mutationFn: (body: { product_name: string; hidden: boolean }) =>
-      apiSend<{ ok: boolean }>("POST", "/api/settings/hidden-products", body),
+    mutationFn: (body: { name: string; hidden: boolean }) =>
+      apiSend<{ ok: boolean }>("POST", `/api/settings/hidden-${dim}`, body),
     onMutate: async (body) => {
-      await qc.cancelQueries({ queryKey: ["hidden-products"] });
-      const prev = qc.getQueryData<ProductVisibility[]>(["hidden-products"]);
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<VisibilityRow[]>(key);
       if (prev) {
-        qc.setQueryData<ProductVisibility[]>(
-          ["hidden-products"],
-          prev.map((r) =>
-            r.product_name === body.product_name ? { ...r, hidden: body.hidden } : r,
-          ),
+        qc.setQueryData<VisibilityRow[]>(
+          key,
+          prev.map((r) => (r.name === body.name ? { ...r, hidden: body.hidden } : r)),
         );
       }
       return { prev };
     },
     onError: (_e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(["hidden-products"], ctx.prev);
+      if (ctx?.prev) qc.setQueryData(key, ctx.prev);
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ["hidden-products"] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: key }),
   });
 }
 
