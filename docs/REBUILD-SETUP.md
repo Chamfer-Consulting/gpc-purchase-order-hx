@@ -97,7 +97,7 @@ non-zero on a mismatch. Then apply the **post-cutover deltas** the old schema
 predates:
 
 ```bash
-for f in supabase/migrations/000[2-4]_*.sql; do
+for f in supabase/migrations/000[2-9]_*.sql; do
   echo ">>> $f"; psql "$SUPABASE_SESSION_URL" -v ON_ERROR_STOP=1 -f "$f" || break
 done
 ```
@@ -112,9 +112,10 @@ for f in supabase/migrations/[0-9]*.sql; do
 done
 ```
 
-`0001_init.sql` builds every table; `0002`–`0004` add two CHECK constraints and
-are otherwise no-ops on a fresh DB. Load data afterward by running the extraction
-pipeline against the new `DATABASE_URL`, or with a data-only dump.
+`0001_init.sql` builds every table; `0002`–`0003` add two CHECK constraints;
+`0004` is a no-op on a fresh DB; `0005` enables RLS on every table and revokes the
+`anon`/`authenticated` grants (see §6.2). Load data afterward by running the
+extraction pipeline against the new `DATABASE_URL`, or with a data-only dump.
 
 ### Notes
 
@@ -350,9 +351,15 @@ The login page offers **Continue with Google** (SSO) and email + password.
      (and `http://localhost:5173/auth/callback` for local dev, plus the
      `*.pages.dev` URL while testing). The SPA sends the browser back here after
      Google.
-4. **Realtime** (for the live review queue): Database → Publications →
-   `supabase_realtime` → add `purchase_orders` and `extraction_reviews`. Without
-   this the queue just doesn't auto-refresh; nothing breaks.
+4. **Leaked password protection**: Auth → Providers → Email (or Auth settings) →
+   enable "Prevent use of leaked passwords" (HaveIBeenPwned). Minor with SSO, but
+   the security advisor flags it.
+5. **Realtime** (optional — the live review-queue refresh): Database →
+   Publications → `supabase_realtime` → add `purchase_orders` and
+   `extraction_reviews`. With the RLS lockdown (§6.2) this **also needs** a
+   `FOR SELECT TO authenticated USING (true)` policy on just those two tables, or
+   no change events reach the browser. Skipping all of this is fine — the queue
+   just doesn't auto-refresh.
 
 ### 6.1 Google SSO
 
@@ -377,6 +384,23 @@ The login page offers **Continue with Google** (SSO) and email + password.
      user.
 5. Test: open `https://dashboard.garfieldproduce.com`, click **Continue with
    Google**, approve — you land back on `/auth/callback`, then the Overview page.
+
+### 6.2 Row-level security
+
+Applied by `supabase/migrations/0005_rls_lockdown.sql` (part of §2). The model:
+
+- **All DB access is server-side.** The API connects as `postgres` (`BYPASSRLS`);
+  the browser only calls Supabase **Auth**, never PostgREST (`/rest/v1/`).
+- `0005` therefore enables **RLS with no policies** on every `public` table (=
+  deny-all for `anon` / `authenticated`) and **revokes every `anon` /
+  `authenticated` table + sequence grant**. A leaked publishable key (it ships in
+  the SPA bundle) or a signed-in user cannot read or write any row via PostgREST.
+- An `ensure_rls` event trigger enables RLS on any table created later.
+- The advisor's 17× **"RLS enabled, no policy" is INFO-level and expected** — do
+  not add policies. (`get_advisors` should show nothing above INFO after §6, step 4.)
+- If you ever want the SPA to query Supabase directly (`supabase-js` `.from(...)`),
+  that's a real design change: it needs per-table policies and re-granting the
+  `authenticated` role — reconsider before doing it.
 
 ---
 

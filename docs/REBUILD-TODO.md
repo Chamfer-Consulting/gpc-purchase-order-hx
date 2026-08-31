@@ -217,6 +217,7 @@ account owner / a browser · **(code)** = doable in the repo.
 
 - [ ] Every new endpoint requires a valid Supabase JWT.
 - [ ] No secret in `web/` beyond the Supabase URL + publishable/`anon` key + API base.
+- [x] DB locked to the server: RLS deny-all on every `public` table + no `anon`/`authenticated` grants (`0005_rls_lockdown.sql`, applied to the live project). Any new table auto-gets RLS via the `ensure_rls` event trigger. Don't add a `supabase-js` `.from()` call without revisiting this.
 - [ ] Pipeline scripts on the **session** connection; API on the **transaction pooler**.
 - [ ] Each merged phase leaves `po-dashboard-rebuild` in a deployable state.
 
@@ -240,8 +241,8 @@ Model: **soft delete** (a `status` enum, rows preserved) + an **audit_log**.
 - [x] Backfill + scheduled capture — `po_doc_capture.py` (repo-root core, no FastAPI), `run_doc_capture.py` + `.github/workflows/doc_capture.yml` (nightly sweep after extract + qbo_sync), `POST /api/po/documents/backfill` (on-demand, capped at 1000/source), a "Backfill missing PDFs" card on Settings.
 - [x] Supabase Storage offload — `doc_storage.py` (REST, no SDK); `store_document` uploads there + leaves `content` NULL when `SUPABASE_URL`+`SUPABASE_SECRET_KEY` are set (bucket `po-documents`), reads proxy through the API. Inert/inline when unset. SETUP §3.1.
 - [x] Google Drive removed — `gdrive_client.py` deleted, the "Sync Drive links" button + the Edit-PO "Original PDF (Drive)" link removed, `google-auth` dep + `gdrive_*` secrets dropped, `qbo_matcher` SELECTs no longer read `drive_file_id`. Original-PDF archival is entirely `po_documents` on Supabase. Columns dropped by `supabase/migrations/0004_drop_gdrive.sql`.
-- [x] Migrations renumbered — `supabase/migrations/0001_init.sql` (full base schema, from-scratch-safe) + `0002_admin_crud` / `0003_po_documents` / `0004_drop_gdrive` (deltas). `schema.sql` reordered so `po_documents` follows `qbo_invoices`.
-- [ ] **(you)** Get the schema into Supabase — SETUP §2: **2A** restore the Neon dump then run `000[2-4]_*.sql`, or **2B** run `[0-9]*.sql` for a fresh DB. Add `doc_capture.yml`'s secrets in GitHub Actions; optionally create the `po-documents` Storage bucket (§3.1). Before `0004_drop_gdrive` on a Neon-restored DB, run the doc-capture backfill so POs keep a captured `po_pdf`.
+- [x] Migrations renumbered — `supabase/migrations/0001_init.sql` (full base schema, from-scratch-safe) + `0002_admin_crud` / `0003_po_documents` / `0004_drop_gdrive` (deltas) + `0005_rls_lockdown` (RLS + grant revoke, applied to the live project). `schema.sql` reordered so `po_documents` follows `qbo_invoices`.
+- [ ] **(you)** Get the schema into Supabase — SETUP §2: **2A** restore the Neon dump then run `000[2-9]_*.sql`, or **2B** run `[0-9]*.sql` for a fresh DB. Add `doc_capture.yml`'s secrets in GitHub Actions; optionally create the `po-documents` Storage bucket (§3.1). Before `0004_drop_gdrive` on a Neon-restored DB, run the doc-capture backfill so POs keep a captured `po_pdf`.
 - [ ] Optional: capture *inside* the extraction pipeline too (so a brand-new PO has its PDF before the nightly sweep) — currently the sweep covers it within a day.
 - [x] Bulk lifecycle action from the review queue — `POST /api/bulk/po-status`
       (`po_admin.bulk_set_status`, commits per PO, returns per-id outcomes); the
