@@ -303,9 +303,14 @@ TLS or 404 error because the host doesn't yet route that Host header.
    ```
 
    `api.garfieldproduce.com` returning `{"code":404,"message":"Application not
-   found","request_id":...}` = the CNAME resolves to Railway's edge but the
-   Custom Domain isn't registered on the **service** yet (step 2). The raw
-   `*.up.railway.app` `/health` will still work in that state.
+   found",...}` (or a response with `x-railway-fallback: true`) = the CNAME
+   resolves to Railway's edge but the Custom Domain isn't **verified** on the
+   service yet. Both records must match what Railway's Custom Domain panel shows
+   **right now**: the `<hash>.up.railway.app` CNAME target *and* the
+   `_railway-verify.<sub>` TXT value. Railway mints a **new** verify token every
+   time you remove and re-add the domain — if you've retried a few times, copy
+   the token that's on the panel now and overwrite the DNS TXT with it. The raw
+   `*.up.railway.app` `/health` keeps working throughout.
 5. Confirm the env vars already point at the custom domains (they do, per §4/§5):
    `VITE_API_BASE`, `ALLOWED_ORIGINS`, `FRONTEND_BASE`, `GMAIL_REDIRECT_URI`,
    `QBO_REDIRECT_URI`. Redeploy the Pages project so the built bundle picks up
