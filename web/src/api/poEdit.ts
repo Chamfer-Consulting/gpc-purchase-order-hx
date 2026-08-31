@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiSend } from "@/lib/api";
 
+// Lifecycle-status vocabulary + its colour tag now live with the design tokens
+// so every list/badge agrees. Re-exported here for existing importers.
+import type { PoStatus } from "@/theme/tokens";
+export { PO_STATUSES, STATUS_COLOR } from "@/theme/tokens";
+export type { PoStatus };
+
 export interface PoLineItem {
   id?: number;
   product_raw?: string | null;
@@ -18,33 +24,6 @@ export interface PoLineItem {
   voided?: boolean;
   void_reason?: string | null;
 }
-
-export type PoStatus =
-  | "active"
-  | "draft"
-  | "cancelled"
-  | "withdrawn"
-  | "voided"
-  | "deleted";
-
-export const PO_STATUSES: PoStatus[] = [
-  "active",
-  "draft",
-  "cancelled",
-  "withdrawn",
-  "voided",
-  "deleted",
-];
-
-/** Colour per lifecycle status — the "tag" shown on a PO wherever it's listed. */
-export const STATUS_COLOR: Record<PoStatus, string> = {
-  active: "teal",
-  draft: "gray",
-  cancelled: "orange",
-  withdrawn: "yellow",
-  voided: "red",
-  deleted: "red",
-};
 
 export interface PoHeader {
   id: number;

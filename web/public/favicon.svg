@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Garfield Produce">
+  <rect width="32" height="32" rx="8" fill="#173d28"/>
+  <path d="M16 25v-9" fill="none" stroke="#8fc492" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M16 17c0-4.4-3-7.4-8-7.9 0 4.9 3 8 8 7.9Z" fill="#3c8d40"/>
+  <path d="M16 15.5c.2-3.8 2.8-6.4 7-6.9-.1 4.2-2.8 6.9-7 6.9Z" fill="#6db070"/>
+  <circle cx="16" cy="8.4" r="2.1" fill="#e0a32e"/>
+</svg>

@@ -1,0 +1,131 @@
+import {
+  IconArchive,
+  IconArrowsShuffle,
+  IconClipboardCheck,
+  IconLayoutDashboard,
+  IconLeaf,
+  IconRoute,
+  IconSettings,
+  IconShieldCheck,
+  IconTable,
+  IconTag,
+  IconUsers,
+  type IconProps,
+} from "@tabler/icons-react";
+import type { ComponentType } from "react";
+
+export interface NavItem {
+  label: string;
+  to: string;
+  icon: ComponentType<IconProps>;
+  /** one-line page description, reused as the PageLayout subtitle */
+  description: string;
+}
+
+export interface NavSection {
+  label: string;
+  items: NavItem[];
+}
+
+export const NAV_SECTIONS: NavSection[] = [
+  {
+    label: "Analyse",
+    items: [
+      {
+        label: "Overview",
+        to: "/",
+        icon: IconLayoutDashboard,
+        description: "Revenue and order health across the selected scope.",
+      },
+      {
+        label: "Customer 360",
+        to: "/customers",
+        icon: IconUsers,
+        description: "Per-customer revenue, cadence, product mix and price history.",
+      },
+      {
+        label: "Products & Sizes",
+        to: "/products",
+        icon: IconLeaf,
+        description: "Volume and revenue by product and container size.",
+      },
+      {
+        label: "Explore",
+        to: "/explore",
+        icon: IconTable,
+        description: "Pivot revenue, orders and quantity by any dimension and grain.",
+      },
+      {
+        label: "Order Lifecycle",
+        to: "/lifecycle",
+        icon: IconRoute,
+        description: "Requested → revised → shipped → invoiced, and where value leaks.",
+      },
+    ],
+  },
+  {
+    label: "Operate",
+    items: [
+      {
+        label: "Match & Reconcile",
+        to: "/match",
+        icon: IconArrowsShuffle,
+        description: "Link purchase orders to QuickBooks invoices and resolve mismatches.",
+      },
+      {
+        label: "Extraction Review",
+        to: "/review",
+        icon: IconClipboardCheck,
+        description: "Approve, correct and train the purchase-order extractor.",
+      },
+      {
+        label: "Data Quality",
+        to: "/data-quality",
+        icon: IconShieldCheck,
+        description: "Extraction errors, math checks and price anomalies to clear.",
+      },
+      {
+        label: "Pricing",
+        to: "/pricing",
+        icon: IconTag,
+        description: "Reference prices per customer and product, with price history.",
+      },
+    ],
+  },
+  {
+    label: "Admin",
+    items: [
+      {
+        label: "Archive",
+        to: "/archive",
+        icon: IconArchive,
+        description: "Cancelled, withdrawn, voided and deleted orders — hidden from reports.",
+      },
+      {
+        label: "Settings",
+        to: "/settings",
+        icon: IconSettings,
+        description: "Connections, product visibility and saved views.",
+      },
+    ],
+  },
+];
+
+const ALL_ITEMS = NAV_SECTIONS.flatMap((s) => s.items.map((i) => ({ ...i, section: s.label })));
+
+export interface PageMeta {
+  title: string;
+  description: string;
+  breadcrumbs: { label: string; to?: string }[];
+}
+
+/** Look up nav-derived page metadata for a route (exact match). */
+export function pageMeta(pathname: string): PageMeta | undefined {
+  const hit = ALL_ITEMS.find((i) => i.to === pathname);
+  if (!hit) return undefined;
+  return {
+    title: hit.label,
+    description: hit.description,
+    breadcrumbs: [{ label: hit.section }, { label: hit.label }],
+  };
+}

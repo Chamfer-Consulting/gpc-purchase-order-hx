@@ -1,0 +1,62 @@
+/*
+ * Garfield Produce — semantic design tokens that aren't native to the Mantine
+ * theme object (brand chrome surfaces, the accent, and the status ramp shared
+ * with the chart palette in shared/data.py). Mantine sets
+ * `data-mantine-color-scheme` on <html>; we branch the dark values off that.
+ *
+ * The colour-blind-safe chart palette (src/charts/palette.ts) is the source of
+ * truth for `--gp-status-*`; keep these four in sync with `LIGHT.status` there.
+ */
+
+:root {
+  /* Brand */
+  --gp-canopy: #173d28; /* deep leaf — nav + header ground */
+  --gp-canopy-2: #0f2c1d;
+  --gp-accent: #e0a32e; /* harvest gold — north-star / focus highlight only */
+  --gp-accent-ink: #6b4a12;
+
+  /* Planes */
+  --gp-page: #f7f7f2; /* app background behind cards */
+  --gp-surface: #ffffff; /* card / panel */
+  --gp-surface-sunken: #f2f2ec; /* inset strips (scope bar, filter bar) */
+  --gp-border: #e4e3dc;
+  --gp-ink: #1a1a17;
+  --gp-ink-muted: #6e6c64;
+
+  /* Navigation chrome (always on the dark canopy ground) */
+  --gp-nav-bg: #173d28;
+  --gp-nav-fg: #dce7df;
+  --gp-nav-fg-muted: #8fae99;
+  --gp-nav-section: #6f9079;
+  --gp-nav-hover-bg: rgba(255, 255, 255, 0.07);
+  --gp-nav-active-bg: rgba(255, 255, 255, 0.12);
+  --gp-nav-active-bar: var(--gp-accent);
+
+  /* Status ramp — mirrors LIGHT.status in src/charts/palette.ts */
+  --gp-status-good: #0ca30c;
+  --gp-status-warning: #fab219;
+  --gp-status-serious: #ec835a;
+  --gp-status-critical: #d03b3b;
+  --gp-status-info: #2a78d6;
+}
+
+:root[data-mantine-color-scheme="dark"] {
+  --gp-canopy: #0f1a13;
+  --gp-canopy-2: #0a130d;
+  --gp-accent: #edb44a; /* slightly brighter gold for the darker ground */
+  --gp-accent-ink: #f4d9a3;
+
+  --gp-page: #0f1a13;
+  --gp-surface: #16211a;
+  --gp-surface-sunken: #121b15;
+  --gp-border: #2c352e;
+  --gp-ink: #e3e8e4;
+  --gp-ink-muted: #9aa89e;
+
+  --gp-nav-bg: #0b120d;
+  --gp-nav-fg: #d3ded6;
+  --gp-nav-fg-muted: #7c8c82;
+  --gp-nav-section: #6b7c72;
+  --gp-nav-hover-bg: rgba(255, 255, 255, 0.05);
+  --gp-nav-active-bg: rgba(255, 255, 255, 0.09);
+}
