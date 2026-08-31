@@ -288,8 +288,12 @@ TLS or 404 error because the host doesn't yet route that Host header.
 
    Leave TTL at the default. The CNAME must be the **only** record at that
    hostname — do **not** also "add hosting" for the subdomain (that adds a
-   conflicting A record to DreamHost's web servers).
-4. Wait for the host's Custom-Domains panel to go **Active** (cert issued —
+   conflicting A record to DreamHost's web servers). `garfieldproduce.com`'s
+   delegation lists both DreamHost and Cloudflare nameservers with **DreamHost as
+   primary** (SOA `ns1.dreamhost.com`) — manage every record in the DreamHost
+   panel; the Cloudflare nameservers are a read-only secondary and records added
+   in a Cloudflare zone dashboard won't be served.
+4. Wait for each host's Custom-Domains panel to go **Active** (cert issued —
    minutes, occasionally hours). Verify:
 
    ```bash
@@ -297,6 +301,11 @@ TLS or 404 error because the host doesn't yet route that Host header.
    curl -sI https://dashboard.garfieldproduce.com | head -1   # -> HTTP/2 200
    curl -s  https://api.garfieldproduce.com/health            # -> {"status":"ok",...}
    ```
+
+   `api.garfieldproduce.com` returning `{"code":404,"message":"Application not
+   found","request_id":...}` = the CNAME resolves to Railway's edge but the
+   Custom Domain isn't registered on the **service** yet (step 2). The raw
+   `*.up.railway.app` `/health` will still work in that state.
 5. Confirm the env vars already point at the custom domains (they do, per §4/§5):
    `VITE_API_BASE`, `ALLOWED_ORIGINS`, `FRONTEND_BASE`, `GMAIL_REDIRECT_URI`,
    `QBO_REDIRECT_URI`. Redeploy the Pages project so the built bundle picks up
