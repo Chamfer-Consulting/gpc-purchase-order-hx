@@ -13,6 +13,8 @@ import {
 } from "@mantine/core";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { useCreatePo, type PoHeader, type PoLineItem } from "@/api/poEdit";
+import { useMe } from "@/api/me";
+import { notifySuccess } from "@/lib/notify";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
 
@@ -29,6 +31,7 @@ const EMPTY: PoLineItem = {
 export function NewPoPage() {
   const nav = useNavigate();
   const create = useCreatePo();
+  const { canEdit, roleKnown } = useMe();
 
   const [header, setHeader] = useState<Partial<PoHeader>>({});
   const [items, setItems] = useState<(PoLineItem & { _rk: string })[]>([]);
@@ -133,12 +136,28 @@ export function NewPoPage() {
 
           <Textarea label="Notes" value={header.notes ?? ""} onChange={(e) => set("notes", e.currentTarget.value)} autosize minRows={2} />
 
+          {roleKnown && !canEdit && (
+            <Alert color="gray" variant="light" title="View-only access">
+              Creating a purchase order needs the editor role.
+            </Alert>
+          )}
           {create.error && <Alert color="red">{(create.error as Error).message}</Alert>}
 
           <Group>
             <Button
               loading={create.isPending}
-              onClick={() => create.mutate({ header, items }, { onSuccess: (r) => nav(`/po/${r.po_id}`) })}
+              disabled={!canEdit}
+              onClick={() =>
+                create.mutate(
+                  { header, items },
+                  {
+                    onSuccess: (r) => {
+                      notifySuccess("Purchase order created.");
+                      nav(`/po/${r.po_id}`);
+                    },
+                  },
+                )
+              }
             >
               Create PO
             </Button>

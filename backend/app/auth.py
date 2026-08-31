@@ -10,11 +10,13 @@ SUPABASE_JWT_SECRET. The token's `alg` header picks the path. `aud` =
 """
 
 import jwt
+from cachetools import TTLCache
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient
 
 from .config import get_settings
+from .errors import Forbidden
 
 _bearer = HTTPBearer(auto_error=True)
 _ASYMMETRIC = ("ES256", "RS256", "EdDSA")
@@ -85,3 +87,54 @@ def current_user(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> Auth
             headers={"WWW-Authenticate": "Bearer"},
         )
     return AuthedUser(claims)
+
+
+# --- authorization tiers (app_users) --------------------------------------
+
+# viewer < editor < admin. No app_users row => 'editor' (see migration 0006):
+# every existing signed-in user keeps working; 'admin' must be granted.
+_ROLE_RANK = {"viewer": 0, "editor": 1, "admin": 2}
+_DEFAULT_ROLE = "editor"
+_role_cache: TTLCache = TTLCache(maxsize=512, ttl=60)
+
+
+def app_role(email: str | None) -> str:
+    """The signed-in user's app role. Cached ~60s so it costs one small query per
+    user per minute, not per request."""
+    key = (email or "").lower()
+    if not key:
+        return "viewer"
+    hit = _role_cache.get(key)
+    if hit is not None:
+        return hit
+    role = _DEFAULT_ROLE
+    try:
+        from .reused_db import reused_conn
+
+        with reused_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT role FROM app_users WHERE lower(email) = %s", (key,))
+            row = cur.fetchone()
+            if row and row[0] in _ROLE_RANK:
+                role = row[0]
+    except Exception:  # app_users missing / DB blip -> fall back to the default
+        pass
+    _role_cache[key] = role
+    return role
+
+
+def require_role(minimum: str):
+    """FastAPI dependency: 403 (Forbidden) unless the caller's app role is at least
+    `minimum`. Returns the AuthedUser so routes can keep `user: ... = Depends(...)`."""
+    floor = _ROLE_RANK[minimum]
+
+    def _dep(user: AuthedUser = Depends(current_user)) -> AuthedUser:
+        role = app_role(user.email)
+        if _ROLE_RANK.get(role, 0) < floor:
+            raise Forbidden(need=minimum, have=role)
+        return user
+
+    return _dep
+
+
+require_editor = require_role("editor")
+require_admin = require_role("admin")

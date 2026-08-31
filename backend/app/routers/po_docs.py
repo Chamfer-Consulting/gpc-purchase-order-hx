@@ -7,7 +7,7 @@ import binascii
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user
+from ..auth import AuthedUser, current_user, require_editor
 from ..config import get_settings
 from ..reused_db import reused_conn
 from ..services import po_docs
@@ -44,7 +44,7 @@ class UploadIn(BaseModel):
 
 
 @router.post("/documents/backfill")
-def backfill(body: BackfillIn, user: AuthedUser = Depends(current_user)) -> dict:
+def backfill(body: BackfillIn, user: AuthedUser = Depends(require_editor)) -> dict:
     """Sweep POs missing their captured PDFs, up to `limit` per source. Safe to
     re-run (sha256-deduped). The scheduled job (run_doc_capture.py) does the same
     on a timer."""
@@ -81,7 +81,7 @@ def get_document(po_id: int, doc_id: int, _: AuthedUser = Depends(current_user))
 
 
 @router.post("/{po_id}/documents/capture")
-def capture(po_id: int, body: CaptureIn, user: AuthedUser = Depends(current_user)) -> dict:
+def capture(po_id: int, body: CaptureIn, user: AuthedUser = Depends(require_editor)) -> dict:
     s = get_settings()
     out: dict = {}
     with reused_conn() as conn:
@@ -101,7 +101,7 @@ def capture(po_id: int, body: CaptureIn, user: AuthedUser = Depends(current_user
 
 
 @router.post("/{po_id}/documents/upload")
-def upload(po_id: int, body: UploadIn, user: AuthedUser = Depends(current_user)) -> dict:
+def upload(po_id: int, body: UploadIn, user: AuthedUser = Depends(require_editor)) -> dict:
     try:
         data = base64.b64decode(body.content_b64, validate=True)
     except (binascii.Error, ValueError) as exc:
@@ -116,7 +116,7 @@ def upload(po_id: int, body: UploadIn, user: AuthedUser = Depends(current_user))
 
 
 @router.delete("/{po_id}/documents/{doc_id}")
-def delete_document(po_id: int, doc_id: int, user: AuthedUser = Depends(current_user)) -> dict:
+def delete_document(po_id: int, doc_id: int, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         _guard(po_docs.delete_document, conn, po_id, doc_id, _actor(user))
     return {"ok": True}

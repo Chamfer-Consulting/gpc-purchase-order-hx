@@ -466,6 +466,30 @@ Applied by `supabase/migrations/0005_rls_lockdown.sql` (part of §2). The model:
   that's a real design change: it needs per-table policies and re-granting the
   `authenticated` role — reconsider before doing it.
 
+### 6.3 Authorization tiers (`app_users`)
+
+Migration `0006` adds an `app_users (email, role)` table. Roles, least to most:
+
+| role | can | e.g. |
+|---|---|---|
+| `viewer` | read every page; no writes | |
+| `editor` | edit POs, void lines, link/unlink invoices, run matching, review-queue decisions, reference prices, doc capture | day-to-day ops |
+| `admin` | everything an editor can, **plus** lifecycle status changes, soft-delete / restore, bulk status | you |
+
+- **A signed-in user with no `app_users` row is treated as `editor`** — existing
+  users keep working after the migration. `admin` must be granted explicitly.
+- The repo owner (`jcaternolo@gmail.com`) is seeded as `admin` by `0006`.
+- Grant / change a role:
+  ```sql
+  INSERT INTO app_users (email, role) VALUES ('someone@garfieldproduce.com', 'admin')
+    ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role, updated_at = now();
+  -- demote to read-only:
+  UPDATE app_users SET role = 'viewer' WHERE email = 'contractor@example.com';
+  ```
+- The backend caches a user's role for ~60 s, so a change takes up to a minute to
+  take effect. Enforcement is server-side (403 `forbidden`); the SPA also disables
+  the controls a role can't use.
+
 ---
 
 ## 7. OAuth redirect URIs (Phase 1.5)

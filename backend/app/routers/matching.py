@@ -6,7 +6,7 @@ import qbo_matcher  # shared/, via app.reuse
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user
+from ..auth import AuthedUser, current_user, require_editor
 from ..reused_db import reused_conn
 from ..services import matching as matching_svc
 from ..services.po_admin import AdminError
@@ -52,27 +52,27 @@ def review(_: AuthedUser = Depends(current_user)) -> dict:
 
 
 @router.post("/run")
-def run(_: AuthedUser = Depends(current_user)) -> dict:
+def run(_: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         return qbo_matcher.run_matching(conn)
 
 
 @router.post("/confirm")
-def confirm(ref: LinkRef, user: AuthedUser = Depends(current_user)) -> dict:
+def confirm(ref: LinkRef, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         _guard(matching_svc.confirm, conn, _actor(user), ref.po_id, ref.invoice_id)
     return {"ok": True}
 
 
 @router.post("/reject")
-def reject(ref: LinkRef, user: AuthedUser = Depends(current_user)) -> dict:
+def reject(ref: LinkRef, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         _guard(matching_svc.reject, conn, _actor(user), ref.po_id, ref.invoice_id)
     return {"ok": True}
 
 
 @router.post("/confirm-batch")
-def confirm_batch(body: BatchIn, user: AuthedUser = Depends(current_user)) -> dict:
+def confirm_batch(body: BatchIn, user: AuthedUser = Depends(require_editor)) -> dict:
     pairs = [(p.po_id, p.invoice_id) for p in body.pairs]
     with reused_conn() as conn:
         out = _guard(matching_svc.confirm_batch, conn, _actor(user), pairs)

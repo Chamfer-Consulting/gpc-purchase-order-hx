@@ -79,3 +79,53 @@ def test_bulk_transition_body():
     b = e.body()
     assert e.status == 422 and b["code"] == "bulk_bad_transition"
     assert b["missing"] == [9] and len(b["invalid"]) == 1
+
+
+# --- authorization tiers (no DB: app_role falls back to 'editor') -----------
+
+import datetime as _dt  # noqa: E402
+
+import jwt as _jwt  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.main import app  # noqa: E402
+
+_client = TestClient(app)
+
+
+def _tok() -> str:
+    return _jwt.encode(
+        {
+            "sub": "u", "email": "nobody@example.com", "aud": "authenticated",
+            "exp": _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=1),
+        },
+        os.environ["SUPABASE_JWT_SECRET"], algorithm="HS256",
+    )
+
+
+def test_me_defaults_to_editor_without_app_users():
+    r = _client.get("/api/me", headers={"Authorization": f"Bearer {_tok()}"})
+    assert r.status_code == 200
+    assert r.json() == {"email": "nobody@example.com", "role": "editor"}
+
+
+def test_admin_route_forbidden_for_editor():
+    r = _client.post(
+        "/api/po/1/status",
+        json={"status": "cancelled"},
+        headers={"Authorization": f"Bearer {_tok()}"},
+    )
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "forbidden"
+    assert r.json()["detail"]["need"] == "admin"
+
+
+def test_editor_route_allowed_for_editor_reaches_service():
+    # editor tier passes the role gate; the call then fails at the DB (no server)
+    # -> 500, NOT 403. Proves require_editor isn't blocking an editor.
+    r = _client.post(
+        "/api/po/1",
+        json={"header": {}, "items": [], "removed_items": []},
+        headers={"Authorization": f"Bearer {_tok()}"},
+    )
+    assert r.status_code != 403

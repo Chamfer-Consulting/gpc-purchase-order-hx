@@ -4,7 +4,7 @@ the sync never overwrites it (same guard the Streamlit editor used)."""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user
+from ..auth import AuthedUser, current_user, require_editor
 from ..reused_db import reused_conn
 from ..services import po_admin, po_edit
 
@@ -60,7 +60,7 @@ def get_po(po_id: int, _: AuthedUser = Depends(current_user)) -> dict:
 
 
 @router.post("/{po_id}")
-def save_po(po_id: int, body: PoEditIn, user: AuthedUser = Depends(current_user)) -> dict:
+def save_po(po_id: int, body: PoEditIn, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         result = po_edit.save_po_edit(
             conn,

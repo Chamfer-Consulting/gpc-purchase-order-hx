@@ -19,6 +19,7 @@ from .routers import (
     explore,
     filters,
     matching,
+    me as me_router,
     oauth,
     overview,
     po_admin,
@@ -61,6 +62,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(me_router.router)
 app.include_router(overview.router)
 app.include_router(analytics.router)
 app.include_router(explore.router)

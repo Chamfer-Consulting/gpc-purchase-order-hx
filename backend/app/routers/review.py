@@ -6,7 +6,7 @@ import extraction_reviews  # repo root, via app.reuse
 from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user
+from ..auth import AuthedUser, current_user, require_editor
 from ..reused_db import reused_conn
 from ..services import review_queue
 
@@ -47,7 +47,7 @@ def decisions(_: AuthedUser = Depends(current_user)) -> dict:
 
 
 @router.post("/decision")
-def upsert(d: Decision, user: AuthedUser = Depends(current_user)) -> dict:
+def upsert(d: Decision, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         # snapshot the content the decision is being made on, so the eval can replay it
         with conn.cursor() as cur:
@@ -100,7 +100,7 @@ def upsert(d: Decision, user: AuthedUser = Depends(current_user)) -> dict:
 
 @router.delete("/decision")
 def remove(
-    target_kind: str = Body(...), target_key: str = Body(...), _: AuthedUser = Depends(current_user)
+    target_kind: str = Body(...), target_key: str = Body(...), _: AuthedUser = Depends(require_editor)
 ) -> dict:
     with reused_conn() as conn:
         extraction_reviews.delete_decision(conn, target_kind, target_key)

@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user
+from ..auth import AuthedUser, current_user, require_editor
 from ..reused_db import reused_conn
 from ..services import settings as svc
 
@@ -36,7 +36,7 @@ def hidden_products(_: AuthedUser = Depends(current_user)) -> list[dict]:
 
 
 @router.post("/hidden-products")
-def set_hidden(body: HideIn, _: AuthedUser = Depends(current_user)) -> dict:
+def set_hidden(body: HideIn, _: AuthedUser = Depends(require_editor)) -> dict:
     if not body.product_name.strip():
         raise HTTPException(422, "product_name is required")
     with reused_conn() as conn:
@@ -51,7 +51,7 @@ def list_views(kind: str, _: AuthedUser = Depends(current_user)) -> list[dict]:
 
 
 @router.post("/views")
-def save_view(body: ViewIn, _: AuthedUser = Depends(current_user)) -> dict:
+def save_view(body: ViewIn, _: AuthedUser = Depends(require_editor)) -> dict:
     if not body.name.strip() or not body.kind.strip():
         raise HTTPException(422, "name and kind are required")
     with reused_conn() as conn:
@@ -60,7 +60,7 @@ def save_view(body: ViewIn, _: AuthedUser = Depends(current_user)) -> dict:
 
 
 @router.delete("/views")
-def delete_view(body: ViewDeleteIn, _: AuthedUser = Depends(current_user)) -> dict:
+def delete_view(body: ViewDeleteIn, _: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         svc.delete_view(conn, body.name)
     return {"ok": True}

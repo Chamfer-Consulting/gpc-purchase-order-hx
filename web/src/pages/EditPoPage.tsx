@@ -49,6 +49,7 @@ import {
 } from "@/api/poDocs";
 import { fmtCurrency } from "@/lib/format";
 import { promptReason } from "@/lib/modals";
+import { useMe } from "@/api/me";
 import { notifySuccess } from "@/lib/notify";
 import { conflictInfo, errorMessage, isConflict } from "@/lib/errors";
 import { PageLayout } from "@/components/PageLayout";
@@ -76,6 +77,7 @@ export function EditPoPage() {
   const { id } = useParams();
   const poId = Number(id);
   const { data, isLoading, error, refetch } = usePo(poId);
+  const { canEdit, canAdmin, roleKnown } = useMe();
   const save = useSavePo(poId);
   const setStatus = useSetStatus(poId);
   const softDelete = useSoftDelete(poId);
@@ -144,6 +146,12 @@ export function EditPoPage() {
       }
     >
       <Stack gap="lg">
+        {roleKnown && !canEdit && (
+          <Alert color="gray" variant="light" title="View-only access">
+            Your account can view purchase orders but not change them. Ask an admin for the editor
+            role to save edits, void lines, or link invoices.
+          </Alert>
+        )}
         <Group gap="xs">
           <Badge color={STATUS_COLOR[status]} variant={status === "active" ? "light" : "filled"}>
             {status}
@@ -187,6 +195,7 @@ export function EditPoPage() {
               size="xs"
               variant="default"
               leftSection={<IconPlus size={14} />}
+              disabled={!canEdit}
               onClick={() => setItems((r) => [...r, { ...EMPTY, _rk: nextRk() }])}
             >
               Add line
@@ -294,6 +303,7 @@ export function EditPoPage() {
                 )
               }
               loading={save.isPending}
+              disabled={!canEdit}
             >
               Save edit
             </Button>
@@ -345,12 +355,20 @@ export function EditPoPage() {
             <Button
               variant="light"
               loading={setStatus.isPending}
-              disabled={statusDraft === status && statusReason === (data.header.status_reason ?? "")}
+              disabled={
+                !canAdmin ||
+                (statusDraft === status && statusReason === (data.header.status_reason ?? ""))
+              }
               onClick={() => (reactivating ? setPendingReactivate(true) : applyStatus())}
             >
               Apply
             </Button>
           </Group>
+          {roleKnown && !canAdmin && (
+            <Text size="xs" c="dimmed">
+              Changing lifecycle status, deleting or restoring an order needs the admin role.
+            </Text>
+          )}
 
           <Group mt="sm">
             {status === "active" ? (
@@ -358,6 +376,7 @@ export function EditPoPage() {
                 color="red"
                 variant="light"
                 loading={softDelete.isPending}
+                disabled={!canAdmin}
                 onClick={() =>
                   promptReason({
                     title: "Soft-delete this PO?",
@@ -376,6 +395,7 @@ export function EditPoPage() {
               <Button
                 color="orange"
                 variant="light"
+                disabled={!canAdmin}
                 onClick={() => {
                   setStatusDraft("active");
                   setPendingReactivate(true);

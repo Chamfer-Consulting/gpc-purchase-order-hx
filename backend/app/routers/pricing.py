@@ -4,7 +4,7 @@ the unit-price history that informs an edit. See services/pricing.py."""
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user
+from ..auth import AuthedUser, current_user, require_editor
 from ..reused_db import reused_conn
 from ..services import pricing
 
@@ -43,7 +43,7 @@ def history(product: str, size: str, _: AuthedUser = Depends(current_user)) -> d
 
 
 @router.post("")
-def save_prices(body: SaveIn, user: AuthedUser = Depends(current_user)) -> dict:
+def save_prices(body: SaveIn, user: AuthedUser = Depends(require_editor)) -> dict:
     actor = _actor(user)
     with reused_conn() as conn:
         saved = pricing.save_reference_prices(

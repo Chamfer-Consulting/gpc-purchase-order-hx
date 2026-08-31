@@ -3,6 +3,7 @@ import { NavLink as RouterNavLink } from "react-router-dom";
 import {
   AppShell as MantineAppShell,
   Avatar,
+  Badge,
   Box,
   Burger,
   Group,
@@ -13,6 +14,7 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import { IconChevronDown, IconLogout } from "@tabler/icons-react";
 import { useAuth } from "@/auth/AuthProvider";
+import { useMe } from "@/api/me";
 import { NAV_SECTIONS } from "@/nav";
 import { Brand } from "./Brand";
 import { ThemeToggle } from "./ThemeToggle";
@@ -49,6 +51,7 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
 
 function UserMenu() {
   const { session, signOut } = useAuth();
+  const { role } = useMe();
   const email = session?.user.email ?? "";
   const initial = email.slice(0, 1).toUpperCase() || "?";
 
@@ -78,9 +81,14 @@ function UserMenu() {
       <Menu.Dropdown>
         <Menu.Label>Signed in as</Menu.Label>
         <Menu.Item style={{ pointerEvents: "none" }}>
-          <Text size="sm" truncate>
-            {email}
-          </Text>
+          <Group justify="space-between" wrap="nowrap" gap="xs">
+            <Text size="sm" truncate>
+              {email}
+            </Text>
+            <Badge size="xs" variant="light" color={role === "admin" ? "gpGold" : role === "editor" ? "gpGreen" : "gray"}>
+              {role}
+            </Badge>
+          </Group>
         </Menu.Item>
         <Menu.Divider />
         <Menu.Item

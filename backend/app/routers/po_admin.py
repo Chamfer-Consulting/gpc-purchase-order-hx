@@ -6,7 +6,7 @@ the extraction pipeline leaves it alone. See services/po_admin.py."""
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user
+from ..auth import AuthedUser, current_user, require_admin, require_editor
 from ..reused_db import reused_conn
 from ..services import audit, po_admin
 from .po_edit import HeaderIn, LineItemIn
@@ -80,7 +80,7 @@ def _guard(fn, *args, **kwargs):
 
 
 @router.post("/po")
-def create_po(body: NewPoIn, user: AuthedUser = Depends(current_user)) -> dict:
+def create_po(body: NewPoIn, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         po_id = _guard(
             po_admin.create_po, conn, _actor(user),
@@ -117,7 +117,7 @@ def po_audit(po_id: int, _: AuthedUser = Depends(current_user)) -> list[dict]:
 
 
 @router.post("/po/{po_id}/status")
-def set_status(po_id: int, body: StatusIn, user: AuthedUser = Depends(current_user)) -> dict:
+def set_status(po_id: int, body: StatusIn, user: AuthedUser = Depends(require_admin)) -> dict:
     with reused_conn() as conn:
         after = _guard(po_admin.set_status, conn, _actor(user), po_id, body.status,
                        body.reason, expected_version=body.expected_version)
@@ -125,7 +125,7 @@ def set_status(po_id: int, body: StatusIn, user: AuthedUser = Depends(current_us
 
 
 @router.post("/bulk/po-status")
-def bulk_status(body: BulkStatusIn, user: AuthedUser = Depends(current_user)) -> dict:
+def bulk_status(body: BulkStatusIn, user: AuthedUser = Depends(require_admin)) -> dict:
     if not body.po_ids:
         raise HTTPException(422, "po_ids is empty")
     with reused_conn() as conn:
@@ -136,7 +136,7 @@ def bulk_status(body: BulkStatusIn, user: AuthedUser = Depends(current_user)) ->
 
 @router.delete("/po/{po_id}")
 def soft_delete(po_id: int, body: DeleteIn | None = None,
-                user: AuthedUser = Depends(current_user)) -> dict:
+                user: AuthedUser = Depends(require_admin)) -> dict:
     reason = body.reason if body else None
     ev = body.expected_version if body else None
     with reused_conn() as conn:
@@ -146,7 +146,7 @@ def soft_delete(po_id: int, body: DeleteIn | None = None,
 
 
 @router.post("/po/{po_id}/restore")
-def restore(po_id: int, user: AuthedUser = Depends(current_user)) -> dict:
+def restore(po_id: int, user: AuthedUser = Depends(require_admin)) -> dict:
     with reused_conn() as conn:
         after = _guard(po_admin.set_status, conn, _actor(user), po_id, "active", None)
     return {"ok": True, "header": after}
@@ -154,7 +154,7 @@ def restore(po_id: int, user: AuthedUser = Depends(current_user)) -> dict:
 
 @router.post("/po/{po_id}/line/{line_id}/void")
 def void_line(po_id: int, line_id: int, body: VoidLineIn,
-              user: AuthedUser = Depends(current_user)) -> dict:
+              user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         row = _guard(po_admin.void_line, conn, _actor(user), po_id, line_id,
                      body.voided, body.reason, expected_version=body.expected_version)
@@ -162,7 +162,7 @@ def void_line(po_id: int, line_id: int, body: VoidLineIn,
 
 
 @router.post("/po/{po_id}/customer")
-def set_customer(po_id: int, body: CustomerIn, user: AuthedUser = Depends(current_user)) -> dict:
+def set_customer(po_id: int, body: CustomerIn, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         after = _guard(po_admin.set_customer, conn, _actor(user), po_id,
                        body.customer_name, body.customer_id,
@@ -171,7 +171,7 @@ def set_customer(po_id: int, body: CustomerIn, user: AuthedUser = Depends(curren
 
 
 @router.post("/po/{po_id}/regroup")
-def regroup(po_id: int, body: RegroupIn, user: AuthedUser = Depends(current_user)) -> dict:
+def regroup(po_id: int, body: RegroupIn, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         out = _guard(po_admin.regroup, conn, _actor(user), po_id,
                      body.revision_of, body.standalone,
@@ -190,7 +190,7 @@ def search_invoices(
 
 
 @router.post("/links")
-def create_link(body: LinkIn, user: AuthedUser = Depends(current_user)) -> dict:
+def create_link(body: LinkIn, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         links = _guard(po_admin.link_invoice, conn, _actor(user), body.po_id,
                        body.invoice_id, body.replace_existing,
@@ -202,7 +202,7 @@ def create_link(body: LinkIn, user: AuthedUser = Depends(current_user)) -> dict:
 def delete_link(
     po_id: int = Query(...),
     invoice_id: int = Query(...),
-    user: AuthedUser = Depends(current_user),
+    user: AuthedUser = Depends(require_editor),
 ) -> dict:
     with reused_conn() as conn:
         links = _guard(po_admin.unlink_invoice, conn, _actor(user), po_id, invoice_id)
