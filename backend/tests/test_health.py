@@ -144,9 +144,9 @@ def test_all_data_routes_require_auth(path):
     ],
 )
 def test_admin_mutations_require_auth(method, path, body):
+    # client.request(...) (not client.delete(...)) — httpx's delete() takes no json=
     kw = {"json": body} if body is not None else {}
-    assert getattr(client, method)(path, **kw).status_code == 403
-    assert getattr(client, method)(
-        path, headers={"Authorization": "Bearer nope"}, **kw
-    ).status_code == 401
+    m = method.upper()
+    assert client.request(m, path, **kw).status_code == 403
+    assert client.request(m, path, headers={"Authorization": "Bearer nope"}, **kw).status_code == 401
 
