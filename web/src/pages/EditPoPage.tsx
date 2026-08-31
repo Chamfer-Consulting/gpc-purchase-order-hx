@@ -1,24 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
-  ActionIcon,
   Alert,
   Anchor,
   Badge,
+  Box,
   Button,
   Code,
   Collapse,
   Group,
-  NumberInput,
   Select,
   Stack,
   Table,
   Text,
   TextInput,
   Textarea,
-  Tooltip,
 } from "@mantine/core";
-import { IconBan, IconPlus, IconTrash } from "@tabler/icons-react";
+import { useHotkeys } from "@mantine/hooks";
+import { IconDeviceFloppy, IconPlus } from "@tabler/icons-react";
 import {
   PO_STATUSES,
   useInvoiceSearch,
@@ -51,10 +50,33 @@ import { fmtCurrency } from "@/lib/format";
 import { promptReason } from "@/lib/modals";
 import { useMe } from "@/api/me";
 import { notifySuccess } from "@/lib/notify";
-import { conflictInfo, errorMessage, isConflict } from "@/lib/errors";
+import { conflictInfo, errorMessage, fieldErrors, isConflict } from "@/lib/errors";
+import { useUnsavedGuard } from "@/hooks/useUnsavedGuard";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
+import { PoHeaderFields, headerErrors } from "@/components/po/PoHeaderFields";
+import { EMPTY_LINE, PoLineItemsEditor, type EditableLine } from "@/components/po/PoLineItemsEditor";
 import { NUMERIC_STYLE } from "@/theme/tokens";
+
+/** Compare the editable slice of the form to the server copy. */
+function formEqual(header: Partial<PoHeader>, items: EditableLine[], data: {
+  header: PoHeader;
+  items: PoLineItem[];
+}): boolean {
+  const hk: (keyof PoHeader)[] = [
+    "po_number", "customer_name", "po_date", "delivery_date", "subtotal", "tax", "total", "notes",
+  ];
+  for (const k of hk) if ((header[k] ?? null) !== (data.header[k] ?? null)) return false;
+  if (items.length !== data.items.length) return false;
+  const ik: (keyof PoLineItem)[] = [
+    "id", "product_name", "container_size", "quantity", "unit_price", "line_total",
+    "additional_cost", "voided",
+  ];
+  for (let i = 0; i < items.length; i++) {
+    for (const k of ik) if ((items[i][k] ?? null) !== (data.items[i][k] ?? null)) return false;
+  }
+  return true;
+}
 
 const DOC_KIND_LABEL: Record<PoDocument["kind"], string> = {
   po_pdf: "PO PDF",
@@ -63,15 +85,6 @@ const DOC_KIND_LABEL: Record<PoDocument["kind"], string> = {
   other: "File",
 };
 
-const EMPTY: PoLineItem = {
-  product_raw: "",
-  product_name: "",
-  container_size: "",
-  quantity: null,
-  unit_price: null,
-  line_total: null,
-  additional_cost: null,
-};
 
 export function EditPoPage() {
   const { id } = useParams();
@@ -86,23 +99,56 @@ export function EditPoPage() {
   const [header, setHeader] = useState<Partial<PoHeader>>({});
   // Each row carries a stable client key (_rk) so React doesn't reattach an input's
   // state to the wrong line when a middle row is deleted.
-  const [items, setItems] = useState<(PoLineItem & { _rk: string })[]>([]);
+  const [items, setItems] = useState<EditableLine[]>([]);
   const rk = useRef(0);
-  const nextRk = () => `r${rk.current++}`;
+  const makeRow = (seed?: Partial<PoLineItem>): EditableLine => ({
+    ...EMPTY_LINE,
+    ...seed,
+    _rk: `r${rk.current++}`,
+  });
 
   const [statusDraft, setStatusDraft] = useState<PoStatus>("active");
   const [statusReason, setStatusReason] = useState("");
   const [pendingReactivate, setPendingReactivate] = useState(false);
+  // the lock_version we last seeded the form from — if the server's moves past
+  // this while the form is dirty, someone else saved.
+  const [seededVersion, setSeededVersion] = useState<number | undefined>(undefined);
+
+  const isDirty = useMemo(
+    () => (data ? !formEqual(header, items, data) : false),
+    [header, items, data],
+  );
+  const dirtyRef = useRef(false);
+  dirtyRef.current = isDirty;
+
+  function reseed(d: NonNullable<typeof data>) {
+    setHeader(d.header);
+    setItems(d.items.map((it) => makeRow(it)));
+    setStatusDraft(d.header.status ?? "active");
+    setStatusReason(d.header.status_reason ?? "");
+    setSeededVersion(d.header.lock_version);
+  }
 
   useEffect(() => {
-    if (data) {
-      setHeader(data.header);
-      setItems(data.items.map((it) => ({ ...it, _rk: nextRk() })));
-      setStatusDraft(data.header.status ?? "active");
-      setStatusReason(data.header.status_reason ?? "");
-    }
+    // Only take the server copy when the form is clean — a background refetch
+    // (fired by a void / status / link mutation on this page) must not wipe edits.
+    if (data && !dirtyRef.current) reseed(data);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
+
+  useUnsavedGuard(isDirty);
+  useHotkeys(
+    [
+      [
+        "mod+S",
+        (e) => {
+          e.preventDefault();
+          if (canEdit && isDirty && data) doSave();
+        },
+      ],
+    ],
+    [],
+  );
 
   const crumbs = [{ label: "Reconcile", to: "/reconcile" }, { label: "Purchase order" }];
 
@@ -128,10 +174,28 @@ export function EditPoPage() {
   // warning block — it re-enters every report and revenue total.
   const reactivating = status !== "active" && statusDraft === "active";
   const applyStatus = () =>
-    setStatus.mutate({ status: statusDraft, reason: statusReason || null });
+    setStatus.mutate({
+      status: statusDraft,
+      reason: statusReason || null,
+      expected_version: data.header.lock_version,
+    });
   const set = (k: keyof PoHeader, v: unknown) => setHeader((h) => ({ ...h, [k]: v }));
-  const setItem = (i: number, k: keyof PoLineItem, v: unknown) =>
-    setItems((rows) => rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+
+  const errors = { ...headerErrors(header), ...fieldErrors(save.error) };
+  const serverMovedAhead =
+    isDirty && seededVersion != null && data.header.lock_version !== seededVersion;
+
+  function doSave() {
+    save.mutate(
+      {
+        header,
+        items,
+        removed_items: data!.removed_items,
+        expected_version: seededVersion ?? data!.header.lock_version,
+      },
+      { onSuccess: () => notifySuccess("Saved.") },
+    );
+  }
 
   return (
     <PageLayout
@@ -172,147 +236,77 @@ export function EditPoPage() {
           </Alert>
         )}
 
+        {serverMovedAhead && (
+          <Alert color="orange" variant="light" title="This order changed on the server">
+            Someone else saved a newer version while you were editing. Save to overwrite theirs
+            (you'll get a conflict), or discard your changes and reload.
+            <Group mt="xs" gap="xs">
+              <Button size="xs" variant="light" color="orange" onClick={() => reseed(data)}>
+                Discard mine & reload
+              </Button>
+            </Group>
+          </Alert>
+        )}
+
         <SectionCard title="Order details">
-          <Group grow>
-            <TextInput label="PO number" value={header.po_number ?? ""} onChange={(e) => set("po_number", e.currentTarget.value)} />
-            <TextInput label="Customer" value={header.customer_name ?? ""} onChange={(e) => set("customer_name", e.currentTarget.value)} />
-          </Group>
-          <Group grow>
-            <TextInput label="PO date" placeholder="YYYY-MM-DD" value={header.po_date ?? ""} onChange={(e) => set("po_date", e.currentTarget.value)} />
-            <TextInput label="Delivery date" placeholder="YYYY-MM-DD" value={header.delivery_date ?? ""} onChange={(e) => set("delivery_date", e.currentTarget.value)} />
-          </Group>
-          <Group grow>
-            <NumberInput label="Subtotal" value={header.subtotal ?? undefined} onChange={(v) => set("subtotal", v === "" ? null : Number(v))} decimalScale={2} />
-            <NumberInput label="Tax" value={header.tax ?? undefined} onChange={(v) => set("tax", v === "" ? null : Number(v))} decimalScale={2} />
-            <NumberInput label="Total" value={header.total ?? undefined} onChange={(v) => set("total", v === "" ? null : Number(v))} decimalScale={2} />
-          </Group>
+          <PoHeaderFields
+            value={header}
+            onChange={(p) => setHeader((h) => ({ ...h, ...p }))}
+            errors={errors}
+            disabled={!canEdit}
+          />
         </SectionCard>
 
-        <SectionCard
-          title="Line items"
-          actions={
-            <Button
-              size="xs"
-              variant="default"
-              leftSection={<IconPlus size={14} />}
-              disabled={!canEdit}
-              onClick={() => setItems((r) => [...r, { ...EMPTY, _rk: nextRk() }])}
-            >
-              Add line
-            </Button>
-          }
-        >
-          <Table.ScrollContainer minWidth={720} type="native">
-            <Table>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Product</Table.Th>
-                  <Table.Th>Size</Table.Th>
-                  <Table.Th>Qty</Table.Th>
-                  <Table.Th>Unit price</Table.Th>
-                  <Table.Th>Adtl. cost</Table.Th>
-                  <Table.Th>Line total</Table.Th>
-                  <Table.Th>Void</Table.Th>
-                  <Table.Th />
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {items.map((it, i) => {
-                  const voided = !!it.voided;
-                  const cell = { style: voided ? { opacity: 0.45, textDecoration: "line-through" as const } : undefined };
-                  return (
-                    <Table.Tr key={it._rk}>
-                      <Table.Td {...cell}>
-                        <TextInput size="xs" aria-label="Product" value={it.product_name ?? it.product_raw ?? ""} onChange={(e) => setItem(i, "product_name", e.currentTarget.value)} />
-                      </Table.Td>
-                      <Table.Td w={80} {...cell}>
-                        <TextInput size="xs" aria-label="Size" value={it.container_size ?? ""} onChange={(e) => setItem(i, "container_size", e.currentTarget.value)} />
-                      </Table.Td>
-                      <Table.Td w={90} {...cell}>
-                        <NumberInput size="xs" aria-label="Quantity" hideControls value={it.quantity ?? undefined} onChange={(v) => setItem(i, "quantity", v === "" ? null : Number(v))} />
-                      </Table.Td>
-                      <Table.Td w={110} {...cell}>
-                        <NumberInput size="xs" aria-label="Unit price" hideControls decimalScale={2} value={it.unit_price ?? undefined} onChange={(v) => setItem(i, "unit_price", v === "" ? null : Number(v))} />
-                      </Table.Td>
-                      <Table.Td w={110} {...cell}>
-                        <NumberInput size="xs" aria-label="Additional cost" hideControls decimalScale={2} value={it.additional_cost ?? undefined} onChange={(v) => setItem(i, "additional_cost", v === "" ? null : Number(v))} />
-                      </Table.Td>
-                      <Table.Td w={110} {...cell}>
-                        <NumberInput size="xs" aria-label="Line total" hideControls decimalScale={2} value={it.line_total ?? undefined} onChange={(v) => setItem(i, "line_total", v === "" ? null : Number(v))} />
-                      </Table.Td>
-                      <Table.Td w={60}>
-                        {it.id ? (
-                          <Tooltip label={voided ? "Un-void this line" : "Void this line (kept, excluded from totals & reports)"}>
-                            <ActionIcon
-                              variant={voided ? "filled" : "subtle"}
-                              color={voided ? "red" : "gray"}
-                              aria-label={voided ? "Un-void line" : "Void line"}
-                              loading={voidLine.isPending}
-                              onClick={() => {
-                                const lineId = it.id as number;
-                                if (voided) {
-                                  voidLine.mutate({ line_id: lineId, voided: false, reason: null });
-                                } else {
-                                  promptReason({
-                                    title: "Void this line",
-                                    description: "The line is kept but excluded from totals and reports.",
-                                    label: "Reason (optional)",
-                                    confirmLabel: "Void line",
-                                    confirmColor: "red",
-                                    onSubmit: (reason) => voidLine.mutate({ line_id: lineId, voided: true, reason }),
-                                  });
-                                }
-                              }}
-                            >
-                              <IconBan size={15} />
-                            </ActionIcon>
-                          </Tooltip>
-                        ) : null}
-                      </Table.Td>
-                      <Table.Td w={40}>
-                        <ActionIcon
-                          variant="subtle"
-                          color="red"
-                          aria-label="Remove line"
-                          onClick={() => setItems((r) => r.filter((_, j) => j !== i))}
-                        >
-                          <IconTrash size={15} />
-                        </ActionIcon>
-                      </Table.Td>
-                    </Table.Tr>
-                  );
-                })}
-              </Table.Tbody>
-            </Table>
-          </Table.ScrollContainer>
-
-          <Textarea label="Notes" value={header.notes ?? ""} onChange={(e) => set("notes", e.currentTarget.value)} autosize minRows={2} />
-
-          <Group>
-            <Button
-              onClick={() =>
-                // _rk is a client-only key; the backend's LineItemIn ignores extra fields.
-                save.mutate(
-                  {
-                    header,
-                    items,
-                    removed_items: data.removed_items,
-                    expected_version: data.header.lock_version,
-                  },
-                  { onSuccess: () => notifySuccess("Saved.") },
-                )
+        <SectionCard title="Line items">
+          <PoLineItemsEditor
+            items={items}
+            onChange={setItems}
+            makeRow={makeRow}
+            headerTotal={header.total ?? null}
+            showVoid
+            disabled={!canEdit}
+            onVoidLine={(it) => {
+              const lineId = it.id as number;
+              if (it.voided) {
+                voidLine.mutate({
+                  line_id: lineId,
+                  voided: false,
+                  reason: null,
+                  expected_version: data.header.lock_version,
+                });
+              } else {
+                promptReason({
+                  title: "Void this line",
+                  description: "The line is kept but excluded from totals and reports.",
+                  label: "Reason (optional)",
+                  confirmLabel: "Void line",
+                  confirmColor: "red",
+                  onSubmit: (reason) =>
+                    voidLine.mutate({
+                      line_id: lineId,
+                      voided: true,
+                      reason,
+                      expected_version: data.header.lock_version,
+                    }),
+                });
               }
-              loading={save.isPending}
-              disabled={!canEdit}
-            >
-              Save edit
-            </Button>
-            {save.data && save.data.math_check_failed && (
-              <Text size="sm" c="red">
-                Saved — math check: {save.data.math_check_detail}
-              </Text>
-            )}
-          </Group>
+            }}
+          />
+
+          <Textarea
+            label="Notes"
+            value={header.notes ?? ""}
+            onChange={(e) => set("notes", e.currentTarget.value)}
+            autosize
+            minRows={2}
+            disabled={!canEdit}
+          />
+
+          {save.data && save.data.math_check_failed && (
+            <Alert color="orange" variant="light" title="Math check">
+              {save.data.math_check_detail || "Line items or totals don't reconcile."} — saved anyway.
+            </Alert>
+          )}
           {save.error && isConflict(save.error) ? (
             <Alert color="orange" variant="light" title="This order changed while you were editing">
               {(() => {
@@ -325,16 +319,50 @@ export function EditPoPage() {
                   </Text>
                 );
               })()}
-              <Button size="xs" mt="xs" variant="light" color="orange" onClick={() => void refetch()}>
-                Reload this order
+              <Button size="xs" mt="xs" variant="light" color="orange" onClick={() => reseed(data)}>
+                Discard mine & reload
               </Button>
             </Alert>
-          ) : save.error ? (
+          ) : save.error && Object.keys(fieldErrors(save.error)).length === 0 ? (
             <Text size="sm" c="red">
               {errorMessage(save.error)}
             </Text>
           ) : null}
         </SectionCard>
+
+        {isDirty && canEdit && (
+          <Box
+            style={{
+              position: "sticky",
+              bottom: 12,
+              zIndex: 4,
+              background: "var(--gp-surface)",
+              border: "1px solid var(--mantine-color-gpGreen-4)",
+              borderRadius: "var(--mantine-radius-md)",
+              boxShadow: "var(--mantine-shadow-md)",
+              padding: "10px 14px",
+            }}
+          >
+            <Group justify="space-between" wrap="nowrap">
+              <Text size="sm" fw={600}>
+                Unsaved changes
+              </Text>
+              <Group gap="xs">
+                <Button size="xs" variant="default" onClick={() => reseed(data)}>
+                  Discard
+                </Button>
+                <Button
+                  size="xs"
+                  leftSection={<IconDeviceFloppy size={14} />}
+                  loading={save.isPending}
+                  onClick={doSave}
+                >
+                  Save edit
+                </Button>
+              </Group>
+            </Group>
+          </Box>
+        )}
 
         <SectionCard title="Lifecycle">
           <Group align="flex-end">

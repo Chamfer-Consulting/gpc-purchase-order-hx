@@ -4,7 +4,16 @@ imported both by the extraction pipeline (extract_pos.py) and the dashboard
 (dashboard/app.py, a separate venv that deliberately doesn't have anthropic/pdfplumber).
 """
 
-MATH_TOLERANCE = 0.02    # dollars — arithmetic checks below this are treated as rounding noise
+MATH_TOLERANCE = 0.02    # dollars — floor for arithmetic checks (rounding noise)
+MATH_TOLERANCE_PCT = 0.001  # + 0.1% of the larger figure, so big orders don't
+                            # false-flag on accumulated per-line rounding
+
+
+def _tol(*refs) -> float:
+    """Absolute tolerance for a comparison: max($0.02, 0.1% of the biggest
+    figure involved)."""
+    biggest = max((abs(r) for r in refs if r is not None), default=0.0)
+    return max(MATH_TOLERANCE, MATH_TOLERANCE_PCT * biggest)
 
 
 def _n(v):
@@ -36,7 +45,7 @@ def validate_math(data: dict) -> None:
         if qty is not None and price is not None and total is not None:
             has_totals = True
             expected = qty * price + additional
-            if abs(expected - total) > MATH_TOLERANCE:
+            if abs(expected - total) > _tol(expected, total):
                 if additional:
                     item["math_mismatch"] = (
                         f"{qty} × ${price} + ${additional} = ${expected:.2f}, not ${total}"
@@ -51,13 +60,13 @@ def validate_math(data: dict) -> None:
     if has_totals:
         # Line-item pricing is sometimes tax-inclusive (sums to total) and sometimes
         # not (sums to subtotal) — accept either; only flag if it matches neither.
-        matches_subtotal = subtotal is not None and abs(line_total_sum - subtotal) <= MATH_TOLERANCE
-        matches_total = total_amt is not None and abs(line_total_sum - total_amt) <= MATH_TOLERANCE
+        matches_subtotal = subtotal is not None and abs(line_total_sum - subtotal) <= _tol(line_total_sum, subtotal)
+        matches_total = total_amt is not None and abs(line_total_sum - total_amt) <= _tol(line_total_sum, total_amt)
         if not matches_subtotal and not matches_total and (subtotal is not None or total_amt is not None):
             against = subtotal if subtotal is not None else total_amt
             issues.append(f"line items sum to ${line_total_sum:.2f}, PO shows ${against}")
     if subtotal is not None and tax is not None and total_amt is not None:
-        if abs(subtotal + tax - total_amt) > MATH_TOLERANCE:
+        if abs(subtotal + tax - total_amt) > _tol(total_amt):
             issues.append(f"subtotal (${subtotal}) + tax (${tax}) ≠ total (${total_amt})")
 
     data["math_check_failed"] = bool(issues)

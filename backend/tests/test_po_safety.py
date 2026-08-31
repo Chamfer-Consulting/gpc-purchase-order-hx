@@ -158,3 +158,49 @@ def test_editor_route_allowed_for_editor_reaches_service():
         headers={"Authorization": f"Bearer {_tok()}"},
     )
     assert r.status_code != 403
+
+
+# --- doc upload guards (pre-DB, no server needed) -------------------------
+
+import base64 as _b64  # noqa: E402
+
+
+def _upload(content_b64: str):
+    return _client.post(
+        "/api/po/1/documents/upload",
+        json={"filename": "x", "content_b64": content_b64},
+        headers={"Authorization": f"Bearer {_tok()}"},
+    )
+
+
+def test_doc_upload_rejects_non_pdf_or_image():
+    r = _upload(_b64.b64encode(b"just some text, not a document").decode())
+    assert r.status_code == 415
+
+
+def test_doc_upload_rejects_oversize():
+    from app.routers.po_docs import MAX_UPLOAD_BYTES
+
+    big = _b64.b64encode(b"%PDF-" + b"\x00" * (MAX_UPLOAD_BYTES + 10)).decode()
+    r = _upload(big)
+    assert r.status_code == 413
+
+
+def test_doc_upload_empty():
+    assert _upload("").status_code == 422
+
+
+# --- math_check magnitude-scaled tolerance -------------------------------
+
+from math_check import validate_math as _validate_math  # noqa: E402
+
+
+def test_math_tolerance_scales_with_magnitude():
+    # $3 off on a ~$50k order is < 0.1% -> not flagged
+    big = {"subtotal": 50000.0, "tax": 0.0, "total": 50003.0, "line_items": []}
+    _validate_math(big)
+    assert not big["math_check_failed"]
+    # $3 off on a $100 order IS flagged
+    small = {"subtotal": 100.0, "tax": 0.0, "total": 103.0, "line_items": []}
+    _validate_math(small)
+    assert small["math_check_failed"]

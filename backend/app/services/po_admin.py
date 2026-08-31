@@ -347,18 +347,20 @@ def set_status(conn, actor: str | None, po_id: int, status: str,
             raise AdminError("PO not found")
         _guard_version(before, expected_version)
         _check_transition(before["status"] or "active", status)
+        # status change + the edited stamp + version bump in one statement
         cur.execute(
             """
             UPDATE purchase_orders SET
                 status = %(status)s,
                 status_reason = %(reason)s,
                 status_at = now(),
-                deleted_at = CASE WHEN %(status)s = 'deleted' THEN now() ELSE NULL END
+                deleted_at = CASE WHEN %(status)s = 'deleted' THEN now() ELSE NULL END,
+                edited = TRUE, edited_by = %(actor)s, edited_at = now(),
+                lock_version = lock_version + 1
             WHERE id = %(id)s
             """,
-            {"status": status, "reason": reason, "id": po_id},
+            {"status": status, "reason": reason, "id": po_id, "actor": actor},
         )
-        _stamp_edited(cur, po_id, actor)
         after = _header_row(cur, po_id)
         action = _STATUS_ACTION.get(status, "status")
         audit.log(conn, actor=actor, action=action, entity="purchase_order",
@@ -404,12 +406,13 @@ def bulk_set_status(conn, actor: str | None, po_ids: list[int], status: str,
                 """
                 UPDATE purchase_orders SET
                     status = %(status)s, status_reason = %(reason)s, status_at = now(),
-                    deleted_at = CASE WHEN %(status)s = 'deleted' THEN now() ELSE NULL END
+                    deleted_at = CASE WHEN %(status)s = 'deleted' THEN now() ELSE NULL END,
+                    edited = TRUE, edited_by = %(actor)s, edited_at = now(),
+                    lock_version = lock_version + 1
                 WHERE id = %(id)s
                 """,
-                {"status": status, "reason": reason, "id": i},
+                {"status": status, "reason": reason, "id": i, "actor": actor},
             )
-            _stamp_edited(cur, i, actor)
             audit.log(conn, actor=actor, action=_STATUS_ACTION.get(status, "status"),
                       entity="purchase_order", entity_id=i,
                       before={"status": cur_status[i]},
@@ -466,10 +469,11 @@ def set_customer(conn, actor: str | None, po_id: int, customer_name: str | None,
         _guard_version(before, expected_version)
         _guard_active(before)
         cur.execute(
-            "UPDATE purchase_orders SET customer_name = %s, customer_id = %s WHERE id = %s",
-            (customer_name, customer_id, po_id),
+            "UPDATE purchase_orders SET customer_name = %s, customer_id = %s, "
+            "edited = TRUE, edited_by = %s, edited_at = now(), lock_version = lock_version + 1 "
+            "WHERE id = %s",
+            (customer_name, customer_id, actor, po_id),
         )
-        _stamp_edited(cur, po_id, actor)
         audit.log(conn, actor=actor, action="customer", entity="purchase_order",
                   entity_id=po_id,
                   before={"customer_name": before["customer_name"],

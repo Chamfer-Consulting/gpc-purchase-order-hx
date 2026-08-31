@@ -43,6 +43,24 @@ class UploadIn(BaseModel):
     mime_type: str = "application/pdf"
 
 
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB — stored inline in po_documents.content
+# (magic bytes -> canonical mime). Anything else is rejected.
+_SNIFF = (
+    (b"%PDF-", "application/pdf"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def _sniff_mime(data: bytes) -> str | None:
+    for sig, mime in _SNIFF:
+        if data.startswith(sig):
+            return mime
+    return None
+
+
 @router.post("/documents/backfill")
 def backfill(body: BackfillIn, user: AuthedUser = Depends(require_editor)) -> dict:
     """Sweep POs missing their captured PDFs, up to `limit` per source. Safe to
@@ -106,10 +124,17 @@ def upload(po_id: int, body: UploadIn, user: AuthedUser = Depends(require_editor
         data = base64.b64decode(body.content_b64, validate=True)
     except (binascii.Error, ValueError) as exc:
         raise HTTPException(422, "content_b64 is not valid base64") from exc
+    if not data:
+        raise HTTPException(422, "empty file")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"file is {len(data) // 1024} KB; max is {MAX_UPLOAD_BYTES // 1024 // 1024} MB")
+    sniffed = _sniff_mime(data)
+    if sniffed is None:
+        raise HTTPException(415, "only PDF and image files (PNG/JPEG/GIF) can be attached")
     with reused_conn() as conn:
         rec = _guard(
             po_docs.upload_document, conn, po_id,
-            filename=body.filename, data=data, mime_type=body.mime_type,
+            filename=body.filename, data=data, mime_type=sniffed,  # trust the bytes, not the caller
             captured_by=_actor(user),
         )
     return {"ok": True, "document": rec}
