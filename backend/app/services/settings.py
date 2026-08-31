@@ -7,15 +7,7 @@ from __future__ import annotations
 
 import json
 
-import psycopg2
 import psycopg2.extras
-
-_VIEWS_DDL = """
-CREATE TABLE IF NOT EXISTS dashboard_saved_views (
-    name TEXT PRIMARY KEY, kind TEXT NOT NULL, config JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-)
-"""
 
 
 def list_products(conn) -> list[dict]:
@@ -56,32 +48,33 @@ def set_product_hidden(conn, product_name: str, hidden: bool) -> None:
     conn.commit()
 
 
-def list_views(conn, kind: str) -> list[dict]:
+def list_views(conn, kind: str, owner: str) -> list[dict]:
+    """A user's own saved views for `kind`, plus any legacy shared ones
+    (owner = '') migrated from before views were per-user (0007)."""
     with conn.cursor() as cur:
-        try:
-            cur.execute(
-                "SELECT name, config FROM dashboard_saved_views WHERE kind = %s ORDER BY created_at",
-                (kind,),
-            )
-            return [{"name": n, "config": c} for n, c in cur.fetchall()]
-        except psycopg2.Error:
-            conn.rollback()
-            return []
-
-
-def save_view(conn, kind: str, name: str, config: dict) -> None:
-    with conn.cursor() as cur:
-        cur.execute(_VIEWS_DDL)
         cur.execute(
-            "INSERT INTO dashboard_saved_views (name, kind, config) VALUES (%s, %s, %s) "
-            "ON CONFLICT (name) DO UPDATE SET kind = EXCLUDED.kind, config = EXCLUDED.config, "
-            "created_at = now()",
-            (name, kind, json.dumps(config)),
+            "SELECT name, config FROM dashboard_saved_views "
+            "WHERE kind = %s AND owner IN (%s, '') ORDER BY created_at",
+            (kind, owner),
+        )
+        return [{"name": n, "config": c} for n, c in cur.fetchall()]
+
+
+def save_view(conn, kind: str, name: str, config: dict, owner: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO dashboard_saved_views (name, kind, config, owner) VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT (owner, kind, name) DO UPDATE SET config = EXCLUDED.config, created_at = now()",
+            (name, kind, json.dumps(config), owner),
         )
     conn.commit()
 
 
-def delete_view(conn, name: str) -> None:
+def delete_view(conn, kind: str, name: str, owner: str) -> None:
+    """Only your own view — legacy shared views (owner = '') are read-only."""
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM dashboard_saved_views WHERE name = %s", (name,))
+        cur.execute(
+            "DELETE FROM dashboard_saved_views WHERE kind = %s AND name = %s AND owner = %s",
+            (kind, name, owner),
+        )
     conn.commit()

@@ -20,7 +20,23 @@ export function useSetHidden() {
   return useMutation({
     mutationFn: (body: { product_name: string; hidden: boolean }) =>
       apiSend<{ ok: boolean }>("POST", "/api/settings/hidden-products", body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["hidden-products"] }),
+    onMutate: async (body) => {
+      await qc.cancelQueries({ queryKey: ["hidden-products"] });
+      const prev = qc.getQueryData<ProductVisibility[]>(["hidden-products"]);
+      if (prev) {
+        qc.setQueryData<ProductVisibility[]>(
+          ["hidden-products"],
+          prev.map((r) =>
+            r.product_name === body.product_name ? { ...r, hidden: body.hidden } : r,
+          ),
+        );
+      }
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["hidden-products"], ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["hidden-products"] }),
   });
 }
 
@@ -50,7 +66,7 @@ export function useDeleteView(kind: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) =>
-      apiSend<{ ok: boolean }>("DELETE", "/api/settings/views", { name }),
+      apiSend<{ ok: boolean }>("DELETE", "/api/settings/views", { kind, name }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saved-views", kind] }),
   });
 }

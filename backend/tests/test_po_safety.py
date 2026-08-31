@@ -120,6 +120,25 @@ def test_admin_route_forbidden_for_editor():
     assert r.json()["detail"]["need"] == "admin"
 
 
+def test_connection_disconnect_forbidden_for_editor():
+    # disconnecting a data source is admin-only (audit finding #1)
+    r = _client.post(
+        "/api/connections/qbo/disconnect",
+        headers={"Authorization": f"Bearer {_tok()}"},
+    )
+    assert r.status_code == 403 and r.json()["detail"]["need"] == "admin"
+
+
+def test_saved_view_delete_requires_kind():
+    r = _client.request(
+        "DELETE",
+        "/api/settings/views",
+        json={"name": "x"},  # missing kind
+        headers={"Authorization": f"Bearer {_tok()}"},
+    )
+    assert r.status_code == 422
+
+
 # --- reconcile line diff (pure) -------------------------------------------
 
 from app.services.reconcile import line_diff  # noqa: E402

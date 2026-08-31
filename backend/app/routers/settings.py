@@ -26,7 +26,12 @@ class ViewIn(BaseModel):
 
 
 class ViewDeleteIn(BaseModel):
+    kind: str
     name: str
+
+
+def _owner(user: AuthedUser) -> str:
+    return user.email or user.id
 
 
 @router.get("/hidden-products")
@@ -45,22 +50,22 @@ def set_hidden(body: HideIn, _: AuthedUser = Depends(require_editor)) -> dict:
 
 
 @router.get("/views")
-def list_views(kind: str, _: AuthedUser = Depends(current_user)) -> list[dict]:
+def list_views(kind: str, user: AuthedUser = Depends(current_user)) -> list[dict]:
     with reused_conn() as conn:
-        return svc.list_views(conn, kind)
+        return svc.list_views(conn, kind, _owner(user))
 
 
 @router.post("/views")
-def save_view(body: ViewIn, _: AuthedUser = Depends(require_editor)) -> dict:
+def save_view(body: ViewIn, user: AuthedUser = Depends(require_editor)) -> dict:
     if not body.name.strip() or not body.kind.strip():
         raise HTTPException(422, "name and kind are required")
     with reused_conn() as conn:
-        svc.save_view(conn, body.kind, body.name, body.config)
+        svc.save_view(conn, body.kind, body.name.strip(), body.config, _owner(user))
     return {"ok": True}
 
 
 @router.delete("/views")
-def delete_view(body: ViewDeleteIn, _: AuthedUser = Depends(require_editor)) -> dict:
+def delete_view(body: ViewDeleteIn, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
-        svc.delete_view(conn, body.name)
+        svc.delete_view(conn, body.kind, body.name, _owner(user))
     return {"ok": True}

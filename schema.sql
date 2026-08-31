@@ -412,8 +412,10 @@ CREATE TABLE IF NOT EXISTS extraction_snapshots (
 -- view to a page (e.g. "explore"); `config` is that page's control state. Created
 -- lazily by dashboard/data.py:save_view() too, so it exists even before a sync.
 CREATE TABLE IF NOT EXISTS dashboard_saved_views (
-    name        TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
     kind        TEXT NOT NULL,
     config      JSONB NOT NULL,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    owner       TEXT NOT NULL DEFAULT '',   -- Supabase email; '' = legacy shared (0007)
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (owner, kind, name)
 );

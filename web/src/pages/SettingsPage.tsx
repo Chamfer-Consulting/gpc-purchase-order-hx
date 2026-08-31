@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Badge,
@@ -21,6 +22,9 @@ import {
 } from "@/api/connections";
 import { useBackfillDocs } from "@/api/poDocs";
 import { useHiddenProducts, useSetHidden } from "@/api/settings";
+import { useMe } from "@/api/me";
+import { confirmAction } from "@/lib/modals";
+import { notifySuccess } from "@/lib/notify";
 import { PageLayout } from "@/components/PageLayout";
 import { QueryBoundary } from "@/components/ErrorState";
 import { SectionCard } from "@/components/SectionCard";
@@ -55,12 +59,19 @@ function StatusBadge({ connected, label }: { connected: boolean; label?: string 
 
 export function SettingsPage() {
   const { data, isLoading, error, refetch } = useConnections();
+  const { canEdit, canAdmin, roleKnown } = useMe();
+  const qc = useQueryClient();
   const [sp, setSp] = useSearchParams();
   const callback = sp.get("connect");
   const meta = pageMeta("/settings")!;
 
   useEffect(() => {
     if (!callback) return;
+    // a completed OAuth round-trip changed the connection — reflect it now,
+    // not after the 15s staleTime.
+    if (callback.endsWith("_ok")) {
+      qc.invalidateQueries({ queryKey: ["connections"] });
+    }
     // Deps are [callback] only — `sp` is a fresh object every render, so listing it
     // would restart this timer on any re-render inside the 6s window.
     const t = setTimeout(() => {
@@ -85,6 +96,17 @@ export function SettingsPage() {
       width="form"
     >
       <Stack gap="lg">
+        {roleKnown && !canEdit && (
+          <Alert color="gray" variant="light" title="View-only access">
+            You can see the settings below but not change them.
+          </Alert>
+        )}
+        {roleKnown && canEdit && !canAdmin && (
+          <Alert color="gray" variant="light" title="Limited access">
+            Connecting or disconnecting QuickBooks / Gmail needs the admin role.
+          </Alert>
+        )}
+
         {callback && CALLBACK_MESSAGES[callback] && (
           <Alert color={CALLBACK_MESSAGES[callback].color} variant="light">
             {CALLBACK_MESSAGES[callback].text}
@@ -109,6 +131,7 @@ export function SettingsPage() {
 
 function ProductVisibilityCard() {
   const { data, isLoading, error, refetch } = useHiddenProducts();
+  const { canEdit } = useMe();
   const setHidden = useSetHidden();
   const [q, setQ] = useState("");
 
@@ -118,10 +141,8 @@ function ProductVisibilityCard() {
     const filtered = needle
       ? rows.filter((r) => r.product_name.toLowerCase().includes(needle))
       : rows;
-    // hidden first, then by usage
-    return [...filtered].sort(
-      (a, b) => Number(b.hidden) - Number(a.hidden) || b.n_lines - a.n_lines,
-    );
+    // Stable order (most-used first) so toggling a switch doesn't make the row jump.
+    return [...filtered].sort((a, b) => b.n_lines - a.n_lines || a.product_name.localeCompare(b.product_name));
   }, [data, q]);
 
   const hiddenCount = (data ?? []).filter((r) => r.hidden).length;
@@ -154,6 +175,7 @@ function ProductVisibilityCard() {
                     <Switch
                       size="xs"
                       aria-label={`Hide ${r.product_name}`}
+                      disabled={!canEdit}
                       checked={r.hidden}
                       onChange={(e) =>
                         setHidden.mutate({
@@ -179,6 +201,7 @@ function ProductVisibilityCard() {
 }
 
 function DocumentsCard() {
+  const { canEdit } = useMe();
   const backfill = useBackfillDocs();
   const r = backfill.data;
 
@@ -190,6 +213,7 @@ function DocumentsCard() {
       <Group>
         <Button
           size="xs"
+          disabled={!canEdit}
           onClick={() => backfill.mutate({ sources: ["gmail", "qbo"] })}
           loading={backfill.isPending}
         >
@@ -198,6 +222,7 @@ function DocumentsCard() {
         <Button
           size="xs"
           variant="default"
+          disabled={!canEdit}
           onClick={() => backfill.mutate({ sources: ["gmail"] })}
           loading={backfill.isPending}
         >
@@ -206,6 +231,7 @@ function DocumentsCard() {
         <Button
           size="xs"
           variant="default"
+          disabled={!canEdit}
           onClick={() => backfill.mutate({ sources: ["qbo"] })}
           loading={backfill.isPending}
         >
@@ -224,29 +250,39 @@ function DocumentsCard() {
           )}
         </Stack>
       )}
-      {backfill.error && (
-        <Text size="xs" c="red">
-          {(backfill.error as Error).message}
-        </Text>
-      )}
     </SectionCard>
   );
 }
 
 function QboCard({ qbo }: { qbo: ConnectionsStatus["qbo"] }) {
+  const { canEdit, canAdmin } = useMe();
   const connect = useConnect("qbo");
   const disconnect = useDisconnect("qbo");
   const syncNow = useQboSyncNow();
+
+  const confirmDisconnect = () =>
+    confirmAction({
+      title: "Disconnect QuickBooks?",
+      body: "The nightly invoice sync stops until someone reconnects. Existing data is kept.",
+      confirmLabel: "Disconnect",
+      onConfirm: () =>
+        disconnect.mutate(undefined, { onSuccess: () => notifySuccess("QuickBooks disconnected.") }),
+    });
 
   return (
     <SectionCard title="QuickBooks" actions={<StatusBadge connected={!!qbo} label={qbo?.environment} />}>
       {qbo ? (
         <Stack gap={6}>
           <Text size="sm" c="dimmed">
-            Realm <Code>{qbo.realm_id}</Code>
+            {canAdmin && (
+              <>
+                Realm <Code>{qbo.realm_id}</Code>
+                {" · "}
+              </>
+            )}
             {qbo.last_synced_at
-              ? ` · last sync ${qbo.last_synced_at.slice(0, 16).replace("T", " ")}`
-              : " · never synced"}
+              ? `last sync ${qbo.last_synced_at.slice(0, 16).replace("T", " ")}`
+              : "never synced"}
           </Text>
           {qbo.auto_sync_error && (
             <Alert color="red" variant="light">
@@ -259,35 +295,50 @@ function QboCard({ qbo }: { qbo: ConnectionsStatus["qbo"] }) {
             </Text>
           )}
           <Group mt="xs">
-            <Button size="xs" onClick={() => syncNow.mutate(false)} loading={syncNow.isPending}>
+            <Button
+              size="xs"
+              disabled={!canEdit}
+              onClick={() => syncNow.mutate(false)}
+              loading={syncNow.isPending}
+            >
               Sync now
             </Button>
             <Button
               size="xs"
               variant="default"
+              disabled={!canEdit}
               onClick={() => syncNow.mutate(true)}
               loading={syncNow.isPending}
             >
               Full resync
             </Button>
-            <Button size="xs" color="red" variant="subtle" onClick={() => disconnect.mutate()}>
+            <Button
+              size="xs"
+              color="red"
+              variant="subtle"
+              disabled={!canAdmin}
+              onClick={confirmDisconnect}
+            >
               Disconnect
             </Button>
           </Group>
+          <Text size="xs" c="dimmed">
+            A full resync pulls the whole invoice history and can take a few minutes.
+          </Text>
           {syncNow.data && (
             <Text size="xs" c="dimmed">
               Synced {syncNow.data.items} catalog items, {syncNow.data.synced} invoices
               {syncNow.data.deleted ? `, removed ${syncNow.data.deleted}` : ""}.
             </Text>
           )}
-          {syncNow.error && (
-            <Text size="xs" c="red">
-              {(syncNow.error as Error).message}
-            </Text>
-          )}
         </Stack>
       ) : (
-        <Button size="xs" onClick={() => connect.mutate()} loading={connect.isPending}>
+        <Button
+          size="xs"
+          disabled={!canAdmin}
+          onClick={() => connect.mutate()}
+          loading={connect.isPending}
+        >
           Connect to QuickBooks
         </Button>
       )}
@@ -296,8 +347,18 @@ function QboCard({ qbo }: { qbo: ConnectionsStatus["qbo"] }) {
 }
 
 function GmailCard({ gmail }: { gmail: ConnectionsStatus["gmail"] }) {
+  const { canAdmin } = useMe();
   const connect = useConnect("gmail");
   const disconnect = useDisconnect("gmail");
+
+  const confirmDisconnect = () =>
+    confirmAction({
+      title: "Disconnect Gmail?",
+      body: "The scheduled extraction can no longer read the mailbox until someone reconnects.",
+      confirmLabel: "Disconnect",
+      onConfirm: () =>
+        disconnect.mutate(undefined, { onSuccess: () => notifySuccess("Gmail disconnected.") }),
+    });
 
   return (
     <SectionCard title="Gmail ingestion" actions={<StatusBadge connected={!!gmail} />}>
@@ -313,13 +374,24 @@ function GmailCard({ gmail }: { gmail: ConnectionsStatus["gmail"] }) {
             Extraction runs on a schedule (GitHub Actions). This just holds the mailbox token.
           </Text>
           <Group mt="xs">
-            <Button size="xs" color="red" variant="subtle" onClick={() => disconnect.mutate()}>
+            <Button
+              size="xs"
+              color="red"
+              variant="subtle"
+              disabled={!canAdmin}
+              onClick={confirmDisconnect}
+            >
               Disconnect
             </Button>
           </Group>
         </Stack>
       ) : (
-        <Button size="xs" onClick={() => connect.mutate()} loading={connect.isPending}>
+        <Button
+          size="xs"
+          disabled={!canAdmin}
+          onClick={() => connect.mutate()}
+          loading={connect.isPending}
+        >
           Connect Gmail
         </Button>
       )}

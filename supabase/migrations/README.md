@@ -11,6 +11,7 @@ are the deltas made on `po-dashboard-rebuild` after the pre-cutover Neon schema.
 | 0004 | `0004_drop_gdrive.sql` | Drops the retired `purchase_orders.drive_file_id` / `drive_synced_at`. |
 | 0005 | `0005_rls_lockdown.sql` | Enables RLS (deny-all, no policies) on every `public` table, revokes all `anon` / `authenticated` grants, and installs an `ensure_rls` event trigger so future tables get RLS automatically. Needs the `postgres` role. |
 | 0006 | `0006_po_locking_and_roles.sql` | `purchase_orders.lock_version` (optimistic concurrency) + `app_users` (viewer/editor/admin authorization tiers, owner seeded as admin). Self-applied on API boot (`backend/app/admin_schema.py`). |
+| 0007 | `0007_saved_views_owner.sql` | `dashboard_saved_views.owner` + key on `(owner, kind, name)` — saved views become per-user; pre-existing rows migrate to `owner = ''` (shared, read-only). Self-applied on API boot. |
 
 Every file is idempotent (`IF NOT EXISTS` / guarded `DO $$`), so re-running any of
 them is safe.

@@ -7,7 +7,7 @@ import qbo_client  # shared/, via app.reuse
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import oauth_state
-from ..auth import AuthedUser, current_user
+from ..auth import AuthedUser, current_user, require_admin, require_editor
 from ..config import get_settings
 from ..reused_db import reused_conn
 
@@ -46,7 +46,7 @@ def status(_: AuthedUser = Depends(current_user)) -> dict:
 
 
 @router.get("/gmail/authorize")
-def gmail_authorize(_: AuthedUser = Depends(current_user)) -> dict:
+def gmail_authorize(_: AuthedUser = Depends(require_admin)) -> dict:
     s = get_settings()
     if not (s.gmail_client_id and s.gmail_redirect_uri):
         raise HTTPException(503, "Gmail OAuth is not configured (GMAIL_CLIENT_ID / GMAIL_REDIRECT_URI).")
@@ -55,7 +55,7 @@ def gmail_authorize(_: AuthedUser = Depends(current_user)) -> dict:
 
 
 @router.get("/qbo/authorize")
-def qbo_authorize(_: AuthedUser = Depends(current_user)) -> dict:
+def qbo_authorize(_: AuthedUser = Depends(require_admin)) -> dict:
     st = oauth_state.issue("qbo")
     try:
         return {"url": qbo_client.build_authorize_url(st)}
@@ -64,21 +64,21 @@ def qbo_authorize(_: AuthedUser = Depends(current_user)) -> dict:
 
 
 @router.post("/gmail/disconnect")
-def gmail_disconnect(_: AuthedUser = Depends(current_user)) -> dict:
+def gmail_disconnect(_: AuthedUser = Depends(require_admin)) -> dict:
     with reused_conn() as conn:
         gmail_client.disconnect(conn)
     return {"ok": True}
 
 
 @router.post("/qbo/disconnect")
-def qbo_disconnect(_: AuthedUser = Depends(current_user)) -> dict:
+def qbo_disconnect(_: AuthedUser = Depends(require_admin)) -> dict:
     with reused_conn() as conn:
         qbo_client.disconnect(conn)
     return {"ok": True}
 
 
 @router.post("/qbo/sync")
-def qbo_sync(full_resync: bool = False, _: AuthedUser = Depends(current_user)) -> dict:
+def qbo_sync(full_resync: bool = False, _: AuthedUser = Depends(require_editor)) -> dict:
     """On-demand QuickBooks sync. The daily job (run_qbo_sync.py) is the norm; this
     is the 'sync now' button."""
     with reused_conn() as conn:

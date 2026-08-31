@@ -59,6 +59,27 @@ CREATE TABLE IF NOT EXISTS po_documents (
     UNIQUE (po_id, kind, content_hash)
 );
 CREATE INDEX IF NOT EXISTS idx_po_documents_po_id ON po_documents (po_id);
+
+-- Saved views are per-user (0007). Legacy name-PK rows migrate to owner = ''
+-- (shared, read-only). New rows are keyed (owner, kind, name).
+CREATE TABLE IF NOT EXISTS dashboard_saved_views (
+    name       TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    config     JSONB NOT NULL,
+    owner      TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE dashboard_saved_views ADD COLUMN IF NOT EXISTS owner TEXT NOT NULL DEFAULT '';
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dashboard_saved_views_pkey') THEN
+        ALTER TABLE dashboard_saved_views DROP CONSTRAINT dashboard_saved_views_pkey;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_saved_views_owner_kind_name') THEN
+        ALTER TABLE dashboard_saved_views
+            ADD CONSTRAINT uq_saved_views_owner_kind_name UNIQUE (owner, kind, name);
+    END IF;
+END $$;
 """
 
 
