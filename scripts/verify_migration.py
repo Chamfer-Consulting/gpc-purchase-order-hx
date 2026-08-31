@@ -44,7 +44,10 @@ def main() -> None:
     print("-" * (width + 42))
     for t in all_tables:
         s, d = src.get(t), dst.get(t)
-        match = s == d
+        # Absent on one side counts as 0 — so a table that exists only on the
+        # target (a new one added post-cutover) with no rows is fine, while a
+        # source table whose rows didn't land is a MISMATCH.
+        match = (s or 0) == (d or 0)
         ok = ok and match
         s_txt = "—" if s is None else f"{s:,}"
         d_txt = "—" if d is None else f"{d:,}"
