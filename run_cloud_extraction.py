@@ -159,8 +159,20 @@ def _connect(database_url: str):
     they make the kernel notice the dead peer in ~30-60s — without them a query (or
     even a `SELECT 1` probe) on a silently-dropped socket blocks on the OS TCP
     timeout, which is minutes. Observed live: a ~5-minute stall before a checkpoint
-    flush finally raised "SSL connection has been closed unexpectedly"."""
-    return psycopg2.connect(
+    flush finally raised "SSL connection has been closed unexpectedly".
+
+    autocommit is on: the thread-loop connection does a read (is_known / a token
+    check) and then spends seconds-to-minutes on Gmail + Claude calls before its
+    next DB touch. Under psycopg2's default (autocommit off) that first read opens
+    a transaction that then sits "idle in transaction" holding an AccessShareLock
+    on purchase_orders for the whole gap. The checkpoint flush re-applies the full
+    schema.sql (CREATE TABLE IF NOT EXISTS ...), which needs a briefly-conflicting
+    lock on the same table — against a Supabase pooler that blocks until the
+    database's 2-minute statement_timeout kills it ("canceling statement due to
+    statement timeout"), failing every checkpoint. Every write in the thread loop
+    is an idempotent upsert, so committing each immediately is also strictly better
+    for crash-resumability."""
+    conn = psycopg2.connect(
         database_url,
         connect_timeout=30,
         keepalives=1,
@@ -173,6 +185,8 @@ def _connect(database_url: str):
         # observed live) instead of failing fast enough for a retry to matter.
         tcp_user_timeout=45000,
     )
+    conn.autocommit = True
+    return conn
 
 
 def _ensure_connection(pg_conn, database_url: str):
