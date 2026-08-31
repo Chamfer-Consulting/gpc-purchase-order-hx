@@ -1,6 +1,8 @@
-"""One psycopg3 connection pool for the whole process, against the Supabase
-transaction pooler. Short-lived checkouts only — no long transactions here (those
-belong to the pipeline scripts on the session connection)."""
+"""One psycopg3 connection pool for the whole process, against a Supabase pooler
+(session `:5432` or transaction `:6543` — NOT the IPv6-only `db.<ref>.supabase.co`
+direct host, which most hosts including Railway can't reach). Short-lived
+checkouts only. `prepare_threshold=None` disables server-side prepared
+statements, which pgBouncer's transaction pooling mode does not support."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -21,7 +23,7 @@ def init_pool() -> None:
         conninfo=s.database_url,
         min_size=s.db_pool_min,
         max_size=s.db_pool_max,
-        kwargs={"connect_timeout": 15},
+        kwargs={"connect_timeout": 15, "prepare_threshold": None},
         open=True,
         name="po-dashboard-api",
     )
