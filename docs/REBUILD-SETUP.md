@@ -265,11 +265,16 @@ still `/`. Set it to `web` and retry.
 ## 5.1 Custom domains (DNS at DreamHost)
 
 DreamHost is only the DNS authority for `garfieldproduce.com` — it hosts nothing
-here. Both hosts issue their own TLS cert once the CNAME resolves.
+here. Each host issues its own TLS cert **only after** the custom domain is
+registered in its dashboard *and* the CNAME resolves — a CNAME on its own gets a
+TLS or 404 error because the host doesn't yet route that Host header.
 
 1. **Cloudflare Pages** → the project → **Custom domains → Set up a domain** →
-   `dashboard.garfieldproduce.com`. Pages sees the zone isn't on its DNS and
-   shows a **CNAME target** (e.g. `<project>.pages.dev`).
+   `dashboard.garfieldproduce.com` → **Continue**. Pages sees the zone isn't on
+   its DNS and shows the **CNAME target** — the project's own `*.pages.dev`
+   hostname (the "production" URL on the project overview, e.g.
+   `gpc-purchase-order-hx.pages.dev`). Do this step *before* / alongside the DNS
+   record, not after.
 2. **Railway** → the service → **Settings → Networking → Custom Domain** →
    `api.garfieldproduce.com`. Railway shows a **CNAME target** (e.g.
    `<hash>.up.railway.app`).
@@ -281,11 +286,17 @@ here. Both hosts issue their own TLS cert once the CNAME resolves.
    | `dashboard` | `CNAME` | the target from step 1 |
    | `api` | `CNAME` | the target from step 2 |
 
-   Leave TTL at the default. Do **not** "add hosting" for the subdomains — that
-   creates A records to DreamHost's web servers and breaks this.
-4. Wait for propagation + cert issue (minutes to a few hours). Verify:
-   `curl https://api.garfieldproduce.com/health` and open
-   `https://dashboard.garfieldproduce.com`.
+   Leave TTL at the default. The CNAME must be the **only** record at that
+   hostname — do **not** also "add hosting" for the subdomain (that adds a
+   conflicting A record to DreamHost's web servers).
+4. Wait for the host's Custom-Domains panel to go **Active** (cert issued —
+   minutes, occasionally hours). Verify:
+
+   ```bash
+   dig +short dashboard.garfieldproduce.com     # -> gpc-purchase-order-hx.pages.dev (then CF IPs)
+   curl -sI https://dashboard.garfieldproduce.com | head -1   # -> HTTP/2 200
+   curl -s  https://api.garfieldproduce.com/health            # -> {"status":"ok",...}
+   ```
 5. Confirm the env vars already point at the custom domains (they do, per §4/§5):
    `VITE_API_BASE`, `ALLOWED_ORIGINS`, `FRONTEND_BASE`, `GMAIL_REDIRECT_URI`,
    `QBO_REDIRECT_URI`. Redeploy the Pages project so the built bundle picks up
