@@ -243,7 +243,7 @@ Model: **soft delete** (a `status` enum, rows preserved) + an **audit_log**.
 - [x] Google Drive removed — `gdrive_client.py` deleted, the "Sync Drive links" button + the Edit-PO "Original PDF (Drive)" link removed, `google-auth` dep + `gdrive_*` secrets dropped, `qbo_matcher` SELECTs no longer read `drive_file_id`. Original-PDF archival is entirely `po_documents` on Supabase. Columns dropped by `supabase/migrations/0004_drop_gdrive.sql`.
 - [x] Migrations renumbered — `supabase/migrations/0001_init.sql` (full base schema, from-scratch-safe) + `0002_admin_crud` / `0003_po_documents` / `0004_drop_gdrive` (deltas) + `0005_rls_lockdown` (RLS + grant revoke, applied to the live project). `schema.sql` reordered so `po_documents` follows `qbo_invoices`.
 - [x] Schema into Supabase — migrations `0001`–`0005` run (SETUP §2.1). `drive_file_id`/`drive_synced_at` temporarily re-added for the data load (drop after).
-- [ ] **(you)** Data into Supabase — data-only `pg_dump` Neon → `pg_restore --data-only` (SETUP §2.2), then `verify_migration.py`, then drop the temp Drive columns.
+- [x] Data into Supabase — 30,538 rows copied Neon → Supabase via `scripts/pg_data_copy.py` (psycopg2 COPY, column-intersection). `qbo_connection`/`gmail_connection` skipped. `verify_migration.py`: all data tables match. Temp Drive columns dropped.
 - [ ] **(you)** Add `doc_capture.yml`'s secrets in GitHub Actions; optionally create the `po-documents` Storage bucket (§3.1).
 - [ ] Optional: capture *inside* the extraction pipeline too (so a brand-new PO has its PDF before the nightly sweep) — currently the sweep covers it within a day.
 - [x] Bulk lifecycle action from the review queue — `POST /api/bulk/po-status`

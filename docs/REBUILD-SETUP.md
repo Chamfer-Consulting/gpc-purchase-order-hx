@@ -163,12 +163,29 @@ psql "$SUPABASE_SESSION_URL" -c "
 > two databases sharing one refresh token means whichever refreshes first
 > invalidates the other.
 
-### 2.3 No data to carry?
+### 2.3 No pg17 client tools? (psycopg2 alternative)
+
+`scripts/pg_data_copy.py` does the same data move over the COPY protocol with only
+`psycopg2` — no `pg_dump`/`pg_restore`, and it copies only the columns present in
+**both** databases, so the Drive-column drift in step 1 isn't needed:
+
+```bash
+.venv312/bin/python scripts/pg_data_copy.py "$NEON_URL" "$SUPABASE_SESSION_URL" \
+  --exclude qbo_connection,gmail_connection   # drop --exclude to carry the OAuth tokens
+```
+
+It loads parents before children, skips any target table that already has rows
+(safe to re-run), and resets the `id` sequences. Follow with step 4
+(`verify_migration.py` — the two excluded tables will read as MISMATCH, that's the
+exclusion, not data loss) and step 6 (nothing to `rm`).
+
+### 2.4 No data to carry at all?
 
 Skip 2.2 entirely. Load data later by pointing the extraction pipeline's
 `DATABASE_URL` at Supabase and letting it publish.
 
-Do not proceed to §3 until the data is in and `verify_migration.py` is clean.
+Do not proceed to §3 until the data is in and `verify_migration.py` is clean
+(bar any deliberately excluded tables).
 
 ---
 
