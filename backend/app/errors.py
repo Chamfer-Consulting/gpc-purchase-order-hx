@@ -94,19 +94,6 @@ class NotActive(ApiProblem):
         )
 
 
-class DuplicatePoNumber(ApiProblem):
-    """Another active PO already carries this po_number. 409."""
-
-    status = 409
-    code = "duplicate_po_number"
-
-    def __init__(self, po_number: str) -> None:
-        super().__init__(
-            f"Another active order already uses PO number {po_number}.",
-            po_number=po_number,
-        )
-
-
 class Forbidden(ApiProblem):
     """The signed-in user's role can't perform this action. 403."""
 

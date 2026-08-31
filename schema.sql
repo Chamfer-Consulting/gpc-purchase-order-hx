@@ -84,12 +84,11 @@ ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS status_at TIMESTAMPTZ;
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS edited_by TEXT;
 -- Optimistic-concurrency counter — bumped on every admin/edit mutation; a stale
--- expected value from the client is rejected as HTTP 409 (0006).
+-- expected value from the client is rejected as HTTP 409 (0006). NB: po_number is
+-- intentionally NOT unique — every revision of a PO is its own active row and
+-- qbo_matcher.get_latest_pos() dedupes by po_number at read time.
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS lock_version INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders (status);
--- One active PO per po_number (a duplicate silently breaks qbo_matcher grouping).
-CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_orders_active_po_number
-  ON purchase_orders (po_number) WHERE status = 'active' AND po_number IS NOT NULL;
 
 -- Authorization tiers for the admin surface (0006). No row => 'editor'.
 CREATE TABLE IF NOT EXISTS app_users (

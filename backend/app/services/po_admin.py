@@ -18,13 +18,7 @@ import qbo_matcher  # shared/, via app.reuse
 from math_check import validate_math  # repo root, via app.reuse
 
 from . import audit
-from ..errors import (
-    BadTransition,
-    BulkTransitionError,
-    DuplicatePoNumber,
-    NotActive,
-    StaleWrite,
-)
+from ..errors import BadTransition, BulkTransitionError, NotActive, StaleWrite
 from .po_edit import _insert_line, _jsonify, get_po
 
 VALID_STATUS = ("active", "draft", "cancelled", "withdrawn", "voided", "deleted")
@@ -289,14 +283,6 @@ def create_po(conn, actor: str | None, header: dict, items: list[dict]) -> int:
     validate_math(payload)
 
     with conn.cursor() as cur:
-        po_number = (header.get("po_number") or "").strip() or None
-        if po_number is not None:
-            cur.execute(
-                "SELECT id FROM purchase_orders WHERE po_number = %s AND status = 'active'",
-                (po_number,),
-            )
-            if cur.fetchone() is not None:
-                raise DuplicatePoNumber(po_number)
         cur.execute(
             """
             INSERT INTO purchase_orders (

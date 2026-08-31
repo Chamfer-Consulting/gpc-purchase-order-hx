@@ -6,10 +6,10 @@
 -- 2. app_users — the authorization tier. role viewer < editor < admin. No row
 --    for an email means 'editor' (backend default) so existing users keep
 --    working; 'admin' must be granted explicitly.
--- 3. Partial unique index on active po_number — a duplicate active PO silently
---    breaks qbo_matcher.get_latest_pos (keys on po_number). BEST-EFFORT: if
---    duplicates already exist the index is skipped with a warning (the rest of
---    this migration still applies); clear them and re-run this file to add it.
+--
+-- NOTE: no uniqueness constraint on po_number. The revision model keeps every
+-- version of a PO as its own status='active' row; qbo_matcher.get_latest_pos()
+-- dedupes by po_number at read time.
 --
 -- Idempotent (IF NOT EXISTS / guarded). The API self-applies this same DDL on
 -- boot (backend/app/admin_schema.py). Apply with `supabase db push` or:
@@ -36,22 +36,8 @@ INSERT INTO app_users (email, role, note)
 VALUES ('jcaternolo@gmail.com', 'admin', 'seed: repo owner')
 ON CONFLICT (email) DO NOTHING;
 
--- 3. One active PO per po_number (best-effort) --------------------------
-DO $$
-BEGIN
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_orders_active_po_number
-    ON purchase_orders (po_number)
-    WHERE status = 'active' AND po_number IS NOT NULL;
-EXCEPTION WHEN unique_violation THEN
-  RAISE WARNING 'uq_purchase_orders_active_po_number skipped: two or more ACTIVE '
-    'purchase orders share a po_number. Resolve them (group as revisions, or set '
-    'the stale one to cancelled/withdrawn/deleted), then re-run this migration '
-    'or restart the API to add the index.';
-END $$;
-
 COMMIT;
 
 -- Rollback (manual) ----------------------------------------------------
 --   ALTER TABLE purchase_orders DROP COLUMN IF EXISTS lock_version;
---   DROP INDEX IF EXISTS uq_purchase_orders_active_po_number;
 --   DROP TABLE IF EXISTS app_users;

@@ -61,15 +61,6 @@ CREATE TABLE IF NOT EXISTS po_documents (
 CREATE INDEX IF NOT EXISTS idx_po_documents_po_id ON po_documents (po_id);
 """
 
-# Best-effort DDL that can legitimately fail on existing data (a pre-existing
-# duplicate active po_number). Run in its own transaction so a failure here never
-# blocks the core _DDL above.
-_DDL_SOFT = """
-CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_orders_active_po_number
-  ON purchase_orders (po_number)
-  WHERE status = 'active' AND po_number IS NOT NULL;
-"""
-
 
 def ensure_admin_schema() -> None:
     from .reused_db import reused_conn
@@ -81,11 +72,3 @@ def ensure_admin_schema() -> None:
         log.info("admin schema ensured")
     except Exception as exc:  # non-fatal: a read-only DB user, or DB down at boot
         log.warning("could not ensure admin schema: %s", exc)
-        return
-
-    try:
-        with reused_conn() as conn, conn.cursor() as cur:
-            cur.execute(_DDL_SOFT)
-            conn.commit()
-    except Exception as exc:  # e.g. a pre-existing duplicate active po_number
-        log.warning("could not apply soft admin schema (uq_active_po_number): %s", exc)
