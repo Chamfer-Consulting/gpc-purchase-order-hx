@@ -169,10 +169,10 @@ function VisibilityList({ dim }: { dim: VisibilityDim }) {
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return rows
-      .filter((r) => (needle ? r.name.toLowerCase().includes(needle) : true))
+      .filter((r) => (needle ? (r.name ?? "").toLowerCase().includes(needle) : true))
       .filter((r) => (show === "all" ? true : show === "hidden" ? r.hidden : !r.hidden))
       // stable order (most-used first) so toggling a switch never makes a row jump
-      .sort((a, b) => b.n_lines - a.n_lines || a.name.localeCompare(b.name));
+      .sort((a, b) => b.n_lines - a.n_lines || (a.name ?? "").localeCompare(b.name ?? ""));
   }, [rows, q, show]);
 
   return (

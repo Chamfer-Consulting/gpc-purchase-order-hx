@@ -1,10 +1,11 @@
 import { useEffect } from "react";
-import { useBlocker } from "react-router-dom";
-import { modals } from "@mantine/modals";
 
 /**
- * Warn before losing unsaved edits: a browser `beforeunload` prompt on
- * reload/close, and a themed confirm modal on in-app navigation.
+ * Warn before losing unsaved edits on a full-page unload (reload, tab close,
+ * typed URL). In-app <Link> navigation isn't intercepted — that needs
+ * react-router's data router (`useBlocker`), which this app's classic
+ * <BrowserRouter> doesn't provide. The sticky Save/Discard bar keeps unsaved
+ * state visible in the meantime.
  */
 export function useUnsavedGuard(dirty: boolean) {
   useEffect(() => {
@@ -16,21 +17,4 @@ export function useUnsavedGuard(dirty: boolean) {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [dirty]);
-
-  const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) =>
-      dirty && currentLocation.pathname !== nextLocation.pathname,
-  );
-
-  useEffect(() => {
-    if (blocker.state !== "blocked") return;
-    modals.openConfirmModal({
-      title: "Discard unsaved changes?",
-      children: "You've edited this order but haven't saved. Leave anyway?",
-      labels: { confirm: "Discard & leave", cancel: "Stay" },
-      confirmProps: { color: "red" },
-      onConfirm: () => blocker.proceed(),
-      onCancel: () => blocker.reset(),
-    });
-  }, [blocker]);
 }
