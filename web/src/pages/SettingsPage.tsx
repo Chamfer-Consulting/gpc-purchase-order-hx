@@ -4,15 +4,13 @@ import {
   Alert,
   Badge,
   Button,
-  Card,
+  Code,
   Group,
-  Loader,
   ScrollArea,
   Stack,
   Switch,
   Text,
   TextInput,
-  Title,
 } from "@mantine/core";
 import {
   useConnect,
@@ -23,20 +21,43 @@ import {
 } from "@/api/connections";
 import { useBackfillDocs } from "@/api/poDocs";
 import { useHiddenProducts, useSetHidden } from "@/api/settings";
+import { PageLayout } from "@/components/PageLayout";
+import { QueryBoundary } from "@/components/ErrorState";
+import { SectionCard } from "@/components/SectionCard";
+import { pageMeta } from "@/nav";
 
 const CALLBACK_MESSAGES: Record<string, { color: string; text: string }> = {
-  qbo_ok: { color: "green", text: "QuickBooks connected." },
-  gmail_ok: { color: "green", text: "Gmail connected." },
+  qbo_ok: { color: "gpGreen", text: "QuickBooks connected." },
+  gmail_ok: { color: "gpGreen", text: "Gmail connected." },
   qbo_error: { color: "red", text: "QuickBooks connection failed — try again." },
   gmail_error: { color: "red", text: "Gmail connection failed — try again." },
-  qbo_state_mismatch: { color: "red", text: "QuickBooks: security check failed — start the connection again." },
-  gmail_state_mismatch: { color: "red", text: "Gmail: security check failed — start the connection again." },
+  qbo_state_mismatch: {
+    color: "red",
+    text: "QuickBooks: security check failed — start the connection again.",
+  },
+  gmail_state_mismatch: {
+    color: "red",
+    text: "Gmail: security check failed — start the connection again.",
+  },
 };
 
+function StatusBadge({ connected, label }: { connected: boolean; label?: string }) {
+  return connected ? (
+    <Badge color="gpGreen" variant="light">
+      Connected{label ? ` · ${label}` : ""}
+    </Badge>
+  ) : (
+    <Badge color="gray" variant="light">
+      Not connected
+    </Badge>
+  );
+}
+
 export function SettingsPage() {
-  const { data, isLoading, error } = useConnections();
+  const { data, isLoading, error, refetch } = useConnections();
   const [sp, setSp] = useSearchParams();
   const callback = sp.get("connect");
+  const meta = pageMeta("/settings")!;
 
   useEffect(() => {
     if (!callback) return;
@@ -57,37 +78,37 @@ export function SettingsPage() {
   }, [callback]);
 
   return (
-    <Stack gap="lg" maw={720}>
-      <Title order={2}>Settings &amp; Connections</Title>
+    <PageLayout
+      title={meta.title}
+      description={meta.description}
+      breadcrumbs={meta.breadcrumbs}
+      width="form"
+    >
+      <Stack gap="lg">
+        {callback && CALLBACK_MESSAGES[callback] && (
+          <Alert color={CALLBACK_MESSAGES[callback].color} variant="light">
+            {CALLBACK_MESSAGES[callback].text}
+          </Alert>
+        )}
 
-      {callback && CALLBACK_MESSAGES[callback] && (
-        <Alert color={CALLBACK_MESSAGES[callback].color} variant="light">
-          {CALLBACK_MESSAGES[callback].text}
-        </Alert>
-      )}
+        <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
+          {data && (
+            <>
+              <QboCard qbo={data.qbo} />
+              <GmailCard gmail={data.gmail} />
+            </>
+          )}
+        </QueryBoundary>
 
-      {error && (
-        <Alert color="red" title="Couldn't load connections">
-          {(error as Error).message}
-        </Alert>
-      )}
-      {isLoading && <Loader />}
-
-      {data && (
-        <>
-          <QboCard qbo={data.qbo} />
-          <GmailCard gmail={data.gmail} />
-        </>
-      )}
-
-      <DocumentsCard />
-      <ProductVisibilityCard />
-    </Stack>
+        <DocumentsCard />
+        <ProductVisibilityCard />
+      </Stack>
+    </PageLayout>
   );
 }
 
 function ProductVisibilityCard() {
-  const { data, isLoading, error } = useHiddenProducts();
+  const { data, isLoading, error, refetch } = useHiddenProducts();
   const setHidden = useSetHidden();
   const [q, setQ] = useState("");
 
@@ -106,61 +127,54 @@ function ProductVisibilityCard() {
   const hiddenCount = (data ?? []).filter((r) => r.hidden).length;
 
   return (
-    <Card withBorder radius="md" p="lg">
-      <Title order={4} mb="xs">
-        Product visibility
-      </Title>
-      <Text size="sm" c="dimmed" mb="xs">
-        Hidden products are excluded from every analytics page and the reference-price
-        table. {hiddenCount} hidden now.
-      </Text>
-      {error && (
-        <Text size="xs" c="red">
-          {(error as Error).message}
-        </Text>
-      )}
-      {isLoading && <Loader size="sm" />}
-      {data && (
-        <>
-          <TextInput
-            size="xs"
-            placeholder="Filter products…"
-            value={q}
-            onChange={(e) => setQ(e.currentTarget.value)}
-            mb="xs"
-          />
-          <ScrollArea.Autosize mah={320}>
-            <Stack gap={2}>
-              {shown.map((r) => (
-                <Group key={r.product_name} justify="space-between" wrap="nowrap">
-                  <Text size="sm" truncate>
-                    {r.product_name}{" "}
-                    <Text span size="xs" c="dimmed">
-                      ({r.n_lines} lines)
+    <SectionCard
+      title="Product visibility"
+      subtitle={`Hidden products are excluded from every analytics page and the reference-price table. ${hiddenCount} hidden now.`}
+    >
+      <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
+        {data && (
+          <>
+            <TextInput
+              size="xs"
+              aria-label="Filter products"
+              placeholder="Filter products…"
+              value={q}
+              onChange={(e) => setQ(e.currentTarget.value)}
+            />
+            <ScrollArea.Autosize mah={320}>
+              <Stack gap={2}>
+                {shown.map((r) => (
+                  <Group key={r.product_name} justify="space-between" wrap="nowrap">
+                    <Text size="sm" truncate>
+                      {r.product_name}{" "}
+                      <Text span size="xs" c="dimmed">
+                        ({r.n_lines} lines)
+                      </Text>
                     </Text>
+                    <Switch
+                      size="xs"
+                      aria-label={`Hide ${r.product_name}`}
+                      checked={r.hidden}
+                      onChange={(e) =>
+                        setHidden.mutate({
+                          product_name: r.product_name,
+                          hidden: e.currentTarget.checked,
+                        })
+                      }
+                    />
+                  </Group>
+                ))}
+                {shown.length === 0 && (
+                  <Text size="xs" c="dimmed">
+                    No matches.
                   </Text>
-                  <Switch
-                    size="xs"
-                    checked={r.hidden}
-                    onChange={(e) =>
-                      setHidden.mutate({
-                        product_name: r.product_name,
-                        hidden: e.currentTarget.checked,
-                      })
-                    }
-                  />
-                </Group>
-              ))}
-              {shown.length === 0 && (
-                <Text size="xs" c="dimmed">
-                  No matches.
-                </Text>
-              )}
-            </Stack>
-          </ScrollArea.Autosize>
-        </>
-      )}
-    </Card>
+                )}
+              </Stack>
+            </ScrollArea.Autosize>
+          </>
+        )}
+      </QueryBoundary>
+    </SectionCard>
   );
 }
 
@@ -169,14 +183,10 @@ function DocumentsCard() {
   const r = backfill.data;
 
   return (
-    <Card withBorder radius="md" p="lg">
-      <Title order={4} mb="xs">
-        Document capture
-      </Title>
-      <Text size="sm" c="dimmed" mb="xs">
-        Pulls the emailed PO PDF (Gmail) and the invoice PDF (QuickBooks) onto each PO.
-        Runs nightly; use this to fill gaps now. Idempotent.
-      </Text>
+    <SectionCard
+      title="Document capture"
+      subtitle="Pulls the emailed PO PDF (Gmail) and the invoice PDF (QuickBooks) onto each PO. Runs nightly; use this to fill gaps now. Idempotent."
+    >
       <Group>
         <Button
           size="xs"
@@ -203,23 +213,23 @@ function DocumentsCard() {
         </Button>
       </Group>
       {r && (
-        <Stack gap={2} mt="xs">
+        <Stack gap={2}>
           {(["gmail", "qbo"] as const).map((k) =>
             r[k] ? (
               <Text key={k} size="xs" c="dimmed">
-                {k}: {r[k]!.captured} captured across {r[k]!.scanned} PO(s),{" "}
-                {r[k]!.failed} failed, {r[k]!.remaining} still to do.
+                {k}: {r[k]!.captured} captured across {r[k]!.scanned} PO(s), {r[k]!.failed} failed,{" "}
+                {r[k]!.remaining} still to do.
               </Text>
             ) : null,
           )}
         </Stack>
       )}
       {backfill.error && (
-        <Text size="xs" c="red" mt="xs">
+        <Text size="xs" c="red">
           {(backfill.error as Error).message}
         </Text>
       )}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -229,25 +239,14 @@ function QboCard({ qbo }: { qbo: ConnectionsStatus["qbo"] }) {
   const syncNow = useQboSyncNow();
 
   return (
-    <Card withBorder radius="md" p="lg">
-      <Group justify="space-between" mb="xs">
-        <Title order={4}>QuickBooks</Title>
-        {qbo ? (
-          <Badge color="green" variant="light">
-            Connected · {qbo.environment}
-          </Badge>
-        ) : (
-          <Badge color="gray" variant="light">
-            Not connected
-          </Badge>
-        )}
-      </Group>
-
+    <SectionCard title="QuickBooks" actions={<StatusBadge connected={!!qbo} label={qbo?.environment} />}>
       {qbo ? (
         <Stack gap={6}>
           <Text size="sm" c="dimmed">
-            Realm <code>{qbo.realm_id}</code>
-            {qbo.last_synced_at ? ` · last sync ${qbo.last_synced_at.slice(0, 16).replace("T", " ")}` : " · never synced"}
+            Realm <Code>{qbo.realm_id}</Code>
+            {qbo.last_synced_at
+              ? ` · last sync ${qbo.last_synced_at.slice(0, 16).replace("T", " ")}`
+              : " · never synced"}
           </Text>
           {qbo.auto_sync_error && (
             <Alert color="red" variant="light">
@@ -292,7 +291,7 @@ function QboCard({ qbo }: { qbo: ConnectionsStatus["qbo"] }) {
           Connect to QuickBooks
         </Button>
       )}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -301,20 +300,7 @@ function GmailCard({ gmail }: { gmail: ConnectionsStatus["gmail"] }) {
   const disconnect = useDisconnect("gmail");
 
   return (
-    <Card withBorder radius="md" p="lg">
-      <Group justify="space-between" mb="xs">
-        <Title order={4}>Gmail ingestion</Title>
-        {gmail ? (
-          <Badge color="green" variant="light">
-            Connected
-          </Badge>
-        ) : (
-          <Badge color="gray" variant="light">
-            Not connected
-          </Badge>
-        )}
-      </Group>
-
+    <SectionCard title="Gmail ingestion" actions={<StatusBadge connected={!!gmail} />}>
       {gmail ? (
         <Stack gap={6}>
           <Text size="sm" c="dimmed">
@@ -337,6 +323,6 @@ function GmailCard({ gmail }: { gmail: ConnectionsStatus["gmail"] }) {
           Connect Gmail
         </Button>
       )}
-    </Card>
+    </SectionCard>
   );
 }

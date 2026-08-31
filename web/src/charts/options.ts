@@ -27,6 +27,25 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: { ar
   };
 }
 
+/** Multi-series line on a real time axis (irregular dates, e.g. price history). */
+export function timeLineOption(
+  series: { name: string; points: [string, number][] }[],
+  opts?: { yName?: string },
+): EChartsOption {
+  return {
+    tooltip: { trigger: "axis" },
+    legend: series.length > 1 ? {} : { show: false },
+    xAxis: { type: "time" },
+    yAxis: { type: "value", name: opts?.yName },
+    series: series.map((s) => ({
+      type: "line",
+      name: s.name,
+      data: s.points,
+      showSymbol: s.points.length <= 24,
+    })),
+  };
+}
+
 /** Grouped or single vertical bars over x categories. */
 export function barOption(x: (string | number)[], series: Series[]): EChartsOption {
   return {

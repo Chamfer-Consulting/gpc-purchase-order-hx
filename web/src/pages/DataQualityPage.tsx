@@ -1,19 +1,22 @@
-import { Alert, Loader, Stack, Title } from "@mantine/core";
 import { useDataQuality } from "@/api/quality";
+import { PageLayout } from "@/components/PageLayout";
 import { PageRenderer } from "@/components/PageRenderer";
+import { pageMeta } from "@/nav";
 
 export function DataQualityPage() {
-  const { data, isLoading, error } = useDataQuality();
+  const { data, isLoading, error, refetch } = useDataQuality();
+  const meta = pageMeta("/data-quality")!;
+
   return (
-    <Stack gap="md">
-      <Title order={2}>Data Quality</Title>
-      {error && (
-        <Alert color="red" title="Couldn't load">
-          {(error as Error).message}
-        </Alert>
-      )}
-      {isLoading && <Loader />}
+    <PageLayout
+      title={meta.title}
+      description={meta.description}
+      breadcrumbs={meta.breadcrumbs}
+      loading={isLoading && !data}
+      error={data ? undefined : error}
+      onRetry={() => void refetch()}
+    >
       {data && <PageRenderer data={data} />}
-    </Stack>
+    </PageLayout>
   );
 }

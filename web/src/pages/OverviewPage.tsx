@@ -1,20 +1,22 @@
-import { Alert, Loader, Stack, Title } from "@mantine/core";
 import { usePage } from "@/api/pages";
+import { PageLayout } from "@/components/PageLayout";
 import { PageRenderer } from "@/components/PageRenderer";
+import { pageMeta } from "@/nav";
 
 export function OverviewPage() {
-  const { data, isLoading, error } = usePage("overview");
+  const { data, isLoading, error, refetch } = usePage("overview");
+  const meta = pageMeta("/")!;
 
   return (
-    <Stack gap="md">
-      <Title order={2}>Overview</Title>
-      {error && (
-        <Alert color="red" title="Couldn't load">
-          {(error as Error).message}
-        </Alert>
-      )}
-      {isLoading && <Loader />}
+    <PageLayout
+      title={meta.title}
+      description={meta.description}
+      breadcrumbs={meta.breadcrumbs}
+      loading={isLoading && !data}
+      error={data ? undefined : error}
+      onRetry={() => void refetch()}
+    >
       {data && <PageRenderer data={data} />}
-    </Stack>
+    </PageLayout>
   );
 }

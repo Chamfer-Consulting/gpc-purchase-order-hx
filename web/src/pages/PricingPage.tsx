@@ -1,21 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ActionIcon,
-  Alert,
   Button,
   Group,
   Loader,
   NumberInput,
-  Paper,
   Select,
-  Stack,
   Table,
   Text,
   TextInput,
-  Title,
 } from "@mantine/core";
+import { IconTrash } from "@tabler/icons-react";
 import { Chart } from "@/charts/Chart";
-import type { EChartsOption } from "@/charts/echartsCore";
+import { timeLineOption } from "@/charts/options";
 import { fmtCurrency } from "@/lib/format";
 import {
   useReferencePrices,
@@ -24,6 +21,11 @@ import {
   type ReferencePrice,
   type RefPriceRow,
 } from "@/api/pricing";
+import { PageLayout } from "@/components/PageLayout";
+import { QueryBoundary } from "@/components/ErrorState";
+import { SectionCard } from "@/components/SectionCard";
+import { EmptyState } from "@/components/EmptyState";
+import { pageMeta } from "@/nav";
 
 interface EditRow {
   _rk: number;
@@ -56,8 +58,9 @@ function seedRows(refs: ReferencePrice[]): EditRow[] {
 }
 
 export function PricingPage() {
-  const { data, isLoading, error } = useReferencePrices();
+  const { data, isLoading, error, refetch } = useReferencePrices();
   const save = useSavePrices();
+  const meta = pageMeta("/pricing")!;
 
   const [rows, setRows] = useState<EditRow[]>([]);
   const [seed, setSeed] = useState<Map<string, number>>(new Map());
@@ -133,149 +136,149 @@ export function PricingPage() {
   }
 
   return (
-    <Stack gap="lg" maw={980}>
-      <Title order={2}>Pricing &amp; Reference Prices</Title>
-      <Text size="sm" c="dimmed">
-        Review unit-price history, then set the reference prices that drive the price-anomaly
-        flag on new orders. <b>auto</b> rows refresh from the most recent price actually paid
-        on each extraction sync; editing one makes it a permanent <b>manual</b> override.
-      </Text>
-
-      {error && <Alert color="red" title="Couldn't load">{(error as Error).message}</Alert>}
-      {isLoading && <Loader />}
-
-      {data && (
-        <>
-          <Paper withBorder radius="md" p="md">
-            <Title order={4} mb="xs">Price history</Title>
-            <Group mb="sm" gap="sm">
-              <Select
-                label="Product"
-                size="xs"
-                w={260}
-                data={products}
-                value={product}
-                onChange={(v) => {
-                  setProduct(v);
-                  setSize(null);
-                }}
-                searchable
-                placeholder="Pick a product"
-              />
-              <Select
-                label="Size"
-                size="xs"
-                w={140}
-                data={sizes}
-                value={size}
-                onChange={setSize}
-                disabled={!product}
-              />
-            </Group>
-            <HistoryChart product={product} size={size} />
-          </Paper>
-
-          <Paper withBorder radius="md" p="md">
-            <Group justify="space-between" mb="xs">
-              <Title order={4}>Reference prices</Title>
-              <Group gap="xs">
-                <Button size="xs" variant="default" onClick={addRow}>
-                  Add row
-                </Button>
-                <Button size="xs" onClick={onSave} loading={save.isPending}>
-                  Save changes
-                </Button>
+    <PageLayout
+      title={meta.title}
+      description="Review unit-price history, then set the reference prices that drive the price-anomaly flag on new orders. auto rows refresh from the most recent price actually paid on each extraction sync; editing one makes it a permanent manual override."
+      breadcrumbs={meta.breadcrumbs}
+      width="form"
+    >
+      <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
+        {data && (
+          <>
+            <SectionCard title="Price history">
+              <Group gap="sm" align="flex-end">
+                <Select
+                  label="Product"
+                  size="xs"
+                  w={260}
+                  data={products}
+                  value={product}
+                  onChange={(v) => {
+                    setProduct(v);
+                    setSize(null);
+                  }}
+                  searchable
+                  placeholder="Pick a product"
+                />
+                <Select
+                  label="Size"
+                  size="xs"
+                  w={140}
+                  data={sizes}
+                  value={size}
+                  onChange={setSize}
+                  disabled={!product}
+                />
               </Group>
-            </Group>
+              <HistoryChart product={product} size={size} />
+            </SectionCard>
 
-            {save.data && (
-              <Text size="xs" c="dimmed" mb="xs">
-                Saved {save.data.saved} changed/added · {save.data.deleted} deleted.
-              </Text>
-            )}
-            {save.error && (
-              <Text size="xs" c="red" mb="xs">
-                {(save.error as Error).message}
-              </Text>
-            )}
+            <SectionCard
+              title="Reference prices"
+              actions={
+                <>
+                  <Button size="xs" variant="default" onClick={addRow}>
+                    Add row
+                  </Button>
+                  <Button size="xs" onClick={onSave} loading={save.isPending}>
+                    Save changes
+                  </Button>
+                </>
+              }
+            >
+              {save.data && (
+                <Text size="xs" c="dimmed">
+                  Saved {save.data.saved} changed/added · {save.data.deleted} deleted.
+                </Text>
+              )}
+              {save.error && (
+                <Text size="xs" c="red">
+                  {(save.error as Error).message}
+                </Text>
+              )}
 
-            <Table.ScrollContainer minWidth={720}>
-              <Table striped withTableBorder verticalSpacing={4}>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Customer</Table.Th>
-                    <Table.Th>Product</Table.Th>
-                    <Table.Th>Size</Table.Th>
-                    <Table.Th w={130}>Price ($)</Table.Th>
-                    <Table.Th w={90}>Source</Table.Th>
-                    <Table.Th w={40} />
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {rows.map((r) => (
-                    <Table.Tr key={r._rk}>
-                      <Table.Td>
-                        <TextInput
-                          size="xs"
-                          value={r.customer_name}
-                          onChange={(e) => patch(r._rk, { customer_name: e.currentTarget.value })}
-                        />
-                      </Table.Td>
-                      <Table.Td>
-                        <TextInput
-                          size="xs"
-                          value={r.product_name}
-                          onChange={(e) => patch(r._rk, { product_name: e.currentTarget.value })}
-                        />
-                      </Table.Td>
-                      <Table.Td>
-                        <TextInput
-                          size="xs"
-                          value={r.container_size}
-                          onChange={(e) => patch(r._rk, { container_size: e.currentTarget.value })}
-                        />
-                      </Table.Td>
-                      <Table.Td>
-                        <NumberInput
-                          size="xs"
-                          decimalScale={2}
-                          value={r.price}
-                          onChange={(v) => patch(r._rk, { price: v === "" ? "" : Number(v) })}
-                          hideControls
-                        />
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="xs" c={r.source === "manual" ? "blue" : "dimmed"}>
-                          {r.source}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <ActionIcon
-                          size="sm"
-                          variant="subtle"
-                          color="red"
-                          onClick={() => removeRow(r._rk)}
-                          aria-label="Delete row"
-                        >
-                          ×
-                        </ActionIcon>
-                      </Table.Td>
+              <Table.ScrollContainer minWidth={720} type="native">
+                <Table striped withTableBorder verticalSpacing={4}>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Customer</Table.Th>
+                      <Table.Th>Product</Table.Th>
+                      <Table.Th>Size</Table.Th>
+                      <Table.Th w={130}>Price ($)</Table.Th>
+                      <Table.Th w={90}>Source</Table.Th>
+                      <Table.Th w={44} />
                     </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </Table.ScrollContainer>
-          </Paper>
-        </>
-      )}
-    </Stack>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {rows.map((r) => (
+                      <Table.Tr key={r._rk}>
+                        <Table.Td>
+                          <TextInput
+                            size="xs"
+                            aria-label="Customer"
+                            value={r.customer_name}
+                            onChange={(e) => patch(r._rk, { customer_name: e.currentTarget.value })}
+                          />
+                        </Table.Td>
+                        <Table.Td>
+                          <TextInput
+                            size="xs"
+                            aria-label="Product"
+                            value={r.product_name}
+                            onChange={(e) => patch(r._rk, { product_name: e.currentTarget.value })}
+                          />
+                        </Table.Td>
+                        <Table.Td>
+                          <TextInput
+                            size="xs"
+                            aria-label="Size"
+                            value={r.container_size}
+                            onChange={(e) => patch(r._rk, { container_size: e.currentTarget.value })}
+                          />
+                        </Table.Td>
+                        <Table.Td>
+                          <NumberInput
+                            size="xs"
+                            aria-label="Price"
+                            decimalScale={2}
+                            value={r.price}
+                            onChange={(v) => patch(r._rk, { price: v === "" ? "" : Number(v) })}
+                            hideControls
+                          />
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="xs" c={r.source === "manual" ? "gpGreen.7" : "dimmed"}>
+                            {r.source}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <ActionIcon
+                            size="sm"
+                            variant="subtle"
+                            color="red"
+                            onClick={() => removeRow(r._rk)}
+                            aria-label="Delete row"
+                          >
+                            <IconTrash size={15} />
+                          </ActionIcon>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </Table.ScrollContainer>
+            </SectionCard>
+          </>
+        )}
+      </QueryBoundary>
+    </PageLayout>
   );
 }
 
 function HistoryChart({ product, size }: { product: string | null; size: string | null }) {
   const { data, isLoading } = usePriceHistory(product, size);
 
-  const option = useMemo<EChartsOption | null>(() => {
+  const option = useMemo(() => {
     if (!data || !data.points.length) return null;
     const byCust = new Map<string, [string, number][]>();
     for (const p of data.points) {
@@ -284,24 +287,20 @@ function HistoryChart({ product, size }: { product: string | null; size: string 
       if (!byCust.has(c)) byCust.set(c, []);
       byCust.get(c)!.push([p.date, p.unit_price]);
     }
-    return {
-      tooltip: { trigger: "axis" },
-      legend: {},
-      xAxis: { type: "time" },
-      yAxis: { type: "value", name: "Unit price ($)" },
-      series: [...byCust.entries()].map(([name, pts]) => ({
-        type: "line",
-        name,
-        data: pts,
-        showSymbol: true,
-        symbolSize: 6,
-      })),
-    };
+    return timeLineOption(
+      [...byCust.entries()].map(([name, points]) => ({ name, points })),
+      { yName: "Unit price ($)" },
+    );
   }, [data]);
 
-  if (!product || !size) return <Text size="sm" c="dimmed">Pick a product and size.</Text>;
+  if (!product || !size)
+    return (
+      <Text size="sm" c="dimmed">
+        Pick a product and size.
+      </Text>
+    );
   if (isLoading) return <Loader size="sm" />;
-  if (!option) return <Text size="sm" c="dimmed">No priced history for this selection.</Text>;
+  if (!option) return <EmptyState label="No priced history for this selection" compact />;
 
   return (
     <>

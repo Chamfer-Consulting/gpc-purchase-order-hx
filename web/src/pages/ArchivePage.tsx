@@ -1,19 +1,14 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  Alert,
-  Anchor,
-  Badge,
-  Group,
-  Loader,
-  Stack,
-  Table,
-  Tabs,
-  Text,
-  Title,
-} from "@mantine/core";
+import { Anchor, Badge, Table, Tabs } from "@mantine/core";
 import { STATUS_COLOR, useArchive, type ArchivedPo } from "@/api/poEdit";
+import { PageLayout } from "@/components/PageLayout";
+import { QueryBoundary } from "@/components/ErrorState";
+import { SectionCard } from "@/components/SectionCard";
+import { EmptyState } from "@/components/EmptyState";
 import { fmtCurrency } from "@/lib/format";
+import { NUMERIC_STYLE } from "@/theme/tokens";
+import { pageMeta } from "@/nav";
 
 // Tabs, in order. "all" first; the rest are the non-active buckets.
 const BUCKETS: { value: string; label: string }[] = [
@@ -34,23 +29,18 @@ function StatusTag({ status }: { status: ArchivedPo["status"] }) {
 }
 
 function ArchiveTable({ rows }: { rows: ArchivedPo[] }) {
-  if (rows.length === 0)
-    return (
-      <Text size="sm" c="dimmed" mt="md">
-        Nothing here.
-      </Text>
-    );
+  if (rows.length === 0) return <EmptyState label="Nothing in this bucket" compact />;
   return (
-    <div style={{ overflowX: "auto" }}>
-      <Table mt="sm" highlightOnHover>
+    <Table.ScrollContainer minWidth={860} type="native">
+      <Table highlightOnHover verticalSpacing="xs">
         <Table.Thead>
           <Table.Tr>
             <Table.Th>PO</Table.Th>
             <Table.Th>Status</Table.Th>
             <Table.Th>Customer</Table.Th>
             <Table.Th>PO date</Table.Th>
-            <Table.Th>Lines</Table.Th>
-            <Table.Th>Total</Table.Th>
+            <Table.Th ta="right">Lines</Table.Th>
+            <Table.Th ta="right">Total</Table.Th>
             <Table.Th>Reason</Table.Th>
             <Table.Th>Changed</Table.Th>
             <Table.Th>By</Table.Th>
@@ -60,7 +50,7 @@ function ArchiveTable({ rows }: { rows: ArchivedPo[] }) {
           {rows.map((r) => (
             <Table.Tr key={r.po_id}>
               <Table.Td>
-                <Anchor component={Link} to={`/po/${r.po_id}`}>
+                <Anchor component={Link} to={`/po/${r.po_id}`} size="sm">
                   {r.po_number ?? r.po_id}
                 </Anchor>
               </Table.Td>
@@ -69,76 +59,69 @@ function ArchiveTable({ rows }: { rows: ArchivedPo[] }) {
               </Table.Td>
               <Table.Td>{r.customer_name ?? "—"}</Table.Td>
               <Table.Td>{r.po_date ?? "—"}</Table.Td>
-              <Table.Td style={{ fontVariantNumeric: "tabular-nums" }}>{r.n_items}</Table.Td>
-              <Table.Td style={{ fontVariantNumeric: "tabular-nums" }}>
+              <Table.Td ta="right" style={NUMERIC_STYLE}>
+                {r.n_items}
+              </Table.Td>
+              <Table.Td ta="right" style={NUMERIC_STYLE}>
                 {r.total != null ? fmtCurrency(r.total) : "—"}
               </Table.Td>
               <Table.Td>{r.status_reason ?? "—"}</Table.Td>
-              <Table.Td>
-                {(r.status_at ?? r.deleted_at)?.slice(0, 16).replace("T", " ") ?? "—"}
-              </Table.Td>
+              <Table.Td>{(r.status_at ?? r.deleted_at)?.slice(0, 16).replace("T", " ") ?? "—"}</Table.Td>
               <Table.Td>{r.edited_by ?? "—"}</Table.Td>
             </Table.Tr>
           ))}
         </Table.Tbody>
       </Table>
-    </div>
+    </Table.ScrollContainer>
   );
 }
 
 export function ArchivePage() {
   const [tab, setTab] = useState<string>("all");
-  const { data, isLoading, error } = useArchive(tab === "all" ? undefined : tab);
+  const { data, isLoading, error, refetch } = useArchive(tab === "all" ? undefined : tab);
   const counts = data?.counts ?? {};
+  const meta = pageMeta("/archive")!;
 
   return (
-    <Stack gap="md">
-      <Title order={2}>Archive</Title>
-      <Text size="sm" c="dimmed">
-        Purchase orders that aren&apos;t active — cancelled, withdrawn, voided, soft-deleted, or
-        still a draft. Each is hidden from every report; open one to see its history or reactivate
-        it.
-      </Text>
+    <PageLayout title={meta.title} description={meta.description} breadcrumbs={meta.breadcrumbs}>
+      <SectionCard
+        title="Archived orders"
+        subtitle={
+          !isLoading && (data?.rows.length ?? 0) > 0 ? `${data?.rows.length} shown` : undefined
+        }
+      >
+        <Tabs value={tab} onChange={(v) => v && setTab(v)}>
+          <Tabs.List>
+            {BUCKETS.map((b) => (
+              <Tabs.Tab
+                key={b.value}
+                value={b.value}
+                rightSection={
+                  counts[b.value] != null ? (
+                    <Badge
+                      size="xs"
+                      variant="light"
+                      color={b.value === "all" ? "gray" : STATUS_COLOR[b.value as ArchivedPo["status"]]}
+                    >
+                      {counts[b.value]}
+                    </Badge>
+                  ) : null
+                }
+              >
+                {b.label}
+              </Tabs.Tab>
+            ))}
+          </Tabs.List>
 
-      {error && (
-        <Alert color="red" title="Couldn't load">
-          {(error as Error).message}
-        </Alert>
-      )}
-
-      <Tabs value={tab} onChange={(v) => v && setTab(v)}>
-        <Tabs.List>
           {BUCKETS.map((b) => (
-            <Tabs.Tab
-              key={b.value}
-              value={b.value}
-              rightSection={
-                counts[b.value] != null ? (
-                  <Badge size="xs" variant="light" color={b.value === "all" ? "gray" : STATUS_COLOR[b.value as ArchivedPo["status"]]}>
-                    {counts[b.value]}
-                  </Badge>
-                ) : null
-              }
-            >
-              {b.label}
-            </Tabs.Tab>
+            <Tabs.Panel key={b.value} value={b.value} pt="md">
+              <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
+                <ArchiveTable rows={data?.rows ?? []} />
+              </QueryBoundary>
+            </Tabs.Panel>
           ))}
-        </Tabs.List>
-
-        {BUCKETS.map((b) => (
-          <Tabs.Panel key={b.value} value={b.value}>
-            {isLoading ? <Loader mt="md" /> : <ArchiveTable rows={data?.rows ?? []} />}
-          </Tabs.Panel>
-        ))}
-      </Tabs>
-
-      {!isLoading && (data?.rows.length ?? 0) > 0 && (
-        <Group gap="xs">
-          <Text size="xs" c="dimmed">
-            {data?.rows.length} shown
-          </Text>
-        </Group>
-      )}
-    </Stack>
+        </Tabs>
+      </SectionCard>
+    </PageLayout>
   );
 }

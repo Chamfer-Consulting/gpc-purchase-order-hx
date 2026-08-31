@@ -1,16 +1,16 @@
 import { useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import {
+  Box,
   Button,
-  Card,
-  Center,
   Divider,
+  Paper,
   PasswordInput,
   Stack,
   Text,
   TextInput,
-  Title,
 } from "@mantine/core";
+import { Brand } from "@/components/Brand";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "./AuthProvider";
 
@@ -63,53 +63,73 @@ export function LoginPage() {
   }
 
   return (
-    <Center h="100vh" p="md">
-      <Card withBorder shadow="sm" radius="md" w={360} p="xl">
-        <Stack>
-          <Title order={3}>PO Dashboard</Title>
-          <Text size="sm" c="dimmed">
-            Sign in with your team account.
+    <Box
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "1.5rem",
+        background:
+          "radial-gradient(1100px 520px at 50% -10%, color-mix(in srgb, var(--gp-canopy) 22%, var(--gp-page)), var(--gp-page))",
+      }}
+    >
+      <Stack align="center" gap="lg" w={380} maw="100%">
+        <Stack align="center" gap={6}>
+          <Brand size={40} />
+          <Text size="sm" c="dimmed" ta="center">
+            Purchase-order intelligence for the microgreen operation.
           </Text>
-
-          <Button
-            variant="default"
-            fullWidth
-            leftSection={<GoogleG />}
-            onClick={google}
-            loading={googleBusy}
-          >
-            Continue with Google
-          </Button>
-
-          <Divider label="or" labelPosition="center" />
-
-          <form onSubmit={submit}>
-            <Stack>
-              <TextInput
-                label="Email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.currentTarget.value)}
-                required
-              />
-              <PasswordInput
-                label="Password"
-                value={password}
-                onChange={(e) => setPassword(e.currentTarget.value)}
-                required
-              />
-              {err && (
-                <Text c="red" size="sm">
-                  {err}
-                </Text>
-              )}
-              <Button type="submit" loading={busy} fullWidth>
-                Sign in
-              </Button>
-            </Stack>
-          </form>
         </Stack>
-      </Card>
-    </Center>
+
+        <Paper withBorder shadow="md" radius="md" p="xl" w="100%" bg="var(--gp-surface)">
+          <Stack>
+            <Text fw={600}>Sign in</Text>
+
+            <Button
+              variant="default"
+              fullWidth
+              leftSection={<GoogleG />}
+              onClick={google}
+              loading={googleBusy}
+            >
+              Continue with Google
+            </Button>
+
+            <Divider label="or" labelPosition="center" />
+
+            <form onSubmit={submit}>
+              <Stack>
+                <TextInput
+                  label="Email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.currentTarget.value)}
+                  required
+                />
+                <PasswordInput
+                  label="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.currentTarget.value)}
+                  required
+                />
+                {err && (
+                  <Text c="red" size="sm">
+                    {err}
+                  </Text>
+                )}
+                <Button type="submit" loading={busy} fullWidth>
+                  Sign in
+                </Button>
+              </Stack>
+            </form>
+          </Stack>
+        </Paper>
+
+        <Text size="xs" c="dimmed">
+          Garfield Produce Co. · team access only
+        </Text>
+      </Stack>
+    </Box>
   );
 }

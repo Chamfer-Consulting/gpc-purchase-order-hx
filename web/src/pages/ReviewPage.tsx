@@ -1,13 +1,11 @@
 import { useState } from "react";
 import {
-  Alert,
   Anchor,
   Badge,
   Button,
   Card,
   Checkbox,
   Group,
-  Loader,
   Paper,
   Radio,
   Select,
@@ -16,7 +14,6 @@ import {
   Text,
   Textarea,
   TextInput,
-  Title,
 } from "@mantine/core";
 import {
   useBulkStatus,
@@ -28,7 +25,11 @@ import {
   type QueueItem,
 } from "@/api/review";
 import { DataGrid } from "@/components/DataGrid";
+import { PageLayout } from "@/components/PageLayout";
+import { QueryBoundary } from "@/components/ErrorState";
+import { EmptyState } from "@/components/EmptyState";
 import { useRealtimeInvalidate } from "@/lib/realtime";
+import { pageMeta } from "@/nav";
 
 function QueueCard({
   item,
@@ -66,8 +67,12 @@ function QueueCard({
           <Text fw={600}>{item.subject ?? item.target_key}</Text>
         </Group>
         <Group gap={6}>
-          {item.stale && <Badge color="orange" variant="light">stale</Badge>}
-          <Badge color="yellow" variant="light">
+          {item.stale && (
+            <Badge color="orange" variant="light">
+              stale
+            </Badge>
+          )}
+          <Badge color="gpGold" variant="light">
             {item.reason}
           </Badge>
         </Group>
@@ -85,7 +90,15 @@ function QueueCard({
       </Text>
 
       {item.snapshot && (
-        <Textarea value={item.snapshot} readOnly autosize minRows={3} maxRows={8} mt="xs" styles={{ input: { fontSize: 12 } }} />
+        <Textarea
+          value={item.snapshot}
+          readOnly
+          autosize
+          minRows={3}
+          maxRows={8}
+          mt="xs"
+          styles={{ input: { fontSize: 12 } }}
+        />
       )}
 
       <Radio.Group value={verdict} onChange={(v) => setVerdict(v as typeof verdict)} mt="sm">
@@ -105,7 +118,13 @@ function QueueCard({
           description="Next importer run re-extracts this thread as the complete revised order and groups it there."
         />
       )}
-      <TextInput mt="xs" size="xs" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.currentTarget.value)} />
+      <TextInput
+        mt="xs"
+        size="xs"
+        placeholder="Note (optional)"
+        value={note}
+        onChange={(e) => setNote(e.currentTarget.value)}
+      />
       <Button mt="sm" size="xs" onClick={save} loading={upsert.isPending}>
         Save decision
       </Button>
@@ -121,14 +140,12 @@ const BULK_STATUSES = [
 ];
 
 function QueueTab() {
-  const { data, isLoading, error } = useReviewQueue();
+  const { data, isLoading, error, refetch } = useReviewQueue();
   const bulk = useBulkStatus();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [status, setStatus] = useState<string>("withdrawn");
   const [reason, setReason] = useState("");
 
-  if (error) return <Alert color="red">{(error as Error).message}</Alert>;
-  if (isLoading) return <Loader />;
   const items = data?.items ?? [];
 
   const toggle = (poId: number, on: boolean) =>
@@ -149,170 +166,178 @@ function QueueTab() {
   }
 
   return (
-    <Stack>
-      <Text size="sm" c="dimmed">
-        {items.length} extraction(s) flagged, ranked by how suspect they are.
-      </Text>
-
-      {selected.size > 0 && (
-        <Paper withBorder p="xs" radius="md" style={{ position: "sticky", top: 8, zIndex: 2 }}>
-          <Group gap="sm" wrap="wrap">
-            <Text size="sm" fw={600}>
-              {selected.size} selected
-            </Text>
-            <Select
-              size="xs"
-              w={150}
-              data={BULK_STATUSES}
-              value={status}
-              onChange={(v) => v && setStatus(v)}
-              aria-label="Bulk status"
-            />
-            <TextInput
-              size="xs"
-              w={220}
-              placeholder="Reason (optional)"
-              value={reason}
-              onChange={(e) => setReason(e.currentTarget.value)}
-            />
-            <Button size="xs" color="orange" onClick={applyBulk} loading={bulk.isPending}>
-              Set status on {selected.size}
-            </Button>
-            <Button size="xs" variant="subtle" onClick={() => setSelected(new Set())}>
-              Clear
-            </Button>
-          </Group>
-          {bulk.data && (
-            <Text size="xs" c="dimmed" mt={4}>
-              {bulk.data.updated.length} updated
-              {bulk.data.failed.length ? `, ${bulk.data.failed.length} failed` : ""}.
-            </Text>
-          )}
-          {bulk.error && (
-            <Text size="xs" c="red" mt={4}>
-              {(bulk.error as Error).message}
-            </Text>
-          )}
-        </Paper>
-      )}
-
-      {items.length === 0 && (
+    <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
+      <Stack>
         <Text size="sm" c="dimmed">
-          Nothing flagged. New low-confidence extractions appear here.
+          {items.length} extraction(s) flagged, ranked by how suspect they are.
         </Text>
-      )}
-      {items.map((it) => (
-        <QueueCard
-          key={`${it.target_kind}:${it.target_key}`}
-          item={it}
-          checked={selected.has(it.po_id)}
-          onCheck={(v) => toggle(it.po_id, v)}
-        />
-      ))}
-    </Stack>
+
+        {selected.size > 0 && (
+          <Paper withBorder p="xs" radius="md" style={{ position: "sticky", top: 8, zIndex: 2 }}>
+            <Group gap="sm" wrap="wrap">
+              <Text size="sm" fw={600}>
+                {selected.size} selected
+              </Text>
+              <Select
+                size="xs"
+                w={150}
+                data={BULK_STATUSES}
+                value={status}
+                onChange={(v) => v && setStatus(v)}
+                aria-label="Bulk status"
+              />
+              <TextInput
+                size="xs"
+                w={220}
+                placeholder="Reason (optional)"
+                value={reason}
+                onChange={(e) => setReason(e.currentTarget.value)}
+              />
+              <Button size="xs" color="orange" onClick={applyBulk} loading={bulk.isPending}>
+                Set status on {selected.size}
+              </Button>
+              <Button size="xs" variant="subtle" onClick={() => setSelected(new Set())}>
+                Clear
+              </Button>
+            </Group>
+            {bulk.data && (
+              <Text size="xs" c="dimmed" mt={4}>
+                {bulk.data.updated.length} updated
+                {bulk.data.failed.length ? `, ${bulk.data.failed.length} failed` : ""}.
+              </Text>
+            )}
+            {bulk.error && (
+              <Text size="xs" c="red" mt={4}>
+                {(bulk.error as Error).message}
+              </Text>
+            )}
+          </Paper>
+        )}
+
+        {items.length === 0 && (
+          <EmptyState
+            title="Nothing flagged"
+            description="New low-confidence extractions appear here."
+          />
+        )}
+        {items.map((it) => (
+          <QueueCard
+            key={`${it.target_kind}:${it.target_key}`}
+            item={it}
+            checked={selected.has(it.po_id)}
+            onCheck={(v) => toggle(it.po_id, v)}
+          />
+        ))}
+      </Stack>
+    </QueryBoundary>
   );
 }
 
 function CandidatesTab() {
-  const { data, isLoading, error } = useRevisionCandidates();
+  const { data, isLoading, error, refetch } = useRevisionCandidates();
   const upsert = useUpsertDecision();
-  if (error) return <Alert color="red">{(error as Error).message}</Alert>;
-  if (isLoading) return <Loader />;
   const items = data?.items ?? [];
   return (
-    <Stack>
-      <Text size="sm" c="dimmed">
-        Same customer, same delivery date, different PO numbers — usually a revised PO.
-      </Text>
-      {items.length === 0 && <Text size="sm" c="dimmed">No candidate pairs.</Text>}
-      {items.map((c) => (
-        <Card key={`${c.a_po_id}-${c.b_po_id}`} withBorder radius="md" p="sm">
-          <Group justify="space-between">
-            <Text size="sm">
-              <b>{c.customer_name}</b> · delivery {c.delivery_date} · A PO {c.a_po_number ?? "—"} → B PO{" "}
-              {c.b_po_number ?? "—"}
-            </Text>
-            <Button
-              size="xs"
-              onClick={() =>
-                upsert.mutate({
-                  target_kind: c.b_kind,
-                  target_key: c.b_key,
-                  verdict: "is_po",
-                  revision_of: c.a_group_key,
-                  note: `linked as revision of PO ${c.a_po_number} (delivery ${c.delivery_date})`,
-                })
-              }
-              loading={upsert.isPending}
-            >
-              B revises A
-            </Button>
-          </Group>
-        </Card>
-      ))}
-    </Stack>
+    <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
+      <Stack>
+        <Text size="sm" c="dimmed">
+          Same customer, same delivery date, different PO numbers — usually a revised PO.
+        </Text>
+        {items.length === 0 && <EmptyState label="No candidate pairs" compact />}
+        {items.map((c) => (
+          <Card key={`${c.a_po_id}-${c.b_po_id}`} withBorder radius="md" p="sm">
+            <Group justify="space-between">
+              <Text size="sm">
+                <b>{c.customer_name}</b> · delivery {c.delivery_date} · A PO {c.a_po_number ?? "—"} → B
+                PO {c.b_po_number ?? "—"}
+              </Text>
+              <Button
+                size="xs"
+                onClick={() =>
+                  upsert.mutate({
+                    target_kind: c.b_kind,
+                    target_key: c.b_key,
+                    verdict: "is_po",
+                    revision_of: c.a_group_key,
+                    note: `linked as revision of PO ${c.a_po_number} (delivery ${c.delivery_date})`,
+                  })
+                }
+                loading={upsert.isPending}
+              >
+                B revises A
+              </Button>
+            </Group>
+          </Card>
+        ))}
+      </Stack>
+    </QueryBoundary>
   );
 }
 
 function DecisionsTab() {
-  const { data, isLoading, error } = useDecisions();
+  const { data, isLoading, error, refetch } = useDecisions();
   const del = useDeleteDecision();
   const [pick, setPick] = useState("");
-  if (error) return <Alert color="red">{(error as Error).message}</Alert>;
-  if (isLoading) return <Loader />;
   const rows = data?.items ?? [];
   return (
-    <Stack>
-      <DataGrid
-        rows={rows as unknown as Record<string, unknown>[]}
-        columns={[
-          { key: "target_kind", label: "Kind" },
-          { key: "target_key", label: "Target" },
-          { key: "verdict", label: "Verdict" },
-          { key: "revision_of", label: "Revision of" },
-          { key: "note", label: "Note" },
-          { key: "reviewer", label: "By" },
-          { key: "updated_at", label: "Updated", kind: "date" },
-        ]}
-        exportName="review_decisions"
-      />
-      {rows.length > 0 && (
-        <Group>
-          <TextInput
-            size="xs"
-            placeholder="kind:key to remove"
-            value={pick}
-            onChange={(e) => setPick(e.currentTarget.value)}
-          />
-          <Button
-            size="xs"
-            color="red"
-            variant="light"
-            onClick={() => {
-              const [k, ...rest] = pick.split(":");
-              if (k && rest.length) del.mutate({ target_kind: k, target_key: rest.join(":") });
-            }}
-          >
-            Remove decision
-          </Button>
-        </Group>
-      )}
-    </Stack>
+    <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
+      <Stack>
+        <DataGrid
+          rows={rows as unknown as Record<string, unknown>[]}
+          columns={[
+            { key: "target_kind", label: "Kind" },
+            { key: "target_key", label: "Target" },
+            { key: "verdict", label: "Verdict" },
+            { key: "revision_of", label: "Revision of" },
+            { key: "note", label: "Note" },
+            { key: "reviewer", label: "By" },
+            { key: "updated_at", label: "Updated", kind: "date" },
+          ]}
+          exportName="review_decisions"
+        />
+        {rows.length > 0 && (
+          <Group>
+            <TextInput
+              size="xs"
+              aria-label="Decision to remove"
+              placeholder="kind:key to remove"
+              value={pick}
+              onChange={(e) => setPick(e.currentTarget.value)}
+            />
+            <Button
+              size="xs"
+              color="red"
+              variant="light"
+              onClick={() => {
+                const [k, ...rest] = pick.split(":");
+                if (k && rest.length) del.mutate({ target_kind: k, target_key: rest.join(":") });
+              }}
+            >
+              Remove decision
+            </Button>
+          </Group>
+        )}
+      </Stack>
+    </QueryBoundary>
   );
 }
 
 export function ReviewPage() {
   // Live-update the queue as the pipeline writes new flags / decisions land.
   useRealtimeInvalidate("purchase_orders", ["review-queue", "data-quality"]);
-  useRealtimeInvalidate("extraction_reviews", ["review-decisions", "review-queue", "review-candidates"]);
+  useRealtimeInvalidate("extraction_reviews", [
+    "review-decisions",
+    "review-queue",
+    "review-candidates",
+  ]);
+  const meta = pageMeta("/review")!;
 
   return (
-    <Stack gap="md">
-      <Title order={2}>Extraction Review</Title>
-      <Text size="sm" c="dimmed" maw={620}>
-        Teach the importer what is and isn't a purchase order, and what's a revision of what. Every
-        decision is enforced on the next run, fed back as a few-shot example, and gates CI.
-      </Text>
+    <PageLayout
+      title={meta.title}
+      description="Teach the importer what is and isn't a purchase order, and what's a revision of what. Every decision is enforced on the next run, fed back as a few-shot example, and gates CI."
+      breadcrumbs={meta.breadcrumbs}
+    >
       <Tabs defaultValue="queue">
         <Tabs.List>
           <Tabs.Tab value="queue">Queue</Tabs.Tab>
@@ -329,6 +354,6 @@ export function ReviewPage() {
           <DecisionsTab />
         </Tabs.Panel>
       </Tabs>
-    </Stack>
+    </PageLayout>
   );
 }

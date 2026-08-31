@@ -34,7 +34,7 @@ interface PageLayoutProps {
   onRetry?: () => void;
   /** "wide" (default, ~1360) or "form" (~960) content column */
   width?: "wide" | "form";
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 /**

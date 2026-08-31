@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { Anchor, Center, Loader, Stack, Text } from "@mantine/core";
+import { BrandMark } from "@/components/Brand";
 import { useAuth } from "./AuthProvider";
 
 /**
@@ -28,14 +29,17 @@ export function AuthCallback() {
   if (session) return <Navigate to="/" replace />;
 
   return (
-    <Center h="100vh" p="md">
+    <Center h="100vh" p="md" bg="var(--gp-page)">
       <Stack align="center" gap="sm">
+        <BrandMark size={40} />
         {oauthError || (timedOut && !loading) ? (
           <>
             <Text c="red" size="sm" ta="center">
               {oauthError ?? "Sign-in didn't complete."}
             </Text>
-            <Anchor href="/login">Back to sign in</Anchor>
+            <Anchor component={Link} to="/login">
+              Back to sign in
+            </Anchor>
           </>
         ) : (
           <>
