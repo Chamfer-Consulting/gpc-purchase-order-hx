@@ -86,6 +86,7 @@ def upsert_decision(
     fewshot: bool = True,
     reviewer: str | None = None,
     note: str | None = None,
+    commit: bool = True,
 ) -> None:
     if verdict not in VERDICTS:
         raise ValueError(f"unknown verdict {verdict!r} (expected one of {VERDICTS})")
@@ -119,16 +120,18 @@ def upsert_decision(
                 fewshot, reviewer, note,
             ),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
-def delete_decision(conn, target_kind: str, target_key: str) -> None:
+def delete_decision(conn, target_kind: str, target_key: str, commit: bool = True) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "DELETE FROM extraction_reviews WHERE target_kind = %s AND target_key = %s",
             (target_kind, target_key),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 # ── apply ─────────────────────────────────────────────────────────────────────

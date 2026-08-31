@@ -18,10 +18,27 @@ import qbo_matcher  # shared/, via app.reuse
 from math_check import validate_math  # repo root, via app.reuse
 
 from . import audit
+from ..errors import (
+    BadTransition,
+    BulkTransitionError,
+    DuplicatePoNumber,
+    NotActive,
+    StaleWrite,
+)
 from .po_edit import _insert_line, _jsonify, get_po
 
 VALID_STATUS = ("active", "draft", "cancelled", "withdrawn", "voided", "deleted")
 _NON_ACTIVE = tuple(s for s in VALID_STATUS if s != "active")
+
+# Lifecycle state machine. A same->same call is always allowed (reason-only edit).
+ALLOWED_TRANSITIONS: dict[str, set[str]] = {
+    "active": {"draft", "cancelled", "withdrawn", "voided", "deleted"},
+    "draft": {"active", "deleted"},
+    "cancelled": {"active", "deleted"},
+    "withdrawn": {"active", "deleted"},
+    "voided": {"active", "deleted"},
+    "deleted": {"active"},
+}
 
 # status -> audit action verb
 _STATUS_ACTION = {"deleted": "delete", "active": "restore"}
@@ -31,6 +48,50 @@ class AdminError(ValueError):
     """Bad request from the admin surface (404 / 409 / 422 at the router)."""
 
 
+def _check_transition(cur_status: str, new_status: str) -> None:
+    if new_status == cur_status:
+        return
+    if new_status not in ALLOWED_TRANSITIONS.get(cur_status, set()):
+        raise BadTransition(cur_status, new_status, list(ALLOWED_TRANSITIONS.get(cur_status, set())))
+
+
+def _guard_version(before: dict, expected_version: int | None) -> None:
+    """Optimistic-concurrency check. `before` must carry lock_version / edited_by /
+    edited_at (use _lock_header)."""
+    if expected_version is None:
+        return
+    if before.get("lock_version") != expected_version:
+        raise StaleWrite(
+            current_version=before.get("lock_version"),
+            edited_by=before.get("edited_by"),
+            edited_at=before.get("edited_at"),
+        )
+
+
+def _guard_active(before: dict) -> None:
+    """Content edits are only allowed on an active PO."""
+    if (before.get("status") or "active") != "active":
+        raise NotActive(before["status"])
+
+
+def _lock_header(cur, po_id: int) -> dict | None:
+    """Header slice + concurrency fields, row-locked FOR UPDATE so concurrent
+    writers to the same PO serialise until this transaction commits/rolls back."""
+    cur.execute(
+        """
+        SELECT id, po_number, customer_name, customer_id, status, status_reason,
+               status_at, deleted_at, edited, edited_by, edited_at, lock_version,
+               source_file, gmail_thread_id, delivery_date, po_date,
+               subtotal, tax, total
+        FROM purchase_orders WHERE id = %s
+        FOR UPDATE
+        """,
+        (po_id,),
+    )
+    row = cur.fetchone()
+    return _jsonify(dict(row)) if row else None
+
+
 # --------------------------------------------------------------------------- read
 
 
@@ -38,7 +99,8 @@ def _header_row(cur, po_id: int) -> dict | None:
     cur.execute(
         """
         SELECT id, po_number, customer_name, customer_id, status, status_reason,
-               status_at, deleted_at, edited, edited_by, source_file, gmail_thread_id,
+               status_at, deleted_at, edited, edited_by, edited_at, lock_version,
+               source_file, gmail_thread_id,
                delivery_date, po_date, subtotal, tax, total
         FROM purchase_orders WHERE id = %s
         """,
@@ -69,6 +131,9 @@ def po_detail(conn, po_id: int) -> dict | None:
                 "status_at": hdr["status_at"],
                 "deleted_at": hdr["deleted_at"],
                 "customer_id": hdr["customer_id"],
+                "edited_by": hdr["edited_by"],
+                "edited_at": hdr["edited_at"],
+                "lock_version": hdr["lock_version"],
             }
         )
         base["revisions"] = _revision_chain(cur, hdr)
@@ -201,9 +266,12 @@ def search_invoices(conn, q: str | None, limit: int = 25) -> list[dict]:
 
 
 def _stamp_edited(cur, po_id: int, actor: str | None) -> None:
+    """Mark the PO admin-touched (freezes it from the extraction pipeline) and bump
+    lock_version — this is the single version-bump point for every po_admin
+    mutation, so one action == +1."""
     cur.execute(
-        "UPDATE purchase_orders SET edited = TRUE, edited_by = %s, edited_at = now() "
-        "WHERE id = %s",
+        "UPDATE purchase_orders SET edited = TRUE, edited_by = %s, edited_at = now(), "
+        "lock_version = lock_version + 1 WHERE id = %s",
         (actor, po_id),
     )
 
@@ -221,6 +289,14 @@ def create_po(conn, actor: str | None, header: dict, items: list[dict]) -> int:
     validate_math(payload)
 
     with conn.cursor() as cur:
+        po_number = (header.get("po_number") or "").strip() or None
+        if po_number is not None:
+            cur.execute(
+                "SELECT id FROM purchase_orders WHERE po_number = %s AND status = 'active'",
+                (po_number,),
+            )
+            if cur.fetchone() is not None:
+                raise DuplicatePoNumber(po_number)
         cur.execute(
             """
             INSERT INTO purchase_orders (
@@ -262,13 +338,15 @@ def create_po(conn, actor: str | None, header: dict, items: list[dict]) -> int:
 
 
 def set_status(conn, actor: str | None, po_id: int, status: str,
-               reason: str | None = None) -> dict:
+               reason: str | None = None, *, expected_version: int | None = None) -> dict:
     if status not in VALID_STATUS:
         raise AdminError(f"unknown status {status!r}")
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        before = _header_row(cur, po_id)
+        before = _lock_header(cur, po_id)
         if before is None:
             raise AdminError("PO not found")
+        _guard_version(before, expected_version)
+        _check_transition(before["status"] or "active", status)
         cur.execute(
             """
             UPDATE purchase_orders SET
@@ -293,28 +371,62 @@ def set_status(conn, actor: str | None, po_id: int, status: str,
 
 def bulk_set_status(conn, actor: str | None, po_ids: list[int], status: str,
                     reason: str | None = None) -> dict:
-    """Apply one status to many POs. Commits per PO (via set_status) so a bad id
-    partway through doesn't roll back the rest. Returns per-id outcomes."""
+    """Apply one status to many POs, all-or-nothing. Every id is pre-validated
+    against the lifecycle state machine; if any can't transition (or doesn't
+    exist) the whole batch is rejected (BulkTransitionError -> 422) and nothing
+    is committed."""
     if status not in VALID_STATUS:
         raise AdminError(f"unknown status {status!r}")
-    done: list[int] = []
-    failed: list[dict] = []
-    for po_id in dict.fromkeys(po_ids):  # de-dupe, keep order
-        try:
-            set_status(conn, actor, po_id, status, reason)
-            done.append(po_id)
-        except AdminError as exc:
-            conn.rollback()
-            failed.append({"po_id": po_id, "error": str(exc)})
-        except Exception as exc:  # noqa: BLE001 — record and continue the batch
-            conn.rollback()
-            failed.append({"po_id": po_id, "error": str(exc)})
-    return {"status": status, "updated": done, "failed": failed}
+    ids = list(dict.fromkeys(po_ids))  # de-dupe, keep order
+    if not ids:
+        return {"status": status, "updated": [], "failed": []}
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT id, status FROM purchase_orders WHERE id = ANY(%s) FOR UPDATE",
+            (ids,),
+        )
+        cur_status = {r["id"]: (r["status"] or "active") for r in cur.fetchall()}
+
+        missing = [i for i in ids if i not in cur_status]
+        invalid = [
+            {"po_id": i, "from_status": cur_status[i], "to_status": status}
+            for i in ids
+            if i in cur_status
+            and status != cur_status[i]
+            and status not in ALLOWED_TRANSITIONS.get(cur_status[i], set())
+        ]
+        if missing or invalid:
+            raise BulkTransitionError(missing, invalid)
+
+        for i in ids:
+            cur.execute(
+                """
+                UPDATE purchase_orders SET
+                    status = %(status)s, status_reason = %(reason)s, status_at = now(),
+                    deleted_at = CASE WHEN %(status)s = 'deleted' THEN now() ELSE NULL END
+                WHERE id = %(id)s
+                """,
+                {"status": status, "reason": reason, "id": i},
+            )
+            _stamp_edited(cur, i, actor)
+            audit.log(conn, actor=actor, action=_STATUS_ACTION.get(status, "status"),
+                      entity="purchase_order", entity_id=i,
+                      before={"status": cur_status[i]},
+                      after={"status": status, "status_reason": reason})
+    conn.commit()
+    return {"status": status, "updated": ids, "failed": []}
 
 
 def void_line(conn, actor: str | None, po_id: int, line_id: int,
-              voided: bool, reason: str | None = None) -> dict:
+              voided: bool, reason: str | None = None, *,
+              expected_version: int | None = None) -> dict:
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        hdr = _lock_header(cur, po_id)
+        if hdr is None:
+            raise AdminError("PO not found")
+        _guard_version(hdr, expected_version)
+        _guard_active(hdr)
         cur.execute(
             "SELECT id, po_id, product_name, quantity, line_total, voided, void_reason "
             "FROM line_items WHERE id = %s AND po_id = %s",
@@ -345,11 +457,14 @@ def void_line(conn, actor: str | None, po_id: int, line_id: int,
 
 
 def set_customer(conn, actor: str | None, po_id: int, customer_name: str | None,
-                 customer_id: str | None = None) -> dict:
+                 customer_id: str | None = None, *,
+                 expected_version: int | None = None) -> dict:
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        before = _header_row(cur, po_id)
+        before = _lock_header(cur, po_id)
         if before is None:
             raise AdminError("PO not found")
+        _guard_version(before, expected_version)
+        _guard_active(before)
         cur.execute(
             "UPDATE purchase_orders SET customer_name = %s, customer_id = %s WHERE id = %s",
             (customer_name, customer_id, po_id),
@@ -366,27 +481,26 @@ def set_customer(conn, actor: str | None, po_id: int, customer_name: str | None,
 
 
 def regroup(conn, actor: str | None, po_id: int, revision_of: str | None = None,
-            standalone: bool = False) -> dict:
+            standalone: bool = False, *, expected_version: int | None = None) -> dict:
     """Manual revision grouping. Writes an extraction_reviews decision keyed to this
     PO's thread/file; the pipeline's annotate_revisions honours revision_of
-    (_group_override) and standalone (_standalone) on the next run."""
+    (_group_override) and standalone (_standalone) on the next run.
+
+    Single transaction: edited stamp + decision + audit row all commit together."""
     if revision_of and standalone:
         raise AdminError("pass revision_of or standalone, not both")
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT source_file, gmail_thread_id FROM purchase_orders WHERE id = %s",
-            (po_id,),
-        )
-        row = cur.fetchone()
-        if row is None:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        hdr = _lock_header(cur, po_id)
+        if hdr is None:
             raise AdminError("PO not found")
-        kind, key = _target(row[0], row[1])
+        _guard_version(hdr, expected_version)
+        _guard_active(hdr)
+        kind, key = _target(hdr["source_file"], hdr["gmail_thread_id"])
         _stamp_edited(cur, po_id, actor)
-    # upsert_decision commits (flushing the edited stamp above with it)
     extraction_reviews.upsert_decision(
         conn, target_kind=kind, target_key=key, verdict="is_po",
         revision_of=revision_of or None, standalone=standalone,
-        reviewer=actor, note="admin regroup",
+        reviewer=actor, note="admin regroup", commit=False,
     )
     audit.log(conn, actor=actor, action="revision", entity="purchase_order",
               entity_id=po_id, before=None,
@@ -398,19 +512,24 @@ def regroup(conn, actor: str | None, po_id: int, revision_of: str | None = None,
 
 
 def link_invoice(conn, actor: str | None, po_id: int, invoice_id: int,
-                 replace_existing: bool = False) -> list[dict]:
-    with conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM purchase_orders WHERE id = %s", (po_id,))
-        if cur.fetchone() is None:
+                 replace_existing: bool = False, *,
+                 expected_version: int | None = None) -> list[dict]:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        hdr = _lock_header(cur, po_id)
+        if hdr is None:
             raise AdminError("PO not found")
+        _guard_version(hdr, expected_version)
+        _guard_active(hdr)
         cur.execute("SELECT 1 FROM qbo_invoices WHERE id = %s", (invoice_id,))
         if cur.fetchone() is None:
             raise AdminError("invoice not found")
+    # One transaction: link rows + audit row + commit together.
+    qbo_matcher.manual_link(conn, po_id, invoice_id, replace_existing=replace_existing,
+                            commit=False)
     audit.log(conn, actor=actor, action="link", entity="purchase_order",
               entity_id=po_id, before=None,
               after={"invoice_id": invoice_id, "replace_existing": replace_existing})
-    # manual_link commits (audit row above rides along in the same transaction)
-    qbo_matcher.manual_link(conn, po_id, invoice_id, replace_existing=replace_existing)
+    conn.commit()
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         return _links(cur, po_id)
 

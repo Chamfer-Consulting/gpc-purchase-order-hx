@@ -49,6 +49,8 @@ import {
 } from "@/api/poDocs";
 import { fmtCurrency } from "@/lib/format";
 import { promptReason } from "@/lib/modals";
+import { notifySuccess } from "@/lib/notify";
+import { conflictInfo, errorMessage, isConflict } from "@/lib/errors";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
 import { NUMERIC_STYLE } from "@/theme/tokens";
@@ -281,25 +283,47 @@ export function EditPoPage() {
             <Button
               onClick={() =>
                 // _rk is a client-only key; the backend's LineItemIn ignores extra fields.
-                save.mutate({ header, items, removed_items: data.removed_items })
+                save.mutate(
+                  {
+                    header,
+                    items,
+                    removed_items: data.removed_items,
+                    expected_version: data.header.lock_version,
+                  },
+                  { onSuccess: () => notifySuccess("Saved.") },
+                )
               }
               loading={save.isPending}
             >
               Save edit
             </Button>
-            {save.data && (
-              <Text size="sm" c={save.data.math_check_failed ? "red" : "gpGreen.7"}>
-                {save.data.math_check_failed
-                  ? `Saved — math check: ${save.data.math_check_detail}`
-                  : "Saved. Math checks out."}
-              </Text>
-            )}
-            {save.error && (
+            {save.data && save.data.math_check_failed && (
               <Text size="sm" c="red">
-                {(save.error as Error).message}
+                Saved — math check: {save.data.math_check_detail}
               </Text>
             )}
           </Group>
+          {save.error && isConflict(save.error) ? (
+            <Alert color="orange" variant="light" title="This order changed while you were editing">
+              {(() => {
+                const c = conflictInfo(save.error);
+                return (
+                  <Text size="sm">
+                    {c.editedBy ? `${c.editedBy} saved a newer version` : "A newer version was saved"}
+                    {c.editedAt ? ` at ${c.editedAt.slice(0, 16).replace("T", " ")}` : ""}. Reload to
+                    pick up their changes, then re-apply yours.
+                  </Text>
+                );
+              })()}
+              <Button size="xs" mt="xs" variant="light" color="orange" onClick={() => void refetch()}>
+                Reload this order
+              </Button>
+            </Alert>
+          ) : save.error ? (
+            <Text size="sm" c="red">
+              {errorMessage(save.error)}
+            </Text>
+          ) : null}
         </SectionCard>
 
         <SectionCard title="Lifecycle">

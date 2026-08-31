@@ -70,6 +70,7 @@ def upsert(d: Decision, user: AuthedUser = Depends(current_user)) -> dict:
             corrected=d.corrected,
             reviewer=user.email or "dashboard",
             note=d.note,
+            commit=False,  # one transaction with the purchase_orders reconcile below
         )
 
         # Reconcile stored purchase_orders rows so the rest of the app agrees now.

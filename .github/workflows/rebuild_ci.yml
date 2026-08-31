@@ -5,10 +5,10 @@ name: Rebuild CI
 
 on:
   push:
-    branches: [po-dashboard-rebuild]
-    paths: ["backend/**", "web/**", ".github/workflows/rebuild_ci.yml"]
+    branches: [main, po-dashboard-rebuild]
+    paths: ["backend/**", "web/**", "shared/**", "supabase/**", ".github/workflows/rebuild_ci.yml"]
   pull_request:
-    paths: ["backend/**", "web/**", ".github/workflows/rebuild_ci.yml"]
+    paths: ["backend/**", "web/**", "shared/**", "supabase/**", ".github/workflows/rebuild_ci.yml"]
   workflow_dispatch:
 
 permissions:

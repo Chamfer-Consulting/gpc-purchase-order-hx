@@ -83,7 +83,22 @@ ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS status_reason TEXT;
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS status_at TIMESTAMPTZ;
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS edited_by TEXT;
+-- Optimistic-concurrency counter — bumped on every admin/edit mutation; a stale
+-- expected value from the client is rejected as HTTP 409 (0006).
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS lock_version INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders (status);
+-- One active PO per po_number (a duplicate silently breaks qbo_matcher grouping).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_orders_active_po_number
+  ON purchase_orders (po_number) WHERE status = 'active' AND po_number IS NOT NULL;
+
+-- Authorization tiers for the admin surface (0006). No row => 'editor'.
+CREATE TABLE IF NOT EXISTS app_users (
+    email      TEXT PRIMARY KEY,
+    role       TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('viewer','editor','admin')),
+    note       TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS voided BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS void_reason TEXT;

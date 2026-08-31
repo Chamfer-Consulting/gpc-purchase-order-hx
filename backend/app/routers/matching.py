@@ -1,12 +1,15 @@
-"""PO <-> invoice matching. Thin wrappers over dashboard/qbo_matcher.py (reused
-verbatim), on psycopg2 connections."""
+"""PO <-> invoice matching. Read + run over dashboard/qbo_matcher.py (reused
+verbatim); confirm / reject go through services/matching.py, which adds an audit
+row and a real 404 when the pair has no candidate link."""
 
 import qbo_matcher  # shared/, via app.reuse
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..auth import AuthedUser, current_user
 from ..reused_db import reused_conn
+from ..services import matching as matching_svc
+from ..services.po_admin import AdminError
 
 router = APIRouter(prefix="/api/matching", tags=["matching"])
 
@@ -14,6 +17,22 @@ router = APIRouter(prefix="/api/matching", tags=["matching"])
 class LinkRef(BaseModel):
     po_id: int
     invoice_id: int
+
+
+class BatchIn(BaseModel):
+    pairs: list[LinkRef]
+
+
+def _actor(user: AuthedUser) -> str | None:
+    return user.email or user.id
+
+
+def _guard(fn, *args):
+    try:
+        return fn(*args)
+    except AdminError as exc:
+        msg = str(exc)
+        raise HTTPException(404 if "no candidate link" in msg or "not found" in msg else 422, msg) from exc
 
 
 @router.get("/review")
@@ -39,14 +58,22 @@ def run(_: AuthedUser = Depends(current_user)) -> dict:
 
 
 @router.post("/confirm")
-def confirm(ref: LinkRef, _: AuthedUser = Depends(current_user)) -> dict:
+def confirm(ref: LinkRef, user: AuthedUser = Depends(current_user)) -> dict:
     with reused_conn() as conn:
-        qbo_matcher.confirm_link(conn, ref.po_id, ref.invoice_id)
+        _guard(matching_svc.confirm, conn, _actor(user), ref.po_id, ref.invoice_id)
     return {"ok": True}
 
 
 @router.post("/reject")
-def reject(ref: LinkRef, _: AuthedUser = Depends(current_user)) -> dict:
+def reject(ref: LinkRef, user: AuthedUser = Depends(current_user)) -> dict:
     with reused_conn() as conn:
-        qbo_matcher.reject_link(conn, ref.po_id, ref.invoice_id)
+        _guard(matching_svc.reject, conn, _actor(user), ref.po_id, ref.invoice_id)
     return {"ok": True}
+
+
+@router.post("/confirm-batch")
+def confirm_batch(body: BatchIn, user: AuthedUser = Depends(current_user)) -> dict:
+    pairs = [(p.po_id, p.invoice_id) for p in body.pairs]
+    with reused_conn() as conn:
+        out = _guard(matching_svc.confirm_batch, conn, _actor(user), pairs)
+    return {"ok": True, **out}

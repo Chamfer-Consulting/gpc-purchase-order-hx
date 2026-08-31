@@ -43,6 +43,9 @@ class PoEditIn(BaseModel):
     header: HeaderIn
     items: list[LineItemIn]
     removed_items: list[LineItemIn] = []
+    # optimistic-concurrency: the lock_version the client loaded. Omit to skip the
+    # check (old clients); mismatch -> 409 stale_write.
+    expected_version: int | None = None
 
 
 @router.get("/{po_id}")
@@ -57,13 +60,15 @@ def get_po(po_id: int, _: AuthedUser = Depends(current_user)) -> dict:
 
 
 @router.post("/{po_id}")
-def save_po(po_id: int, body: PoEditIn, _: AuthedUser = Depends(current_user)) -> dict:
+def save_po(po_id: int, body: PoEditIn, user: AuthedUser = Depends(current_user)) -> dict:
     with reused_conn() as conn:
-        failed, detail = po_edit.save_po_edit(
+        result = po_edit.save_po_edit(
             conn,
             po_id,
             body.header.model_dump(),
             [it.model_dump() for it in body.items],
             [it.model_dump() for it in body.removed_items],
+            actor=user.email or user.id,
+            expected_version=body.expected_version,
         )
-    return {"ok": True, "math_check_failed": failed, "math_check_detail": detail}
+    return {"ok": True, **result}

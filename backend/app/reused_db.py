@@ -18,5 +18,14 @@ def reused_conn() -> Iterator["psycopg2.extensions.connection"]:
     conn = psycopg2.connect(get_settings().database_url)
     try:
         yield conn
+    except BaseException:
+        # A service raised mid-mutation with uncommitted work on this connection.
+        # Roll it back explicitly — psycopg2's close() aborts the tx anyway, but an
+        # explicit rollback keeps intent obvious and is a no-op when nothing's open.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()

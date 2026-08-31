@@ -416,7 +416,7 @@ def explain_candidate(conn, po_id: int, invoice_id: int) -> dict | None:
 _VOID_SQL = "(total_amt IS NULL OR total_amt = 0 OR private_note ILIKE '%%void%%')"
 
 
-def _release_voided_links(conn) -> dict:
+def _release_voided_links(conn, *, commit: bool = True) -> dict:
     """A po_invoice_links row (confirmed or still-pending) pointing at an invoice that
     has since been voided in QuickBooks is stale data. Confirmed links are rejected
     (freeing the PO to be rematched within this same run) rather than silently left
@@ -440,7 +440,8 @@ def _release_voided_links(conn) -> dict:
             """
         )
         pruned = cur.rowcount
-    conn.commit()
+    if commit:
+        conn.commit()
     return {"released": released, "pruned": pruned}
 
 
@@ -458,8 +459,12 @@ def run_matching(conn) -> dict:
 
     Starts by releasing any link — confirmed or pending — that points at an invoice
     since voided in QuickBooks (see _release_voided_links), so a freshly-released PO is
-    reconsidered for a real match in the same run rather than needing a second click."""
-    voided_summary = _release_voided_links(conn)
+    reconsidered for a real match in the same run rather than needing a second click.
+
+    The voided-link release, the new-candidate INSERT and the decisive-winner
+    sibling rejection all commit together in one transaction at the end — a crash
+    mid-run leaves the DB untouched rather than half-applied."""
+    voided_summary = _release_voided_links(conn, commit=False)
 
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT po_id FROM po_invoice_links WHERE confirmed = TRUE")
@@ -580,7 +585,8 @@ def run_matching(conn) -> dict:
                     "WHERE po_id = %s AND invoice_id <> %s AND confirmed = FALSE AND rejected = FALSE",
                     (po_id, winner_inv),
                 )
-        conn.commit()
+    # One commit for the whole run (release + inserts + sibling rejects).
+    conn.commit()
 
     return {
         "auto_matched": auto_matched,
@@ -786,32 +792,42 @@ def get_unlinked_pos(conn) -> list[dict]:
     return [po for po in pos if po["id"] not in confirmed_ids]
 
 
-def confirm_link(conn, po_id: int, invoice_id: int) -> None:
+def confirm_link(conn, po_id: int, invoice_id: int, *, commit: bool = True) -> bool:
+    """Returns False if no (po_id, invoice_id) link row exists — the caller should
+    404 rather than report a silent success."""
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE po_invoice_links SET confirmed = TRUE, rejected = FALSE "
             "WHERE po_id = %s AND invoice_id = %s",
             (po_id, invoice_id),
         )
+        hit = cur.rowcount > 0
         # Any other still-open candidates for this PO are no longer relevant.
         cur.execute(
             "UPDATE po_invoice_links SET rejected = TRUE "
             "WHERE po_id = %s AND invoice_id != %s AND confirmed = FALSE AND rejected = FALSE",
             (po_id, invoice_id),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
+    return hit
 
 
-def reject_link(conn, po_id: int, invoice_id: int) -> None:
+def reject_link(conn, po_id: int, invoice_id: int, *, commit: bool = True) -> bool:
+    """Returns False if no such link row exists."""
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE po_invoice_links SET rejected = TRUE WHERE po_id = %s AND invoice_id = %s",
             (po_id, invoice_id),
         )
-    conn.commit()
+        hit = cur.rowcount > 0
+    if commit:
+        conn.commit()
+    return hit
 
 
-def manual_link(conn, po_id: int, invoice_id: int, replace_existing: bool = False) -> None:
+def manual_link(conn, po_id: int, invoice_id: int, replace_existing: bool = False,
+                *, commit: bool = True) -> None:
     """Links a PO to an invoice directly (the search-and-match workbench, or the older
     single-candidate fallback). Always clears the PO's other still-*pending* candidates —
     a decision has been made, they're no longer relevant. A PO that already has a
@@ -839,4 +855,5 @@ def manual_link(conn, po_id: int, invoice_id: int, replace_existing: bool = Fals
             "WHERE po_id = %s AND invoice_id != %s AND confirmed = FALSE AND rejected = FALSE",
             (po_id, invoice_id),
         )
-    conn.commit()
+    if commit:
+        conn.commit()

@@ -2,10 +2,52 @@ import { supabase } from "./supabase";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
+/** A FastAPI 422 validation entry. */
+export interface FieldError {
+  loc: (string | number)[];
+  msg: string;
+  type?: string;
+}
+
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /** stable machine code for a typed backend problem (errors.py), e.g. "stale_write" */
+  code?: string;
+  /** FastAPI request-validation entries (422 with a list body) */
+  fields?: FieldError[];
+  /** extra payload from a typed problem (current_version, allowed, status, ...) */
+  data?: Record<string, unknown>;
+
+  constructor(
+    public status: number,
+    message: string,
+    opts?: { code?: string; fields?: FieldError[]; data?: Record<string, unknown> },
+  ) {
     super(message);
+    this.code = opts?.code;
+    this.fields = opts?.fields;
+    this.data = opts?.data;
   }
+}
+
+/** Turn a parsed error body's `detail` into ApiError constructor options + message. */
+function parseDetail(detail: unknown, fallback: string): {
+  message: string;
+  opts: { code?: string; fields?: FieldError[]; data?: Record<string, unknown> };
+} {
+  if (typeof detail === "string") return { message: detail, opts: {} };
+  if (Array.isArray(detail)) {
+    const fields = detail as FieldError[];
+    return { message: fields[0]?.msg ?? "Validation failed", opts: { fields } };
+  }
+  if (detail && typeof detail === "object") {
+    const d = detail as Record<string, unknown>;
+    const { code, message, ...rest } = d;
+    return {
+      message: typeof message === "string" ? message : fallback,
+      opts: { code: typeof code === "string" ? code : undefined, data: rest },
+    };
+  }
+  return { message: fallback, opts: {} };
 }
 
 /** GET a JSON endpoint on the FastAPI backend with the current Supabase access token. */
@@ -32,7 +74,16 @@ export async function fetchBlobUrl(path: string): Promise<string> {
   const res = await fetch(url.toString(), {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  if (!res.ok) {
+    let detail: unknown = res.statusText;
+    try {
+      detail = (await res.json())?.detail ?? detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    const { message, opts } = parseDetail(detail, res.statusText);
+    throw new ApiError(res.status, message, opts);
+  }
   return URL.createObjectURL(await res.blob());
 }
 
@@ -63,13 +114,14 @@ async function request<T>(
   });
 
   if (!res.ok) {
-    let detail = res.statusText;
+    let detail: unknown = res.statusText;
     try {
       detail = (await res.json())?.detail ?? detail;
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, detail);
+    const { message, opts } = parseDetail(detail, res.statusText);
+    throw new ApiError(res.status, message, opts);
   }
   return res.json() as Promise<T>;
 }

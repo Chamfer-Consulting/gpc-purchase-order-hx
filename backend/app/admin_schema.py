@@ -14,7 +14,18 @@ ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS status_reason TEXT;
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS status_at TIMESTAMPTZ;
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS edited_by TEXT;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS lock_version INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders (status);
+
+CREATE TABLE IF NOT EXISTS app_users (
+    email      TEXT PRIMARY KEY,
+    role       TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('viewer','editor','admin')),
+    note       TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO app_users (email, role, note) VALUES ('jcaternolo@gmail.com', 'admin', 'seed: repo owner')
+ON CONFLICT (email) DO NOTHING;
 
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS voided BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS void_reason TEXT;
@@ -50,6 +61,15 @@ CREATE TABLE IF NOT EXISTS po_documents (
 CREATE INDEX IF NOT EXISTS idx_po_documents_po_id ON po_documents (po_id);
 """
 
+# Best-effort DDL that can legitimately fail on existing data (a pre-existing
+# duplicate active po_number). Run in its own transaction so a failure here never
+# blocks the core _DDL above.
+_DDL_SOFT = """
+CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_orders_active_po_number
+  ON purchase_orders (po_number)
+  WHERE status = 'active' AND po_number IS NOT NULL;
+"""
+
 
 def ensure_admin_schema() -> None:
     from .reused_db import reused_conn
@@ -61,3 +81,11 @@ def ensure_admin_schema() -> None:
         log.info("admin schema ensured")
     except Exception as exc:  # non-fatal: a read-only DB user, or DB down at boot
         log.warning("could not ensure admin schema: %s", exc)
+        return
+
+    try:
+        with reused_conn() as conn, conn.cursor() as cur:
+            cur.execute(_DDL_SOFT)
+            conn.commit()
+    except Exception as exc:  # e.g. a pre-existing duplicate active po_number
+        log.warning("could not apply soft admin schema (uq_active_po_number): %s", exc)

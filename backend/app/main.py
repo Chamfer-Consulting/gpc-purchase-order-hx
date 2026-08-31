@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from . import reuse  # noqa: F401 — sys.path shim for the reused repo modules
 from .admin_schema import ensure_admin_schema
 from .config import get_settings
+from .errors import ApiProblem
 from .db import close_pool, init_pool
 from .routers import (
     analytics,
@@ -78,22 +79,38 @@ app.include_router(oauth.router)
 _log = logging.getLogger("po-api")
 
 
+def _cors_headers(request: Request) -> dict:
+    origin = request.headers.get("origin")
+    if origin and origin in settings.origins:
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Vary": "Origin",
+        }
+    return {}
+
+
+@app.exception_handler(ApiProblem)
+async def _api_problem(request: Request, exc: ApiProblem) -> JSONResponse:
+    """Typed edit/review/reconcile problems — a structured `detail` object the
+    frontend keys off `.code` (see backend/app/errors.py)."""
+    return JSONResponse(
+        {"detail": exc.body()},
+        status_code=exc.status,
+        headers=_cors_headers(request),
+    )
+
+
 @app.exception_handler(Exception)
 async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
     """Turn an unhandled error into a logged 500 that still carries the CORS
     header. Starlette's default 500 path sits *outside* CORSMiddleware, so without
     this the browser only ever sees an opaque "Failed to fetch"."""
     _log.exception("unhandled error: %s %s", request.method, request.url.path)
-    headers = {}
-    origin = request.headers.get("origin")
-    if origin and origin in settings.origins:
-        headers["Access-Control-Allow-Origin"] = origin
-        headers["Access-Control-Allow-Credentials"] = "true"
-        headers["Vary"] = "Origin"
     return JSONResponse(
         {"detail": f"internal server error: {type(exc).__name__}"},
         status_code=500,
-        headers=headers,
+        headers=_cors_headers(request),
     )
 
 

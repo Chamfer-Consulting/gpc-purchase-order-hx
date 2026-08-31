@@ -29,6 +29,7 @@ class NewPoIn(BaseModel):
 class StatusIn(BaseModel):
     status: str  # active | draft | cancelled | withdrawn | voided | deleted
     reason: str | None = None
+    expected_version: int | None = None
 
 
 class BulkStatusIn(BaseModel):
@@ -39,32 +40,37 @@ class BulkStatusIn(BaseModel):
 
 class DeleteIn(BaseModel):
     reason: str | None = None
+    expected_version: int | None = None
 
 
 class VoidLineIn(BaseModel):
     voided: bool = True
     reason: str | None = None
+    expected_version: int | None = None
 
 
 class CustomerIn(BaseModel):
     customer_name: str | None = None
     customer_id: str | None = None
+    expected_version: int | None = None
 
 
 class RegroupIn(BaseModel):
     revision_of: str | None = None
     standalone: bool = False
+    expected_version: int | None = None
 
 
 class LinkIn(BaseModel):
     po_id: int
     invoice_id: int
     replace_existing: bool = False
+    expected_version: int | None = None
 
 
-def _guard(fn, *args):
+def _guard(fn, *args, **kwargs):
     try:
-        return fn(*args)
+        return fn(*args, **kwargs)
     except po_admin.AdminError as exc:
         msg = str(exc)
         raise HTTPException(404 if "not found" in msg else 422, msg) from exc
@@ -113,7 +119,8 @@ def po_audit(po_id: int, _: AuthedUser = Depends(current_user)) -> list[dict]:
 @router.post("/po/{po_id}/status")
 def set_status(po_id: int, body: StatusIn, user: AuthedUser = Depends(current_user)) -> dict:
     with reused_conn() as conn:
-        after = _guard(po_admin.set_status, conn, _actor(user), po_id, body.status, body.reason)
+        after = _guard(po_admin.set_status, conn, _actor(user), po_id, body.status,
+                       body.reason, expected_version=body.expected_version)
     return {"ok": True, "header": after}
 
 
@@ -131,8 +138,10 @@ def bulk_status(body: BulkStatusIn, user: AuthedUser = Depends(current_user)) ->
 def soft_delete(po_id: int, body: DeleteIn | None = None,
                 user: AuthedUser = Depends(current_user)) -> dict:
     reason = body.reason if body else None
+    ev = body.expected_version if body else None
     with reused_conn() as conn:
-        after = _guard(po_admin.set_status, conn, _actor(user), po_id, "deleted", reason)
+        after = _guard(po_admin.set_status, conn, _actor(user), po_id, "deleted", reason,
+                       expected_version=ev)
     return {"ok": True, "header": after}
 
 
@@ -148,7 +157,7 @@ def void_line(po_id: int, line_id: int, body: VoidLineIn,
               user: AuthedUser = Depends(current_user)) -> dict:
     with reused_conn() as conn:
         row = _guard(po_admin.void_line, conn, _actor(user), po_id, line_id,
-                     body.voided, body.reason)
+                     body.voided, body.reason, expected_version=body.expected_version)
     return {"ok": True, "line": row}
 
 
@@ -156,7 +165,8 @@ def void_line(po_id: int, line_id: int, body: VoidLineIn,
 def set_customer(po_id: int, body: CustomerIn, user: AuthedUser = Depends(current_user)) -> dict:
     with reused_conn() as conn:
         after = _guard(po_admin.set_customer, conn, _actor(user), po_id,
-                       body.customer_name, body.customer_id)
+                       body.customer_name, body.customer_id,
+                       expected_version=body.expected_version)
     return {"ok": True, "header": after}
 
 
@@ -164,7 +174,8 @@ def set_customer(po_id: int, body: CustomerIn, user: AuthedUser = Depends(curren
 def regroup(po_id: int, body: RegroupIn, user: AuthedUser = Depends(current_user)) -> dict:
     with reused_conn() as conn:
         out = _guard(po_admin.regroup, conn, _actor(user), po_id,
-                     body.revision_of, body.standalone)
+                     body.revision_of, body.standalone,
+                     expected_version=body.expected_version)
     return {"ok": True, **out}
 
 
@@ -182,7 +193,8 @@ def search_invoices(
 def create_link(body: LinkIn, user: AuthedUser = Depends(current_user)) -> dict:
     with reused_conn() as conn:
         links = _guard(po_admin.link_invoice, conn, _actor(user), body.po_id,
-                       body.invoice_id, body.replace_existing)
+                       body.invoice_id, body.replace_existing,
+                       expected_version=body.expected_version)
     return {"ok": True, "links": links}
 
 

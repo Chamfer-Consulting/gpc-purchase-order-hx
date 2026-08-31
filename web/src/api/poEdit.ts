@@ -38,6 +38,10 @@ export interface PoHeader {
   total: number | null;
   notes: string | null;
   edited: boolean;
+  edited_by?: string | null;
+  edited_at?: string | null;
+  /** optimistic-concurrency counter — echo it back on every mutation */
+  lock_version?: number;
   status?: PoStatus;
   status_reason?: string | null;
   status_at?: string | null;
@@ -126,16 +130,20 @@ function useInvalidatePo(poId: number) {
 export function useSavePo(poId: number) {
   const invalidate = useInvalidatePo(poId);
   return useMutation({
+    // the page maps 409 -> a conflict banner and 422 -> field errors itself
+    meta: { silent: true },
     mutationFn: (body: {
       header: Partial<PoHeader>;
       items: PoLineItem[];
       removed_items: PoLineItem[];
+      expected_version?: number | null;
     }) =>
-      apiSend<{ ok: boolean; math_check_failed: boolean; math_check_detail: string }>(
-        "POST",
-        `/api/po/${poId}`,
-        body,
-      ),
+      apiSend<{
+        ok: boolean;
+        math_check_failed: boolean;
+        math_check_detail: string;
+        lock_version: number;
+      }>("POST", `/api/po/${poId}`, body),
     onSuccess: invalidate,
   });
 }
@@ -143,7 +151,7 @@ export function useSavePo(poId: number) {
 export function useSetStatus(poId: number) {
   const invalidate = useInvalidatePo(poId);
   return useMutation({
-    mutationFn: (body: { status: PoStatus; reason?: string | null }) =>
+    mutationFn: (body: { status: PoStatus; reason?: string | null; expected_version?: number | null }) =>
       apiSend<{ ok: boolean; header: PoHeader }>("POST", `/api/po/${poId}/status`, body),
     onSuccess: invalidate,
   });
@@ -152,7 +160,7 @@ export function useSetStatus(poId: number) {
 export function useSoftDelete(poId: number) {
   const invalidate = useInvalidatePo(poId);
   return useMutation({
-    mutationFn: (body: { reason?: string | null }) =>
+    mutationFn: (body: { reason?: string | null; expected_version?: number | null }) =>
       apiSend<{ ok: boolean; header: PoHeader }>("DELETE", `/api/po/${poId}`, body),
     onSuccess: invalidate,
   });
@@ -170,11 +178,16 @@ export function useRestorePo(poId: number) {
 export function useVoidLine(poId: number) {
   const invalidate = useInvalidatePo(poId);
   return useMutation({
-    mutationFn: (body: { line_id: number; voided: boolean; reason?: string | null }) =>
+    mutationFn: (body: {
+      line_id: number;
+      voided: boolean;
+      reason?: string | null;
+      expected_version?: number | null;
+    }) =>
       apiSend<{ ok: boolean; line: PoLineItem }>(
         "POST",
         `/api/po/${poId}/line/${body.line_id}/void`,
-        { voided: body.voided, reason: body.reason },
+        { voided: body.voided, reason: body.reason, expected_version: body.expected_version },
       ),
     onSuccess: invalidate,
   });
@@ -183,8 +196,11 @@ export function useVoidLine(poId: number) {
 export function useSetCustomer(poId: number) {
   const invalidate = useInvalidatePo(poId);
   return useMutation({
-    mutationFn: (body: { customer_name: string | null; customer_id?: string | null }) =>
-      apiSend<{ ok: boolean; header: PoHeader }>("POST", `/api/po/${poId}/customer`, body),
+    mutationFn: (body: {
+      customer_name: string | null;
+      customer_id?: string | null;
+      expected_version?: number | null;
+    }) => apiSend<{ ok: boolean; header: PoHeader }>("POST", `/api/po/${poId}/customer`, body),
     onSuccess: invalidate,
   });
 }
@@ -192,8 +208,11 @@ export function useSetCustomer(poId: number) {
 export function useRegroup(poId: number) {
   const invalidate = useInvalidatePo(poId);
   return useMutation({
-    mutationFn: (body: { revision_of?: string | null; standalone?: boolean }) =>
-      apiSend<{ ok: boolean }>("POST", `/api/po/${poId}/regroup`, body),
+    mutationFn: (body: {
+      revision_of?: string | null;
+      standalone?: boolean;
+      expected_version?: number | null;
+    }) => apiSend<{ ok: boolean }>("POST", `/api/po/${poId}/regroup`, body),
     onSuccess: invalidate,
   });
 }
@@ -201,11 +220,16 @@ export function useRegroup(poId: number) {
 export function useLinkInvoice(poId: number) {
   const invalidate = useInvalidatePo(poId);
   return useMutation({
-    mutationFn: (body: { invoice_id: number; replace_existing?: boolean }) =>
+    mutationFn: (body: {
+      invoice_id: number;
+      replace_existing?: boolean;
+      expected_version?: number | null;
+    }) =>
       apiSend<{ ok: boolean; links: PoLink[] }>("POST", `/api/links`, {
         po_id: poId,
         invoice_id: body.invoice_id,
         replace_existing: body.replace_existing ?? false,
+        expected_version: body.expected_version,
       }),
     onSuccess: invalidate,
   });
@@ -268,8 +292,9 @@ export function useCreatePo() {
     mutationFn: (body: { header: Partial<PoHeader>; items: PoLineItem[] }) =>
       apiSend<{ ok: boolean; po_id: number; detail: PoDetail }>("POST", `/api/po`, body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["overview"] });
-      qc.invalidateQueries({ queryKey: ["page"] });
+      for (const key of ["overview", "matching", "data-quality", "archive"]) {
+        qc.invalidateQueries({ queryKey: [key] });
+      }
     },
   });
 }
