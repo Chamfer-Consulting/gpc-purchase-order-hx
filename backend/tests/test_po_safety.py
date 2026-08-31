@@ -120,6 +120,35 @@ def test_admin_route_forbidden_for_editor():
     assert r.json()["detail"]["need"] == "admin"
 
 
+# --- reconcile line diff (pure) -------------------------------------------
+
+from app.services.reconcile import line_diff  # noqa: E402
+
+
+def _li(p, s, q, up, lt):
+    return {"product_name": p, "container_size": s, "quantity": q, "unit_price": up, "line_total": lt}
+
+
+def test_line_diff_clean_match():
+    po = [_li("Arugula", "4oz", 10, 2.5, 25.0)]
+    inv = [_li("arugula", "4 oz", 10, 2.5, 25.0)]  # normalisation collapses the key
+    d = line_diff(po, inv)
+    assert d["clean"] and d["n_diff"] == 0
+    assert d["rows"][0]["status"] == "match"
+    assert d["totals"] == {"po": 25.0, "inv": 25.0, "delta": 0.0}
+
+
+def test_line_diff_qty_and_only_rows():
+    po = [_li("Arugula", "4oz", 10, 2.5, 25.0), _li("Basil", "2oz", 4, 3.0, 12.0)]
+    inv = [_li("Arugula", "4oz", 12, 2.5, 30.0), _li("Cilantro", "2oz", 1, 5.0, 5.0)]
+    d = line_diff(po, inv)
+    by = {(r["product"], r["status"]) for r in d["rows"]}
+    assert ("Arugula", "total_diff") in by  # 25 -> 30
+    assert ("Basil", "po_only") in by
+    assert ("Cilantro", "inv_only") in by
+    assert d["totals"]["delta"] == round(35.0 - 37.0, 2)
+
+
 def test_editor_route_allowed_for_editor_reaches_service():
     # editor tier passes the role gate; the call then fails at the DB (no server)
     # -> 500, NOT 403. Proves require_editor isn't blocking an editor.

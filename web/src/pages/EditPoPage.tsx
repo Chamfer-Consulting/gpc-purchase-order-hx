@@ -104,7 +104,7 @@ export function EditPoPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
-  const crumbs = [{ label: "Match & Reconcile", to: "/match" }, { label: "Purchase order" }];
+  const crumbs = [{ label: "Reconcile", to: "/reconcile" }, { label: "Purchase order" }];
 
   if (isLoading) {
     return <PageLayout title="Purchase order" breadcrumbs={crumbs} width="form" loading />;
@@ -137,7 +137,7 @@ export function EditPoPage() {
     <PageLayout
       title={`PO ${data.header.po_number ?? poId}`}
       description={data.header.source_file}
-      breadcrumbs={[{ label: "Match & Reconcile", to: "/match" }, { label: `PO ${data.header.po_number ?? poId}` }]}
+      breadcrumbs={[{ label: "Reconcile", to: "/reconcile" }, { label: `PO ${data.header.po_number ?? poId}` }]}
       width="form"
       actions={
         <Button component={Link} to="/po/new" size="sm" variant="light" leftSection={<IconPlus size={15} />}>

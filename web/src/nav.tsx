@@ -1,7 +1,6 @@
 import {
   IconArchive,
   IconArrowsShuffle,
-  IconClipboardCheck,
   IconLayoutDashboard,
   IconLeaf,
   IconRoute,
@@ -67,16 +66,11 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Operate",
     items: [
       {
-        label: "Match & Reconcile",
-        to: "/match",
+        label: "Reconcile",
+        to: "/reconcile",
         icon: IconArrowsShuffle,
-        description: "Link purchase orders to QuickBooks invoices and resolve mismatches.",
-      },
-      {
-        label: "Extraction Review",
-        to: "/review",
-        icon: IconClipboardCheck,
-        description: "Approve, correct and train the purchase-order extractor.",
+        description:
+          "Walk each order through extraction correctness, lifecycle status and its QuickBooks invoice match.",
       },
       {
         label: "Data Quality",

@@ -92,6 +92,8 @@ def test_oauth_callback_state_guard():
     [
         "/api/data-quality",
         "/api/matching/review",
+        "/api/reconcile/queue",
+        "/api/reconcile/po/1",
         "/api/review/queue",
         "/api/review/candidates",
         "/api/review/decisions",

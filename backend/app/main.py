@@ -27,6 +27,7 @@ from .routers import (
     po_edit,
     pricing,
     quality,
+    reconcile,
     review,
     settings as settings_router,
 )
@@ -69,6 +70,7 @@ app.include_router(explore.router)
 app.include_router(filters.router)
 app.include_router(quality.router)
 app.include_router(matching.router)
+app.include_router(reconcile.router)
 app.include_router(review.router)
 app.include_router(po_edit.router)
 app.include_router(po_admin.router)

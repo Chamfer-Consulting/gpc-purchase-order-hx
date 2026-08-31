@@ -46,7 +46,7 @@ export function NewPoPage() {
     <PageLayout
       title="New purchase order"
       description="A PO typed in by hand (phone order, walk-in). It is created active and marked edited, so the extraction pipeline never touches it."
-      breadcrumbs={[{ label: "Match & Reconcile", to: "/match" }, { label: "New PO" }]}
+      breadcrumbs={[{ label: "Reconcile", to: "/reconcile" }, { label: "New PO" }]}
       width="form"
       actions={
         <Button variant="subtle" onClick={() => nav(-1)}>
