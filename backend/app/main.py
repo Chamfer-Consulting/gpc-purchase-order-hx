@@ -1,10 +1,12 @@
 """FastAPI entrypoint. `uvicorn app.main:app` (run from backend/)."""
 
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 
 from . import reuse  # noqa: F401 — sys.path shim for the reused repo modules
 from .admin_schema import ensure_admin_schema
@@ -72,6 +74,27 @@ app.include_router(pricing.router)
 app.include_router(settings_router.router)
 app.include_router(connections.router)
 app.include_router(oauth.router)
+
+_log = logging.getLogger("po-api")
+
+
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
+    """Turn an unhandled error into a logged 500 that still carries the CORS
+    header. Starlette's default 500 path sits *outside* CORSMiddleware, so without
+    this the browser only ever sees an opaque "Failed to fetch"."""
+    _log.exception("unhandled error: %s %s", request.method, request.url.path)
+    headers = {}
+    origin = request.headers.get("origin")
+    if origin and origin in settings.origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Vary"] = "Origin"
+    return JSONResponse(
+        {"detail": f"internal server error: {type(exc).__name__}"},
+        status_code=500,
+        headers=headers,
+    )
 
 
 @app.get("/health", tags=["meta"])
