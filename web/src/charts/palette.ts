@@ -54,8 +54,9 @@ export const DARK: Palette = {
   pagePlane: "#0d0d0d",
 };
 
+// Matches the app UI font (theme/index.ts) so charts sit in the same system.
 export const FONT_FAMILY =
-  "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+  "'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
 /** Fixed hue per category (alphabetical), matching data.py:color_map_for(). */
 export function colorMapFor(categories: string[], p: Palette): Record<string, string> {

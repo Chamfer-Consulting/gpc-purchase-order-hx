@@ -3,6 +3,7 @@ import ReactEChartsCore from "echarts-for-react/lib/core";
 import { useComputedColorScheme } from "@mantine/core";
 import { echarts, type EChartsOption } from "./echartsCore";
 import { registerChartThemes, themeNameFor } from "./theme";
+import { FONT_FAMILY } from "./palette";
 import { EmptyState } from "@/components/EmptyState";
 
 registerChartThemes();
@@ -21,7 +22,7 @@ interface ChartProps {
 const BASE: EChartsOption = {
   animationDuration: 300,
   animationEasing: "cubicOut",
-  textStyle: { fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif" },
+  textStyle: { fontFamily: FONT_FAMILY },
 };
 
 /**

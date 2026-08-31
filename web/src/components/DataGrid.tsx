@@ -1,8 +1,11 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Button, Group, Table, Text, UnstyledButton } from "@mantine/core";
+import { Anchor, Button, Group, Table, Text, UnstyledButton } from "@mantine/core";
+import { IconChevronDown, IconChevronUp, IconDownload, IconSelector } from "@tabler/icons-react";
 import { formatCell, type ColumnKind } from "@/lib/format";
+import { NUMERIC_STYLE } from "@/theme/tokens";
 import { EmptyState } from "./EmptyState";
+import classes from "./DataGrid.module.css";
 
 export interface Column<Row> {
   key: keyof Row & string;
@@ -19,17 +22,20 @@ interface DataGridProps<Row extends Record<string, unknown>> {
   /** show a "Download CSV" button */
   exportName?: string;
   maxHeight?: number;
+  minWidth?: number;
 }
 
 /**
- * Table wrapper: click-to-sort, right-aligned numerics, per-column formatting
- * from lib/format, optional CSV export. The data.py `data_grid` counterpart.
+ * Table wrapper: click-to-sort with aria-sort, right-aligned tabular numerics,
+ * per-column formatting from lib/format, optional CSV export (formula-injection
+ * guarded). Scrolls inside a Table.ScrollContainer.
  */
 export function DataGrid<Row extends Record<string, unknown>>({
   rows,
   columns,
   exportName,
   maxHeight = 480,
+  minWidth = 520,
 }: DataGridProps<Row>) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [asc, setAsc] = useState(true);
@@ -51,7 +57,7 @@ export function DataGrid<Row extends Record<string, unknown>>({
     return copy;
   }, [rows, sortKey, asc]);
 
-  if (rows.length === 0) return <EmptyState label="No rows" />;
+  if (rows.length === 0) return <EmptyState label="No rows" compact />;
 
   function toggleSort(k: string) {
     if (sortKey === k) setAsc((v) => !v);
@@ -62,7 +68,7 @@ export function DataGrid<Row extends Record<string, unknown>>({
   }
 
   function downloadCsv() {
-    const head = columns.map((c) => c.label).join(",");
+    const head = columns.map((c) => csvCell(c.label)).join(",");
     const body = sorted
       .map((r) => columns.map((c) => csvCell(r[c.key])).join(","))
       .join("\n");
@@ -79,25 +85,37 @@ export function DataGrid<Row extends Record<string, unknown>>({
     <div>
       {exportName && (
         <Group justify="flex-end" mb="xs">
-          <Button size="xs" variant="default" onClick={downloadCsv}>
+          <Button
+            size="xs"
+            variant="light"
+            leftSection={<IconDownload size={14} />}
+            onClick={downloadCsv}
+          >
             Download CSV
           </Button>
         </Group>
       )}
-      <div style={{ maxHeight, overflow: "auto" }}>
-        <Table stickyHeader highlightOnHover>
-          <Table.Thead>
+      <Table.ScrollContainer minWidth={minWidth} maxHeight={maxHeight} type="native">
+        <Table stickyHeader highlightOnHover verticalSpacing="xs" className={classes.table}>
+          <Table.Thead className={classes.thead}>
             <Table.Tr>
               {columns.map((c) => {
-                const numeric = c.align === "right" || (c.kind && c.kind !== "text" && c.kind !== "date");
+                const numeric =
+                  c.align === "right" || (c.kind && c.kind !== "text" && c.kind !== "date");
+                const active = sortKey === c.key;
+                const SortIcon = !active ? IconSelector : asc ? IconChevronUp : IconChevronDown;
                 return (
-                  <Table.Th key={c.key} style={{ textAlign: numeric ? "right" : "left" }}>
-                    <UnstyledButton
-                      onClick={() => toggleSort(c.key)}
-                      style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em" }}
-                    >
-                      {c.label}
-                      {sortKey === c.key ? (asc ? " ▲" : " ▼") : ""}
+                  <Table.Th
+                    key={c.key}
+                    style={{ textAlign: numeric ? "right" : "left" }}
+                    aria-sort={active ? (asc ? "ascending" : "descending") : "none"}
+                  >
+                    <UnstyledButton className={classes.sortBtn} onClick={() => toggleSort(c.key)}>
+                      <span className={classes.thLabel}>{c.label}</span>
+                      <SortIcon
+                        size={13}
+                        className={active ? classes.sortActive : classes.sortIdle}
+                      />
                     </UnstyledButton>
                   </Table.Th>
                 );
@@ -108,16 +126,17 @@ export function DataGrid<Row extends Record<string, unknown>>({
             {sorted.map((r, i) => (
               <Table.Tr key={i}>
                 {columns.map((c) => {
-                  const numeric = c.align === "right" || (c.kind && c.kind !== "text" && c.kind !== "date");
+                  const numeric =
+                    c.align === "right" || (c.kind && c.kind !== "text" && c.kind !== "date");
                   return (
                     <Table.Td
                       key={c.key}
-                      style={{ textAlign: numeric ? "right" : "left", fontVariantNumeric: "tabular-nums" }}
+                      style={{ textAlign: numeric ? "right" : "left", ...(numeric ? NUMERIC_STYLE : null) }}
                     >
                       {c.linkTo && r[c.key] != null ? (
-                        <Text size="sm" component={Link} to={c.linkTo(r[c.key], r)} c="blue">
+                        <Anchor component={Link} to={c.linkTo(r[c.key], r)} size="sm">
                           {formatCell(r[c.key], c.kind ?? "text")}
-                        </Text>
+                        </Anchor>
                       ) : (
                         <Text size="sm">{formatCell(r[c.key], c.kind ?? "text")}</Text>
                       )}
@@ -128,7 +147,7 @@ export function DataGrid<Row extends Record<string, unknown>>({
             ))}
           </Table.Tbody>
         </Table>
-      </div>
+      </Table.ScrollContainer>
     </div>
   );
 }

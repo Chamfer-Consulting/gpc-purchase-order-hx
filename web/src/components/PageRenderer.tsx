@@ -10,6 +10,7 @@ import { AttentionList } from "./AttentionList";
 import { DataGrid, type Column } from "./DataGrid";
 import { KpiCard } from "./KpiCard";
 import { ScopeBar } from "./ScopeBar";
+import { SectionCard } from "./SectionCard";
 import { formatCell } from "@/lib/format";
 import type { ChartSpec, Kpi, PageResponse, TableSpec } from "@/api/schema";
 
@@ -46,19 +47,21 @@ function tableColumns(t: TableSpec): Column<Record<string, unknown>>[] {
   }));
 }
 
-/** Renders a backend PageResponse: scope bar → KPI grid → charts → named tables. */
-export function PageRenderer({ data }: { data: PageResponse }) {
+/** Renders a backend PageResponse: scope → attention → KPIs → charts → tables. */
+export function PageRenderer({ data, showScope = true }: { data: PageResponse; showScope?: boolean }) {
   const tableEntries = Object.entries(data.tables);
 
   return (
     <Stack gap="lg">
-      <ScopeBar
-        count={data.scope.count}
-        noun={data.scope.noun}
-        start={data.scope.start ?? undefined}
-        end={data.scope.end ?? undefined}
-        extra={data.scope.note ?? undefined}
-      />
+      {showScope && (
+        <ScopeBar
+          count={data.scope.count}
+          noun={data.scope.noun}
+          start={data.scope.start ?? undefined}
+          end={data.scope.end ?? undefined}
+          extra={data.scope.note ?? undefined}
+        />
+      )}
 
       {data.attention.length > 0 && <AttentionList items={data.attention} />}
 
@@ -76,7 +79,7 @@ export function PageRenderer({ data }: { data: PageResponse }) {
 
       {data.kpis.length > 0 && (
         <SimpleGrid cols={{ base: 1, sm: 2, md: Math.min(4, data.kpis.length) }}>
-          {data.kpis.map((k) => (
+          {data.kpis.map((k, i) => (
             <KpiCard
               key={k.label}
               label={k.label}
@@ -84,6 +87,7 @@ export function PageRenderer({ data }: { data: PageResponse }) {
               delta={k.delta ?? null}
               deltaDirection={k.delta_direction ?? undefined}
               spark={k.spark ?? undefined}
+              northStar={i === 0}
             />
           ))}
         </SimpleGrid>
@@ -92,27 +96,17 @@ export function PageRenderer({ data }: { data: PageResponse }) {
       {data.charts.length > 0 && (
         <SimpleGrid cols={{ base: 1, lg: data.charts.length > 1 ? 2 : 1 }} spacing="lg">
           {data.charts.map((c) => (
-            <Stack key={c.id} gap={6}>
-              {c.title && (
-                <Text size="sm" fw={600} c="dimmed">
-                  {c.title}
-                </Text>
-              )}
+            <SectionCard key={c.id} title={c.title || undefined}>
               <Chart option={chartOption(c)} empty={c.series.length === 0 || c.x.length === 0} />
-            </Stack>
+            </SectionCard>
           ))}
         </SimpleGrid>
       )}
 
       {tableEntries.map(([key, t]) => (
-        <Stack key={key} gap={6}>
-          {t.title && (
-            <Text size="sm" fw={600} c="dimmed">
-              {t.title}
-            </Text>
-          )}
+        <SectionCard key={key} title={t.title || undefined}>
           <DataGrid rows={t.rows} columns={tableColumns(t)} exportName={t.export_name ?? key} />
-        </Stack>
+        </SectionCard>
       ))}
     </Stack>
   );
