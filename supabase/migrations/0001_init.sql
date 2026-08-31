@@ -1,6 +1,20 @@
--- Postgres schema for the hosted PO dashboard (Neon).
--- Mirrors db.py's local SQLite schema; applied once via the sync script's
--- --init-schema flag or manually with psql.
+-- 0001_init — base schema for the PO dashboard database
+-- ============================================================================
+-- The complete schema, built to run top-to-bottom on an EMPTY database. It is
+-- the same set of objects as /schema.sql (which the extraction pipeline applies
+-- to the live DB on every publish); this copy is the migration-runner's
+-- from-scratch baseline. Every statement is idempotent (IF NOT EXISTS), so it is
+-- safe to run against a database that already has some of these objects.
+--
+-- Apply:
+--   psql "$SUPABASE_SESSION_URL" -f supabase/migrations/0001_init.sql
+--   -- or:  supabase db push
+--
+-- After this, run 0002 → 0004 (they are no-ops on a DB built from 0001, and the
+-- deltas a restored pre-cutover Neon dump needs). See README.md.
+
+BEGIN;
+
 
 CREATE TABLE IF NOT EXISTS purchase_orders (
     id                 SERIAL PRIMARY KEY,
@@ -403,3 +417,5 @@ CREATE TABLE IF NOT EXISTS dashboard_saved_views (
     config      JSONB NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+COMMIT;

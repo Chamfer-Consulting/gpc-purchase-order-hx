@@ -4,12 +4,13 @@
 --
 -- Apply with either:
 --   supabase db push                         (from the repo root, links to your project)
---   psql "$DATABASE_URL" -f supabase/migrations/20260828120000_admin_crud.sql
+--   psql "$SUPABASE_SESSION_URL" -f supabase/migrations/0002_admin_crud.sql
 --
 -- Every statement is idempotent (IF NOT EXISTS / guarded), so re-running is safe.
--- The API also self-applies this exact DDL on boot (backend/app/admin_schema.py),
--- so a deploy that precedes this migration still works; running the migration
--- makes the change explicit and permanent.
+-- On a database built from 0001_init this is a near no-op (0001 already has the
+-- columns/tables) — it still adds the status CHECK constraint. It is the real
+-- delta a restored pre-cutover Neon dump needs. The API also self-applies this
+-- exact DDL on boot (backend/app/admin_schema.py).
 
 BEGIN;
 

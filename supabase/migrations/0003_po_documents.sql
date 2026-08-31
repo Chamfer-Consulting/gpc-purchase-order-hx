@@ -5,9 +5,12 @@
 --
 -- Apply with:
 --   supabase db push
---   psql "$DATABASE_URL" -f supabase/migrations/20260828130000_po_documents.sql
+--   psql "$SUPABASE_SESSION_URL" -f supabase/migrations/0003_po_documents.sql
 --
--- Idempotent. The API also self-applies this on boot (backend/app/admin_schema.py).
+-- Idempotent. A near no-op on a DB built from 0001_init (which already creates
+-- po_documents) — still adds the kind CHECK constraint. The real delta a
+-- restored pre-cutover Neon dump needs. The API also self-applies this on boot
+-- (backend/app/admin_schema.py).
 
 BEGIN;
 

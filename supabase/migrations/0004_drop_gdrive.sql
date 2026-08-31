@@ -1,17 +1,17 @@
 -- Remove the Google Drive integration (po-dashboard-rebuild)
 -- =========================================================
 -- Original-PO-PDF archival now lives entirely in Supabase: the po_documents
--- table (see 20260828130000_po_documents.sql) holds the captured PDF bytes,
--- optionally offloaded to Supabase Storage. The Drive link columns are no
--- longer written or read by any code path (gdrive_client.py deleted, the
--- "Sync Drive links" button and the Edit-PO "Original PDF (Drive)" link
--- removed).
+-- table (0003) holds the captured PDF bytes, optionally offloaded to Supabase
+-- Storage. The Drive link columns are no longer written or read by any code path
+-- (gdrive_client.py deleted, the "Sync Drive links" button and the Edit-PO
+-- "Original PDF (Drive)" link removed).
 --
 -- Apply with:
 --   supabase db push
---   psql "$DATABASE_URL" -f supabase/migrations/20260829000000_drop_gdrive.sql
+--   psql "$SUPABASE_SESSION_URL" -f supabase/migrations/0004_drop_gdrive.sql
 --
--- Idempotent.
+-- Idempotent. A no-op on a DB built from 0001_init (never had the columns); the
+-- real delta a restored pre-cutover Neon dump needs.
 
 BEGIN;
 

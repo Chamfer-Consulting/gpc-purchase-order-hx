@@ -69,53 +69,65 @@ Cloudflare needs no local CLI — it builds the frontend from the GitHub repo.
 
 ---
 
-## 2. Migrate the database (Neon → Supabase)
+## 2. Get the schema + data into Supabase
 
-Run locally. `NEON_URL` = the current Neon connection string (the `DATABASE_URL`
-GitHub Actions secret / your local `backend/.env`); `SUPABASE_SESSION_URL` = the
-§1.3 session string.
+`SUPABASE_SESSION_URL` = the §1.3 session string (`:5432`). Two paths:
+
+### 2A. Carry the existing data over (Neon → Supabase)
+
+Use this if the current Neon database has PO/invoice history you want to keep.
+`NEON_URL` = the current Neon connection string (the `DATABASE_URL` GitHub Actions
+secret / your local `backend/.env`).
 
 ```bash
 # 1. dump (schema + data, no ownership/ACL noise)
-pg_dump "$NEON_URL" \
-  --no-owner --no-privileges --no-comments \
+pg_dump "$NEON_URL" --no-owner --no-privileges --no-comments \
   --format=custom --file=neon_dump.pgcustom
 
 # 2. restore into Supabase
 pg_restore --no-owner --no-privileges --clean --if-exists \
   --dbname "$SUPABASE_SESSION_URL" neon_dump.pgcustom
 
-# 3. verify (script added in the first build commit)
+# 3. verify
 python scripts/verify_migration.py "$NEON_URL" "$SUPABASE_SESSION_URL"
 ```
 
-`verify_migration.py` prints a table of `count(*)` per table for both databases and
-exits non-zero on any mismatch. Do not proceed to §3 until it's clean.
-
-Delete `neon_dump.pgcustom` afterward (it contains customer data).
-
-### 2.1 Post-load migrations
-
-Schema changes made on `po-dashboard-rebuild` after the dump live in
-`supabase/migrations/` (see its `README.md`). Apply them once the restore verifies:
+`verify_migration.py` prints `count(*)` per table for both databases and exits
+non-zero on a mismatch. Then apply the **post-cutover deltas** the old schema
+predates:
 
 ```bash
-# CLI (records each migration):
-supabase link --project-ref <ref> && supabase db push
-# or plain psql, one file:
-psql "$SUPABASE_SESSION_URL" -f supabase/migrations/20260828120000_admin_crud.sql
+for f in supabase/migrations/000[2-4]_*.sql; do
+  echo ">>> $f"; psql "$SUPABASE_SESSION_URL" -v ON_ERROR_STOP=1 -f "$f" || break
+done
 ```
 
-Current migrations, in order:
-- `20260828120000_admin_crud.sql` — PO lifecycle `status` + soft delete, per-line
-  `voided`, `audit_log`.
-- `20260828130000_po_documents.sql` — `po_documents` (captured PO/invoice PDFs).
-- `20260829000000_drop_gdrive.sql` — drops the retired `drive_file_id` /
-  `drive_synced_at` columns. Run a document-capture backfill first (§3.1 / the
-  Settings "Backfill missing PDFs" card) so POs have a captured `po_pdf`.
+Delete `neon_dump.pgcustom` afterward — it holds customer data.
 
-(The API self-applies the admin-CRUD + `po_documents` DDL on boot, so those two
-are safe to defer; `drop_gdrive` is not self-applied — run it explicitly.)
+### 2B. Fresh schema from the migration files (no data to carry)
+
+```bash
+for f in supabase/migrations/[0-9]*.sql; do
+  echo ">>> $f"; psql "$SUPABASE_SESSION_URL" -v ON_ERROR_STOP=1 -f "$f" || break
+done
+```
+
+`0001_init.sql` builds every table; `0002`–`0004` add two CHECK constraints and
+are otherwise no-ops on a fresh DB. Load data afterward by running the extraction
+pipeline against the new `DATABASE_URL`, or with a data-only dump.
+
+### Notes
+
+- `supabase link --project-ref <ref> && supabase db push` applies the same files
+  and records them in `supabase_migrations.schema_migrations`. The `psql` loop
+  above is the reliable path; see `supabase/migrations/README.md`.
+- `0004_drop_gdrive.sql` removes `drive_file_id` — before running it on a
+  Neon-restored DB, do a document-capture backfill (§3.1 / the Settings "Backfill
+  missing PDFs" card) so POs keep a captured `po_pdf`.
+- The API self-applies the `0002`/`0003` DDL on boot, so those two are safe to
+  defer; `0001` and `0004` are not self-applied — run them.
+
+Do not proceed to §3 until the schema is in place.
 
 ---
 
