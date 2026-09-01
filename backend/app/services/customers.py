@@ -3,12 +3,7 @@ recency per customer, on the product-revenue basis. The list view; a per-custome
 dossier lives at /customers/:name (customer_detail). Hidden / archived accounts
 follow Settings → Visibility (see context.py)."""
 
-from dataclasses import replace
-from functools import lru_cache
-
 import pandas as pd
-
-from qbo_matcher import normalize_customer  # shared/, via app.reuse
 
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope, Table, TableColumn
@@ -20,63 +15,38 @@ from .lifecycle import matched_gap_summary
 _TOP_N = 15
 _ROW_CAP = 300
 
-_norm = lru_cache(maxsize=4096)(normalize_customer)
 
-
-def _gap_by_po_customer(fp: FilterParams) -> dict:
-    """{PO-side customer_name -> (under, over, greq, gdel)} from the matched
-    PO⇄invoice lines. Keyed on the PO's (short) customer name; every figure is
-    restricted to the lines the PO actually priced (`requested_amount > 0`), the
-    same basis Order Lifecycle's KPIs use. `_resolve_gap` maps these to the
-    invoice (long) names the rest of this page groups by."""
-    gs = matched_gap_summary(fp)
-    if gs.m.empty:
-        return {}
-    gm = gs.m
+def _gap_frame(fp: FilterParams) -> pd.DataFrame:
+    """Matched PO⇄invoice lines with priced-only under/over/requested/delivered
+    columns and a `cust` key = the linked QBO customer (data.customer_canonical),
+    so the many PO-side spellings roll up to one real account."""
+    gm = matched_gap_summary(fp).m
+    if gm.empty:
+        return pd.DataFrame(columns=["cust", "u", "o", "gr", "gd"])
+    key = "customer_canonical" if "customer_canonical" in gm.columns else "customer_name"
     priced = gm["requested_amount"] > 0
-    agg = (
-        gm.assign(
-            _u=gm["lost_amount"].where(priced, 0.0),
-            _o=gm["over_amount"].where(priced, 0.0),
-            _gr=gm["requested_amount"].where(priced, 0.0),
-            _gd=gm["delivered_amount"].where(priced, 0.0),
-        )
-        .groupby("customer_name")
-        .agg(under=("_u", "sum"), over=("_o", "sum"),
-             greq=("_gr", "sum"), gdel=("_gd", "sum"))
-    )
+    return pd.DataFrame({
+        "cust": gm[key].fillna(gm["customer_name"]).astype(str),
+        "u": gm["lost_amount"].where(priced, 0.0),
+        "o": gm["over_amount"].where(priced, 0.0),
+        "gr": gm["requested_amount"].where(priced, 0.0),
+        "gd": gm["delivered_amount"].where(priced, 0.0),
+    })
+
+
+def _gap_by_customer(fp: FilterParams) -> dict:
+    """{QBO customer -> (under, over, greq, gdel)} — an exact join key now that the
+    frame carries the linked invoice's customer, so no fuzzy re-attribution."""
+    gf = _gap_frame(fp)
+    if gf.empty:
+        return {}
+    agg = gf.groupby("cust").agg(u=("u", "sum"), o=("o", "sum"), gr=("gr", "sum"), gd=("gd", "sum"))
     return {str(k): tuple(v) for k, v in agg.iterrows()}
 
 
-def _resolve_gap(gap: dict, customers: list[str]) -> dict:
-    """One pass: assign each PO-side gap bucket to exactly one visible invoice
-    customer (matching `qbo_matcher.customers_match` — normalised substring either
-    way), so no bucket is double-counted and the totals still tie to the page's
-    columns. Ambiguous buckets go to the exact-normalised match, else the longest
-    (most specific) name. Buckets that match nobody land under `""` (returned so
-    the caller can surface them as a reconciliation note)."""
-    norm_cust = [(c, _norm(c)) for c in customers]
-    out: dict[str, list[float]] = {}
-    for po_name, vals in gap.items():
-        npo = _norm(po_name)
-        hits = [c for c, nc in norm_cust if nc and npo and (nc in npo or npo in nc)]
-        if len(hits) > 1:
-            exact = [c for c in hits if _norm(c) == npo]
-            target = exact[0] if exact else max(hits, key=len)
-        elif hits:
-            target = hits[0]
-        else:
-            target = ""
-        acc = out.setdefault(target, [0.0, 0.0, 0.0, 0.0])
-        for i in range(4):
-            acc[i] += float(vals[i])
-    return {k: tuple(v) for k, v in out.items()}
-
-
 def _row_gap(vals: tuple | None) -> tuple[float, float, float | None]:
-    """(under $, over $, fulfilment %) for a resolved gap bucket; % is
-    shipped ÷ requested over priced lines (>100 ⇒ net over-delivered), None when
-    the account has no matched priced lines."""
+    """(under $, over $, fulfilment %) for a gap bucket; % is shipped ÷ requested
+    over priced lines (>100 ⇒ net over-delivered), None when no matched priced lines."""
     if not vals:
         return 0.0, 0.0, None
     under, over, greq, gdel = vals
@@ -127,11 +97,10 @@ def customers_page(fp: FilterParams) -> PageResponse:
         g[c] = pd.to_datetime(g[c]).dt.date.astype("object")
 
     # requested (PO) vs shipped (invoice) per customer — see Order Lifecycle. The
-    # gap frame is keyed on the PO short name; resolve each bucket to one invoice
-    # customer so the column and the KPI can't double-count.
-    resolved = _resolve_gap(_gap_by_po_customer(fp), list(g["customer_name"]))
+    # gap frame keys on the linked QBO customer, so this is an exact join.
+    gap = _gap_by_customer(fp)
     g[["under_shipped", "over_shipped", "fulfil_pct"]] = [
-        _row_gap(resolved.get(n)) for n in g["customer_name"]
+        _row_gap(gap.get(n)) for n in g["customer_name"]
     ]
     g = g.sort_values("revenue", ascending=False)
 
@@ -143,7 +112,10 @@ def customers_page(fp: FilterParams) -> PageResponse:
     total_under = round(finite(g["under_shipped"].sum()), 2)
     total_over = round(finite(g["over_shipped"].sum()), 2)
 
-    unattr_u, unattr_o, _, _ = resolved.get("", (0.0, 0.0, 0.0, 0.0))
+    # gap tied to accounts not shown here (hidden / archived) — kept out of the totals
+    _visible = set(g["customer_name"])
+    unattr_u = sum(v[0] for k, v in gap.items() if k not in _visible)
+    unattr_o = sum(v[1] for k, v in gap.items() if k not in _visible)
 
     months, series = monthly_revenue(prod)
     top = g.head(_TOP_N)
@@ -156,9 +128,9 @@ def customers_page(fp: FilterParams) -> PageResponse:
     notes = []
     if round(unattr_u, 2) or round(unattr_o, 2):
         notes.append(
-            f"${unattr_u:,.0f} under- / ${unattr_o:,.0f} over-shipped is tied to PO customer "
-            "names that don't map to a listed account (hidden or archived) and isn't in the "
-            "totals above — see Order Lifecycle for the portfolio-wide figure."
+            f"${unattr_u:,.0f} under- / ${unattr_o:,.0f} over-shipped is tied to accounts not "
+            "listed here (hidden or archived in Settings → Visibility) and isn't in the totals "
+            "above — see Order Lifecycle for the portfolio-wide figure."
         )
 
     return PageResponse(
@@ -255,18 +227,16 @@ def customer_detail(fp: FilterParams, name: str) -> PageResponse:
     first = c_inv["effective_date"].min() if not c_inv.empty else None
     last = c_inv["effective_date"].max() if not c_inv.empty else None
 
-    # gap for just this account — a customer-scoped matched_gap_summary (fuzzy on
-    # the PO short name), so we don't build the whole portfolio's gap to read one row.
-    gm = matched_gap_summary(replace(fp, customers=(name,))).m
-    if gm.empty:
+    # gap for just this account — exact match on the linked QBO customer
+    gf = _gap_frame(fp)
+    gf = gf[gf["cust"] == name]
+    if gf.empty:
         under, over, fulfil = 0.0, 0.0, None
     else:
-        priced = gm["requested_amount"] > 0
-        gr = float(gm.loc[priced, "requested_amount"].sum())
-        gd = float(gm.loc[priced, "delivered_amount"].sum())
-        under = round(float(gm.loc[priced, "lost_amount"].sum()), 2)
-        over = round(float(gm.loc[priced, "over_amount"].sum()), 2)
-        fulfil = round(gd / gr * 100, 1) if gr else None
+        gr = float(gf["gr"].sum())
+        under = round(float(gf["u"].sum()), 2)
+        over = round(float(gf["o"].sum()), 2)
+        fulfil = round(float(gf["gd"].sum()) / gr * 100, 1) if gr else None
 
     rev_m, rev_v = _by_month(c_prod, value_col="line_total", agg="sum")
     ord_m, ord_v = _by_month(c_inv, value_col=None, agg="nunique")

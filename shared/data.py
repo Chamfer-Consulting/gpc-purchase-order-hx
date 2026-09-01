@@ -597,7 +597,7 @@ def prepare_invoices(inv_df: pd.DataFrame, inv_items_df: pd.DataFrame):
 
 
 _MATCHED_ITEMS_COLUMNS = [
-    "po_id", "invoice_id", "customer_name", "effective_date",
+    "po_id", "invoice_id", "customer_name", "customer_canonical", "effective_date",
     "product_name", "container_size", "requested_qty", "requested_amount",
     "delivered_qty", "delivered_amount", "po_math_note",
 ]
@@ -678,9 +678,11 @@ def load_matched_line_items() -> pd.DataFrame:
     try:
         links = pd.read_sql_query(
             """
-            SELECT l.po_id, l.invoice_id, po.po_number, po.customer_name, po.po_date, po.sent_date
+            SELECT l.po_id, l.invoice_id, po.po_number, po.customer_name, po.po_date, po.sent_date,
+                   inv.customer_name AS customer_canonical
             FROM po_invoice_links l
             JOIN purchase_orders po ON po.id = l.po_id
+            LEFT JOIN qbo_invoices inv ON inv.id = l.invoice_id
             WHERE l.confirmed = TRUE
             """,
             conn,
@@ -726,7 +728,11 @@ def load_matched_line_items() -> pd.DataFrame:
     inv_items["_pk"] = inv_items["product_name"].map(_norm_product)
 
     links = _choose_revision(links, cand_pos, po_items, inv_items)
-    links = links[["po_id", "invoice_id", "customer_name", "effective_date"]]
+    # `customer_canonical` = the linked QBO invoice's customer — the single real
+    # entity behind the many PO-side spellings ("Get Fresh", "Get Fresh Produce,
+    # LLC.", …). Group customer views on this, not the raw extracted name.
+    links["customer_canonical"] = links["customer_canonical"].fillna(links["customer_name"])
+    links = links[["po_id", "invoice_id", "customer_name", "customer_canonical", "effective_date"]]
 
     def _first_real(s):
         return next((x for x in s if x is not None and str(x).strip()), None)
@@ -747,7 +753,7 @@ def load_matched_line_items() -> pd.DataFrame:
 
     combined = pd.merge(
         po_side, inv_side,
-        on=["po_id", "invoice_id", "customer_name", "effective_date", "_pk"],
+        on=["po_id", "invoice_id", "customer_name", "customer_canonical", "effective_date", "_pk"],
         how="outer",
     )
     for col in ("requested_qty", "requested_amount", "delivered_qty", "delivered_amount"):

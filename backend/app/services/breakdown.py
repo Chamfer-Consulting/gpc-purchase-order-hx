@@ -20,7 +20,7 @@ from ..schemas import BreakdownPoint, BreakdownRow, ChartBreakdown, NumFormat
 TOP_N = 5
 
 _PRETTY = {"product_name": "product", "customer_name": "customer",
-           "container_size": "size", "size_label": "size"}
+           "customer_canonical": "customer", "container_size": "size", "size_label": "size"}
 
 
 def _by(col: str) -> str:

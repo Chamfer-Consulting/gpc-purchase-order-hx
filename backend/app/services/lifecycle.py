@@ -73,12 +73,16 @@ def matched_gap_summary(fp: FilterParams) -> GapSummary:
     m = m.copy() if m is not None else pd.DataFrame()
     if not m.empty:
         m["effective_date"] = pd.to_datetime(m["effective_date"], errors="coerce")
+        # the linked QBO invoice's customer — one real entity per many PO spellings
+        if "customer_canonical" not in m.columns:
+            m["customer_canonical"] = m["customer_name"]
+        m["customer_canonical"] = m["customer_canonical"].fillna(m["customer_name"])
         if fp.start:
             m = m[m["effective_date"] >= pd.Timestamp(fp.start)]
         if fp.end:
             m = m[m["effective_date"] < pd.Timestamp(fp.end) + pd.Timedelta(days=1)]
         if fp.customers:
-            m = m[m["customer_name"].fillna("").map(
+            m = m[m["customer_canonical"].fillna("").map(
                 lambda c: any(customers_match(c, s) for s in fp.customers)
             )]
     if m.empty:
@@ -138,9 +142,10 @@ def month_breakdowns(m: pd.DataFrame, months: list[str]) -> list[ChartBreakdown]
     series. Empty list when there are no matched lines."""
     if m is None or m.empty or not months:
         return []
+    cust_col = "customer_canonical" if "customer_canonical" in m.columns else "customer_name"
     return [
         _one_breakdown(m, months, "product_name", "Top products"),
-        _one_breakdown(m, months, "customer_name", "Top customers"),
+        _one_breakdown(m, months, cust_col, "Top customers"),
     ]
 
 
@@ -173,6 +178,8 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
     # ---- line-level gap (the trending / by-customer / by-product view) ----------
     gs = matched_gap_summary(fp)
     m = gs.m
+    # group customer views on the linked QBO customer, not the raw PO spelling
+    _ccol = "customer_canonical" if (not m.empty and "customer_canonical" in m.columns) else "customer_name"
     requested, shipped, lost, over, lost_units, fulfil = (
         gs.requested, gs.shipped, gs.lost, gs.over, gs.lost_units, gs.fulfil
     )
@@ -198,7 +205,7 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
               breakdowns=[
                   _bd.by_month(m, months, group="product_name", value="lost_amount",
                                label="Top under-shipped products"),
-                  _bd.by_month(m, months, group="customer_name", value="lost_amount",
+                  _bd.by_month(m, months, group=_ccol, value="lost_amount",
                                label="Top under-shipped customers"),
               ] if not m.empty else None),
     ]
@@ -206,10 +213,11 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
 
     if not m.empty:
         cust = (
-            m.groupby("customer_name")
+            m.groupby(_ccol)
             .agg(requested=("requested_amount", "sum"), shipped=("delivered_amount", "sum"),
                  lost=("lost_amount", "sum"), over=("over_amount", "sum"))
             .reset_index()
+            .rename(columns={_ccol: "customer_name"})
         )
         cust["fulfil_pct"] = (cust["shipped"] / cust["requested"].where(cust["requested"] > 0) * 100).round(1)
         cust = cust.sort_values("lost", ascending=False)
@@ -220,7 +228,7 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
             series=[ChartSeries(name="Under-shipped", data=[finite(v) for v in cust.head(_TOP_N)["lost"]])],
             y_format="currency",
             breakdowns=[
-                _bd.by_category(m, _lc_names, key="customer_name", group="product_name",
+                _bd.by_category(m, _lc_names, key=_ccol, group="product_name",
                                 value="lost_amount", label="Top under-shipped products"),
             ]))
         tables["by_customer"] = Table(
