@@ -5,13 +5,42 @@ list view — hidden customers follow Settings → Visibility, see context.py)."
 
 import pandas as pd
 
+from qbo_matcher import customers_match  # shared/, via app.reuse
+
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope, Table, TableColumn
 from ._util import finite, records
 from .context import build_context, monthly_revenue
+from .lifecycle import matched_gap_summary
 
 _TOP_N = 15
 _ROW_CAP = 300
+
+
+def _gap_by_customer(fp: FilterParams) -> dict:
+    """{invoice-customer-name -> {under, over, fulfil}} from the matched PO⇄invoice
+    lines. The gap frame is keyed on the PO's (short) customer name, so it's matched
+    fuzzily to the invoice (long) names the rest of this page groups by."""
+    gs = matched_gap_summary(fp)
+    if gs.m.empty:
+        return {}
+    gm = gs.m
+    priced = gm["requested_amount"] > 0
+    agg = (
+        gm.assign(_u=gm["lost_amount"].where(priced, 0.0), _o=gm["over_amount"].where(priced, 0.0))
+        .groupby("customer_name")
+        .agg(under=("_u", "sum"), over=("_o", "sum"),
+             greq=("requested_amount", "sum"), gdel=("delivered_amount", "sum"))
+    )
+    return {str(k): tuple(v) for k, v in agg.iterrows()}  # name -> (under, over, greq, gdel)
+
+
+def _lookup_gap(name: str, gap: dict) -> tuple[float, float, float | None]:
+    u = o = gr = gd = 0.0
+    for po_name, (under, over, greq, gdel) in gap.items():
+        if customers_match(name, po_name):
+            u += under; o += over; gr += greq; gd += gdel
+    return round(u, 2), round(o, 2), (round(gd / gr * 100, 1) if gr else None)
 
 
 def _by_month(df: pd.DataFrame, *, value_col: str | None, agg: str) -> tuple[list[str], list[float]]:
@@ -56,12 +85,20 @@ def customer_360(fp: FilterParams) -> PageResponse:
     g["avg_order"] = (g["revenue"] / g["prod_orders"].where(g["prod_orders"] > 0)).round(2)
     for c in ("first_order", "last_order"):
         g[c] = pd.to_datetime(g[c]).dt.date.astype("object")
+
+    # requested (PO) vs shipped (invoice) per customer — see Order Lifecycle
+    gap = _gap_by_customer(fp)
+    g[["under_shipped", "over_shipped", "fulfil_pct"]] = [
+        _lookup_gap(n, gap) for n in g["customer_name"]
+    ]
     g = g.sort_values("revenue", ascending=False)
 
     total_rev = finite(g["revenue"].sum())
     total_orders = int(g["orders"].sum())
     n_customers = int(g.shape[0])
     aov = round(total_rev / total_orders, 2) if total_orders else 0.0
+    total_under = finite(g["under_shipped"].sum())
+    total_over = finite(g["over_shipped"].sum())
 
     months, series = monthly_revenue(prod)
     top = g.head(_TOP_N)
@@ -78,10 +115,13 @@ def customer_360(fp: FilterParams) -> PageResponse:
             Kpi(label="Product revenue", value=total_rev, format="currency",
                 help="Sum of product line items (category='product'); shipping / services "
                      "/ samples are not counted."),
-            Kpi(label="Customers", value=n_customers, format="int"),
+            Kpi(label="Under-shipped", value=round(total_under, 2), format="currency",
+                help="Σ (requested − shipped) across matched PO⇄invoice lines invoiced for "
+                     "less than the PO asked. Per customer in the table; detail on Order Lifecycle."),
+            Kpi(label="Over-shipped", value=round(total_over, 2), format="currency",
+                help="Σ (shipped − requested) on lines invoiced for more than the PO asked."),
             Kpi(label="Orders", value=total_orders, format="int",
-                help="Distinct invoices in scope. A customer's average below divides "
-                     "revenue by only the invoices that carry a product line."),
+                help="Distinct invoices in scope."),
             Kpi(label="Avg order value", value=aov, format="currency",
                 help="Product revenue ÷ orders with a product line."),
         ],
@@ -111,10 +151,13 @@ def customer_360(fp: FilterParams) -> PageResponse:
                     TableColumn(key="revenue", label="Revenue", kind="currency"),
                     TableColumn(key="orders", label="Orders", kind="int"),
                     TableColumn(key="avg_order", label="Avg order", kind="currency"),
-                    TableColumn(key="first_order", label="First order", kind="date"),
+                    TableColumn(key="under_shipped", label="Under-shipped $", kind="currency"),
+                    TableColumn(key="over_shipped", label="Over-shipped $", kind="currency"),
+                    TableColumn(key="fulfil_pct", label="Fulfilment %", kind="percent"),
                     TableColumn(key="last_order", label="Last order", kind="date"),
                 ],
                 rows=records(shown[["customer_name", "revenue", "orders", "avg_order",
+                                    "under_shipped", "over_shipped", "fulfil_pct",
                                     "first_order", "last_order"]]),
                 export_name="customers",
             )
@@ -146,6 +189,7 @@ def customer_detail(fp: FilterParams, name: str) -> PageResponse:
     aov = round(revenue / prod_orders, 2) if prod_orders else 0.0
     first = c_inv["effective_date"].min() if not c_inv.empty else None
     last = c_inv["effective_date"].max() if not c_inv.empty else None
+    under, over, fulfil = _lookup_gap(name, _gap_by_customer(fp))
 
     rev_m, rev_v = _by_month(c_prod, value_col="line_total", agg="sum")
     ord_m, ord_v = _by_month(c_inv, value_col=None, agg="nunique")
@@ -175,12 +219,17 @@ def customer_detail(fp: FilterParams, name: str) -> PageResponse:
         kpis=[
             Kpi(label="Product revenue", value=revenue, format="currency",
                 help="Sum of product line items; shipping / services / samples excluded."),
+            Kpi(label="Under-shipped", value=under, format="currency",
+                help="Σ (requested − shipped) on this account's matched PO⇄invoice lines "
+                     "invoiced for less than the PO asked."),
+            Kpi(label="Over-shipped", value=over, format="currency",
+                help="Σ (shipped − requested) on lines invoiced for more than the PO asked."),
+            Kpi(label="Fulfilment rate", value=(fulfil if fulfil is not None else 0.0),
+                format="percent", help="Σ shipped ÷ Σ requested across matched lines."),
             Kpi(label="Orders", value=n_orders, format="int",
                 help="Distinct invoices in scope."),
             Kpi(label="Avg order value", value=aov, format="currency",
                 help="Product revenue ÷ invoices carrying a product line."),
-            Kpi(label="First order", value=_date_str(first), format="text"),
-            Kpi(label="Last order", value=_date_str(last), format="text"),
         ],
         charts=[
             Chart(id="rev_month", title="Product revenue by month", kind="line",
