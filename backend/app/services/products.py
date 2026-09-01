@@ -28,18 +28,31 @@ def products_and_sizes(fp: FilterParams) -> PageResponse:
     prod = prod.copy()
     prod["size_label"] = prod["container_size"].fillna("").replace("", _SIZE_NULL)
 
+    # a product whose lines net to $0 in scope ("Garnet Mustard" — one comp'd
+    # clamshell) is noise on a revenue report: drop its lines entirely so every
+    # figure below (KPIs, both tables, the mix chart) reconciles. Revenue is
+    # unchanged (they contributed $0); note which products dropped out.
+    _rev = prod.groupby("product_name")["line_total"].sum().round(2)
+    zero_rev_names = list(_rev[_rev == 0].index)
+    if zero_rev_names:
+        prod = prod[~prod["product_name"].isin(zero_rev_names)]
+
     by_product = (
         prod.groupby("product_name")
         .agg(revenue=("line_total", "sum"), quantity=("quantity", "sum"))
         .reset_index()
         .sort_values("revenue", ascending=False)
     )
-    by_size = (
+    by_size_all = (
         prod.groupby("size_label")
         .agg(revenue=("line_total", "sum"), quantity=("quantity", "sum"))
         .reset_index()
         .sort_values("revenue", ascending=False)
     )
+    by_size_real = by_size_all[by_size_all["size_label"] != _SIZE_NULL]
+    # table keeps the "(no size)" row so revenue reconciles, always last;
+    # the chart and the Sizes count are real sizes only.
+    by_size = pd.concat([by_size_real, by_size_all[by_size_all["size_label"] == _SIZE_NULL]])
 
     # product mix over time (stacked bar by month) — cap the coloured series at the
     # top _MIX_SERIES products by revenue, the rest bucketed as "Other", so the
@@ -65,14 +78,27 @@ def products_and_sizes(fp: FilterParams) -> PageResponse:
 
     total_rev = float(by_product["revenue"].sum())
     total_qty = float(by_product["quantity"].sum())
-    n_sizes = int((by_size["size_label"] != _SIZE_NULL).sum())
+    n_sizes = int(by_size_real.shape[0])
+
+    notes: list[str] = []
+    if zero_rev_names:
+        names = ", ".join(zero_rev_names[:6])
+        notes.append(
+            f"{len(zero_rev_names)} product(s) with no revenue in this scope are not shown "
+            f"({names}) — comped / description-only clamshells."
+        )
 
     return PageResponse(
         scope=Scope(count=int(ctx.n_invoices), noun="invoices", start=fp.start, end=fp.end),
         kpis=[
-            Kpi(label="Product revenue", value=total_rev, format="currency"),
-            Kpi(label="Units", value=total_qty, format="int"),
-            Kpi(label="Products", value=int(by_product.shape[0]), format="int"),
+            Kpi(label="Product revenue", value=total_rev, format="currency",
+                help="Sum of product line items (category='product'); shipping / services "
+                     "/ samples excluded."),
+            Kpi(label="Units", value=total_qty, format="int",
+                help="Clamshells summed across every container size (1oz + 8oz etc.) — "
+                     "not directly comparable between sizes; see the per-size table."),
+            Kpi(label="Products", value=int(by_product.shape[0]), format="int",
+                help="Distinct products with revenue in scope."),
             Kpi(label="Sizes", value=n_sizes, format="int",
                 help="Distinct container sizes; lines with no size aren't counted."),
         ],
@@ -93,14 +119,15 @@ def products_and_sizes(fp: FilterParams) -> PageResponse:
             ),
             Chart(
                 id="rev_by_size",
-                title="Revenue by container size" + (f" (top {_CHART_CAP})" if len(by_size) > _CHART_CAP else ""),
+                title="Revenue by container size"
+                + (f" (top {_CHART_CAP})" if len(by_size_real) > _CHART_CAP else ""),
                 kind="hbar",
-                x=list(by_size.head(_CHART_CAP)["size_label"]),
+                x=list(by_size_real.head(_CHART_CAP)["size_label"]),
                 series=[ChartSeries(name="Revenue",
-                                    data=[float(v) for v in by_size.head(_CHART_CAP)["revenue"]])],
+                                    data=[float(v) for v in by_size_real.head(_CHART_CAP)["revenue"]])],
                 y_format="currency",
                 breakdowns=[
-                    _bd.by_category(prod, list(by_size.head(_CHART_CAP)["size_label"]),
+                    _bd.by_category(prod, list(by_size_real.head(_CHART_CAP)["size_label"]),
                                     key="size_label", group="product_name", value="line_total",
                                     label="Top products"),
                 ],
@@ -126,7 +153,9 @@ def products_and_sizes(fp: FilterParams) -> PageResponse:
                 export_name="by_product",
             ),
             "by_size": Table(
-                title="Revenue & quantity by container size",
+                title="Revenue & quantity by container size"
+                + (" (incl. a “(no size)” row so revenue ties to the total)"
+                   if (by_size["size_label"] == _SIZE_NULL).any() else ""),
                 columns=[
                     TableColumn(key="size_label", label="Size"),
                     TableColumn(key="revenue", label="Revenue", kind="currency"),
@@ -136,6 +165,7 @@ def products_and_sizes(fp: FilterParams) -> PageResponse:
                 export_name="by_size",
             ),
         },
+        notes=notes,
     )
 
 
