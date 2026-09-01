@@ -82,15 +82,19 @@ export function ArchivePage() {
   const counts = data?.counts ?? {};
   const meta = pageMeta("/archive")!;
 
+  const shown = data?.rows.length ?? 0;
+  const total = counts[tab];
+  const subtitle =
+    isLoading || shown === 0
+      ? undefined
+      : total != null && total > shown
+        ? `${shown} of ${total} shown`
+        : `${shown} shown`;
+
   return (
     <PageLayout title={meta.title} description={meta.description} breadcrumbs={meta.breadcrumbs}>
-      <SectionCard
-        title="Archived orders"
-        subtitle={
-          !isLoading && (data?.rows.length ?? 0) > 0 ? `${data?.rows.length} shown` : undefined
-        }
-      >
-        <Tabs value={tab} onChange={(v) => v && setTab(v)}>
+      <SectionCard title="Archived orders" subtitle={subtitle}>
+        <Tabs value={tab} onChange={(v) => v && setTab(v)} keepMounted={false}>
           <Tabs.List>
             {BUCKETS.map((b) => (
               <Tabs.Tab
@@ -113,13 +117,11 @@ export function ArchivePage() {
             ))}
           </Tabs.List>
 
-          {BUCKETS.map((b) => (
-            <Tabs.Panel key={b.value} value={b.value} pt="md">
-              <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
-                <ArchiveTable rows={data?.rows ?? []} />
-              </QueryBoundary>
-            </Tabs.Panel>
-          ))}
+          <Tabs.Panel value={tab} pt="md">
+            <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
+              <ArchiveTable rows={data?.rows ?? []} />
+            </QueryBoundary>
+          </Tabs.Panel>
         </Tabs>
       </SectionCard>
     </PageLayout>

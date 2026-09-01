@@ -130,6 +130,8 @@ function useInvalidatePo(poId: number) {
       ["data-quality"],
       ["overview"],
       ["matching"],
+      // a lifecycle status change moves the PO in/out of the Archive buckets
+      ["archive"],
       // the /reconcile screen: a status change resolves / re-ranks a queue item
       ["reconcile-queue"],
       ["reconcile-po", poId],

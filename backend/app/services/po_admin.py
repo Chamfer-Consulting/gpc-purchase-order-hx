@@ -199,28 +199,31 @@ def _links(cur, po_id: int) -> list[dict]:
 
 _ARCHIVE_COLS = """
     po.id AS po_id, po.po_number, po.customer_name, po.po_date, po.delivery_date,
-    po.status, po.status_reason, po.status_at, po.deleted_at, po.total,
+    po.status, po.status_reason, po.status_at, po.deleted_at,
+    COALESCE(po.total, (SELECT sum(li.line_total) FROM line_items li
+                        WHERE li.po_id = po.id AND NOT li.is_removed)) AS total,
     po.source_file, po.edited_by,
     (SELECT count(*) FROM line_items li WHERE li.po_id = po.id AND NOT li.is_removed) AS n_items
 """
 
+_ARCHIVE_ORDER = "ORDER BY COALESCE(po.status_at, po.deleted_at) DESC NULLS LAST, po.id DESC LIMIT %s"
+
 
 def list_inactive(conn, status: str | None = None, limit: int = 500) -> list[dict]:
     """Every PO whose status isn't 'active' (or just one status bucket), newest
-    status change first — the archive tab's data source."""
+    status change first — the archive tab's data source. Capped at `limit`; the
+    caller compares against `inactive_counts` to show "N of M"."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         if status and status != "all":
             if status not in VALID_STATUS:
                 raise AdminError(f"unknown status {status!r}")
             cur.execute(
-                f"SELECT {_ARCHIVE_COLS} FROM purchase_orders po WHERE po.status = %s "
-                "ORDER BY po.status_at DESC NULLS LAST, po.id DESC LIMIT %s",
+                f"SELECT {_ARCHIVE_COLS} FROM purchase_orders po WHERE po.status = %s {_ARCHIVE_ORDER}",
                 (status, limit),
             )
         else:
             cur.execute(
-                f"SELECT {_ARCHIVE_COLS} FROM purchase_orders po WHERE po.status <> 'active' "
-                "ORDER BY po.status_at DESC NULLS LAST, po.id DESC LIMIT %s",
+                f"SELECT {_ARCHIVE_COLS} FROM purchase_orders po WHERE po.status <> 'active' {_ARCHIVE_ORDER}",
                 (limit,),
             )
         return [_jsonify(dict(r)) for r in cur.fetchall()]
