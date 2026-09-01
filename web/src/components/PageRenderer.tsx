@@ -38,13 +38,19 @@ function chartOption(c: ChartSpec) {
 }
 
 function tableColumns(t: TableSpec): Column<Record<string, unknown>>[] {
-  return t.columns.map((c) => ({
-    key: c.key,
-    label: c.label,
-    kind: c.kind,
-    align: c.kind !== "text" && c.kind !== "date" ? "right" : "left",
-    linkTo: c.key === "po_id" ? (v: unknown) => `/po/${v}` : undefined,
-  }));
+  return t.columns.map((c) => {
+    // An id / row-key column is an identifier, never a magnitude — don't
+    // thousands-group it ("23,692") or right-align it, even if the spec says int.
+    const isIdentifier = c.key === "po_id" || c.key === "id" || c.key.endsWith("_id");
+    const kind = isIdentifier ? "text" : c.kind;
+    return {
+      key: c.key,
+      label: c.label,
+      kind,
+      align: kind !== "text" && kind !== "date" ? "right" : "left",
+      linkTo: c.key === "po_id" ? (v: unknown) => `/po/${v}` : undefined,
+    };
+  });
 }
 
 /** Renders a backend PageResponse: scope → attention → KPIs → charts → tables. */

@@ -108,7 +108,8 @@ def data_quality(_: AuthedUser = Depends(current_user)) -> PageResponse:
             "errors": Table(
                 title=f"Extraction failures ({real_errors}) — genuine errors only, not “not a purchase order” ({not_po})",
                 columns=[
-                    TableColumn(key="po_id", label="PO id", kind="int"),
+                    # identifier, not a quantity — must not be thousands-grouped ("23,692")
+                    TableColumn(key="po_id", label="PO id"),
                     TableColumn(key="customer_name", label="Customer"),
                     TableColumn(key="po_date", label="PO date", kind="date"),
                     TableColumn(key="error", label="Error"),
