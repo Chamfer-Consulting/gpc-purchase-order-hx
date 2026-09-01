@@ -89,16 +89,47 @@ class TeamError(ValueError):
 
 
 def list_team(conn) -> list[dict]:
+    """Everyone with a login OR a granted role. `role` is NULL for a signed-in
+    user who was never assigned one (they run as the default, viewer, IF their
+    email is allowed). `allowed` is the identity gate — false = signed up but
+    can't get past the API."""
+    from ..auth import _DEFAULT_ROLE, email_allowed
+
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            "SELECT email, role, note, created_at, updated_at FROM app_users ORDER BY role DESC, email"
+            """
+            SELECT lower(COALESCE(u.email, a.email))  AS email,
+                   a.role, a.note,
+                   u.created_at       AS signed_up_at,
+                   u.last_sign_in_at  AS last_sign_in_at,
+                   (u.id IS NOT NULL) AS has_account
+            FROM auth.users u
+            FULL OUTER JOIN app_users a ON lower(a.email) = lower(u.email)
+            """
         )
-        return [
-            {**dict(r),
-             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-             "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None}
-            for r in cur.fetchall()
-        ]
+        rows = cur.fetchall()
+
+    def _iso(v):
+        return v.isoformat() if v is not None else None
+
+    out = []
+    for r in rows:
+        email = r["email"]
+        allowed = r["role"] is not None or email_allowed(email)
+        out.append({
+            "email": email,
+            "role": r["role"],
+            "effective_role": r["role"] or (_DEFAULT_ROLE if allowed else None),
+            "allowed": allowed,
+            "has_role": r["role"] is not None,
+            "has_account": r["has_account"],
+            "note": r["note"],
+            "signed_up_at": _iso(r["signed_up_at"]),
+            "last_sign_in_at": _iso(r["last_sign_in_at"]),
+        })
+    _RANK = {"admin": 0, "editor": 1, "viewer": 2, None: 3}
+    out.sort(key=lambda x: (_RANK.get(x["effective_role"], 3), not x["allowed"], x["email"]))
+    return out
 
 
 def _admin_emails(cur) -> set[str]:

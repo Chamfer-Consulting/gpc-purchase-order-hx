@@ -133,6 +133,22 @@ export function SettingsPage() {
   );
 }
 
+const ROLE_DATA = [
+  { value: "viewer", label: "Viewer" },
+  { value: "editor", label: "Editor" },
+  { value: "admin", label: "Admin" },
+];
+
+function whenText(m: {
+  last_sign_in_at: string | null;
+  has_account: boolean;
+  has_role: boolean;
+}): string {
+  if (m.last_sign_in_at) return `last sign-in ${m.last_sign_in_at.slice(0, 10)}`;
+  if (m.has_account) return "signed up, no sign-in yet";
+  return "invited — hasn't signed in";
+}
+
 function TeamCard() {
   const { data, isLoading, error, refetch } = useTeam();
   const { email: myEmail } = useMe();
@@ -141,8 +157,15 @@ function TeamCard() {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("viewer");
 
-  const rows = [...(data ?? [])].sort((a, b) => a.email.localeCompare(b.email));
-  const adminCount = rows.filter((r) => r.role === "admin").length;
+  const rows = data ?? [];
+  const adminCount = rows.filter((r) => r.effective_role === "admin").length;
+
+  function grant(target: string, r: Role, existingNote?: string | null) {
+    setMember.mutate(
+      { email: target, role: r, note: existingNote },
+      { onError: (err) => notifyError(err) },
+    );
+  }
 
   function add() {
     const e = email.trim().toLowerCase();
@@ -151,7 +174,7 @@ function TeamCard() {
       { email: e, role },
       {
         onSuccess: () => {
-          notifySuccess(`${e} added as ${role}.`);
+          notifySuccess(`${e} set to ${role}.`);
           setEmail("");
         },
         onError: (err) => notifyError(err),
@@ -162,67 +185,84 @@ function TeamCard() {
   return (
     <SectionCard
       title="Team"
-      subtitle="Who can sign in, and what they can do. viewer = read-only · editor = edit POs / matches / prices · admin = + status changes, delete, connections, this list."
+      subtitle="Everyone with a login or a granted role. viewer = read-only · editor = edit POs / matches / prices · admin = + status changes, delete, connections, this list. A signed-in user with no role runs as viewer; “no access” means their email isn't allowed."
     >
       <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
         <Stack gap="sm">
-          <Table.ScrollContainer minWidth={520} type="native">
+          <Table.ScrollContainer minWidth={560} type="native">
             <Table verticalSpacing="xs">
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Email</Table.Th>
-                  <Table.Th w={220}>Role</Table.Th>
-                  <Table.Th w={44} />
+                  <Table.Th>User</Table.Th>
+                  <Table.Th w={230}>Role</Table.Th>
+                  <Table.Th w={64} />
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 {rows.map((m) => {
                   const isSelf = m.email.toLowerCase() === (myEmail ?? "").toLowerCase();
-                  const lastAdmin = m.role === "admin" && adminCount === 1;
+                  const lastAdmin = m.effective_role === "admin" && adminCount === 1;
                   return (
-                    <Table.Tr key={m.email}>
+                    <Table.Tr key={m.email} style={!m.allowed ? { opacity: 0.7 } : undefined}>
                       <Table.Td>
-                        {m.email}
-                        {isSelf && (
-                          <Text span c="dimmed" size="xs">
-                            {" "}
-                            (you)
+                        <Stack gap={0}>
+                          <Text size="sm">
+                            {m.email}
+                            {isSelf && (
+                              <Text span c="dimmed" size="xs">
+                                {" "}
+                                (you)
+                              </Text>
+                            )}
                           </Text>
-                        )}
+                          <Group gap={6}>
+                            {!m.allowed && (
+                              <Badge size="xs" color="red" variant="light">
+                                no access
+                              </Badge>
+                            )}
+                            {m.allowed && !m.has_role && (
+                              <Badge size="xs" color="gray" variant="light">
+                                default
+                              </Badge>
+                            )}
+                            <Text size="xs" c="dimmed">
+                              {whenText(m)}
+                            </Text>
+                          </Group>
+                        </Stack>
                       </Table.Td>
                       <Table.Td>
                         <SegmentedControl
                           size="xs"
-                          value={m.role}
+                          value={m.effective_role ?? ""}
                           disabled={lastAdmin || setMember.isPending}
-                          onChange={(v) =>
-                            setMember.mutate(
-                              { email: m.email, role: v as Role, note: m.note },
-                              { onError: (err) => notifyError(err) },
-                            )
-                          }
-                          data={[
-                            { value: "viewer", label: "Viewer" },
-                            { value: "editor", label: "Editor" },
-                            { value: "admin", label: "Admin" },
-                          ]}
+                          onChange={(v) => grant(m.email, v as Role, m.note)}
+                          data={ROLE_DATA}
                         />
+                        {!m.allowed && (
+                          <Text size="xs" c="dimmed" mt={2}>
+                            off-domain — pick a role to grant access
+                          </Text>
+                        )}
                       </Table.Td>
                       <Table.Td>
                         <Button
                           size="compact-xs"
                           variant="subtle"
                           color="red"
-                          disabled={isSelf || lastAdmin || removeMember.isPending}
+                          disabled={isSelf || lastAdmin || !m.has_role || removeMember.isPending}
                           onClick={() =>
                             confirmAction({
-                              title: `Remove ${m.email}?`,
-                              body: "They lose access on their next request.",
-                              confirmLabel: "Remove",
+                              title: `Remove ${m.email}'s role?`,
+                              body: m.allowed
+                                ? "They drop back to the default (viewer)."
+                                : "They lose access entirely on their next request.",
+                              confirmLabel: "Remove role",
                               confirmColor: "red",
                               onConfirm: () =>
                                 removeMember.mutate(m.email, {
-                                  onSuccess: () => notifySuccess(`${m.email} removed.`),
+                                  onSuccess: () => notifySuccess(`${m.email}: role removed.`),
                                   onError: (err) => notifyError(err),
                                 }),
                             })
@@ -240,7 +280,7 @@ function TeamCard() {
 
           <Group gap="xs" align="flex-end">
             <TextInput
-              label="Add teammate"
+              label="Add / set someone by email"
               placeholder="name@garfieldproduce.com"
               size="xs"
               w={280}
@@ -252,19 +292,16 @@ function TeamCard() {
               size="xs"
               value={role}
               onChange={(v) => setRole(v as Role)}
-              data={[
-                { value: "viewer", label: "Viewer" },
-                { value: "editor", label: "Editor" },
-                { value: "admin", label: "Admin" },
-              ]}
+              data={ROLE_DATA}
             />
             <Button size="xs" onClick={add} loading={setMember.isPending} disabled={!email.includes("@")}>
-              Add
+              Save
             </Button>
           </Group>
           <Text size="xs" c="dimmed">
-            Only @garfieldproduce.com (and the owner) can sign in at all — set on the API as
-            <Code>ALLOWED_EMAIL_DOMAINS</Code>. Adding someone here also lets an off-domain address in.
+            Sign-in domains (<Code>garfieldproduce.com</Code>, <Code>adelantecenter.org</Code>) are set
+            on the API as <Code>ALLOWED_EMAIL_DOMAINS</Code>. Giving someone a role here also lets an
+            off-domain address in.
           </Text>
         </Stack>
       </QueryBoundary>

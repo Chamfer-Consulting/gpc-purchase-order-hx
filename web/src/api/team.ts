@@ -4,10 +4,17 @@ import type { Role } from "./me";
 
 export interface TeamMember {
   email: string;
-  role: Role;
+  /** the explicit app_users grant, or null if none */
+  role: Role | null;
+  /** what they actually run as: role, else viewer if allowed, else null (blocked) */
+  effective_role: Role | null;
+  /** identity gate — false = signed up but the API rejects them */
+  allowed: boolean;
+  has_role: boolean;
+  has_account: boolean;
   note: string | null;
-  created_at: string | null;
-  updated_at: string | null;
+  signed_up_at: string | null;
+  last_sign_in_at: string | null;
 }
 
 /** The app_users allow / role list. Admin-only endpoint. */
