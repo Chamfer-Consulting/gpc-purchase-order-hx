@@ -74,7 +74,7 @@ def price_options(conn) -> list[dict]:
               AND NOT COALESCE(li.is_sample, FALSE)
               AND NOT COALESCE(li.is_removed, FALSE)
               AND NOT COALESCE(li.voided, FALSE)
-              AND po.status = 'active'
+              AND COALESCE(po.status, 'active') = 'active'
               AND li.product_name NOT IN (SELECT product_name FROM hidden_products)
             ORDER BY li.product_name, li.container_size
             """
@@ -97,7 +97,7 @@ def price_history(conn, product_name: str, container_size: str) -> dict:
               AND NOT COALESCE(li.is_sample, FALSE)
               AND NOT COALESCE(li.is_removed, FALSE)
               AND NOT COALESCE(li.voided, FALSE)
-              AND po.status = 'active' AND po.po_date IS NOT NULL
+              AND COALESCE(po.status, 'active') = 'active' AND po.po_date IS NOT NULL
               AND li.product_name NOT IN (SELECT product_name FROM hidden_products)
             ORDER BY po.po_date
             """,

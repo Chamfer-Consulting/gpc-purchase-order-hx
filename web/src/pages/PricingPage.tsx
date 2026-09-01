@@ -14,6 +14,7 @@ import { IconTrash } from "@tabler/icons-react";
 import { Chart } from "@/charts/Chart";
 import { timeLineOption } from "@/charts/options";
 import { fmtCurrency } from "@/lib/format";
+import { notifyError, notifySuccess } from "@/lib/notify";
 import {
   useReferencePrices,
   usePriceHistory,
@@ -132,7 +133,14 @@ export function PricingPage() {
       .filter((k) => !present.has(k))
       .map((k) => k.split(SEP));
     if (!changed.length && !deleted.length) return;
-    save.mutate({ rows: changed, delete: deleted });
+    save.mutate(
+      { rows: changed, delete: deleted },
+      {
+        onSuccess: (d) =>
+          notifySuccess(`Saved ${d.saved} changed/added · ${d.deleted} deleted.`),
+        onError: (e) => notifyError(e),
+      },
+    );
   }
 
   return (
@@ -186,16 +194,6 @@ export function PricingPage() {
                 </>
               }
             >
-              {save.data && (
-                <Text size="xs" c="dimmed">
-                  Saved {save.data.saved} changed/added · {save.data.deleted} deleted.
-                </Text>
-              )}
-              {save.error && (
-                <Text size="xs" c="red">
-                  {(save.error as Error).message}
-                </Text>
-              )}
 
               <Table.ScrollContainer minWidth={720} type="native">
                 <Table striped withTableBorder verticalSpacing={4}>

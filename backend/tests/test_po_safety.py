@@ -366,3 +366,37 @@ def test_breakdown_on_empty_frame_is_empty_points():
     b = _bd.by_month(pd.DataFrame(), ["2026-01"], group="product_name",
                      value="line_total", label="x")
     assert [p.rows for p in b.points] == [[]]
+
+
+# --- price-anomaly fuzzy customer fallback (price_check.py) ----------------
+
+from price_check import (  # noqa: E402
+    canonical_customer_map,
+    flag_price_anomaly,
+    same_customer,
+)
+
+
+def test_flag_price_anomaly_matches_a_drifted_customer_spelling():
+    refs = {("Testa Produce", "Cilantro", "4oz"): 12.0}
+    hot = {"unit_price": "15.00", "product_name": "Cilantro", "container_size": "4oz"}
+    flag_price_anomaly(hot, "Steve Testa", refs)  # no exact key — fuzzy fallback
+    assert hot["price_anomaly"] and "25%" in hot["price_anomaly"]
+
+    ok = {"unit_price": "12.30", "product_name": "Cilantro", "container_size": "4oz"}
+    flag_price_anomaly(ok, "Steve Testa Produce, LLC.", refs)
+    assert "price_anomaly" not in ok  # within tolerance, drifted name
+
+
+def test_flag_price_anomaly_still_silent_with_no_reference():
+    hot = {"unit_price": "99.0", "product_name": "Nope", "container_size": "9oz"}
+    flag_price_anomaly(hot, "Whoever", {("A", "B", "C"): 1.0})
+    assert "price_anomaly" not in hot
+
+
+def test_canonical_customer_map_collapses_variants_to_the_longest():
+    m = canonical_customer_map(["Get Fresh", "Get Fresh Produce, LLC.", "Steve Testa", "Testa Produce"])
+    assert m["Get Fresh"] == "Get Fresh Produce, LLC."
+    assert m["Steve Testa"] == m["Testa Produce"] == "Testa Produce"
+    assert same_customer("testa produce", "Steve Testa")
+    assert not same_customer("Get Fresh", "Testa Produce")

@@ -11,6 +11,8 @@ import hashlib
 import sqlite3
 from datetime import datetime, timezone
 
+from price_check import canonical_customer_map  # shared "same account" rule
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS purchase_orders (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -230,34 +232,52 @@ def update_math_check(conn: sqlite3.Connection, po_id: int, failed: bool, detail
 
 
 def refresh_reference_prices(conn: sqlite3.Connection) -> None:
-    """Recomputes each (customer, product, size)'s reference price as the unit_price
-    from the most recent PO (by po_date, then id as a tiebreak) among non-sample,
-    non-removed line items on successfully-extracted POs. Called once at the start of
-    each extract_pos.py run, before any new extractions, so new prices are always
-    compared against everything known prior to this run."""
+    """Recomputes each customer's reference price per (product, size) as the unit_price
+    from the most recent PO (by po_date, then id) among non-sample, non-removed line
+    items on successfully-extracted POs. Called once at the start of each extract_pos.py
+    run, before any new extractions.
+
+    Customer spelling variants ("Steve Testa" / "Testa Produce Inc.") are collapsed via
+    normalize_customer so one real account gets ONE auto row per (product, size) — the
+    price from its genuinely latest PO across every spelling, stored under that PO's
+    (real, current) customer name."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    conn.execute(
+    candidates = conn.execute(
+        """
+        SELECT po.customer_name AS customer_name, li.product_name AS product_name,
+               li.container_size AS container_size, li.unit_price AS unit_price,
+               po.po_date AS po_date, po.id AS po_id
+        FROM line_items li
+        JOIN purchase_orders po ON po.id = li.po_id
+        WHERE po.error IS NULL AND li.is_sample = 0
+          AND li.unit_price IS NOT NULL AND li.unit_price > 0
+          AND po.customer_name IS NOT NULL AND li.product_name IS NOT NULL
+          AND li.container_size IS NOT NULL AND li.container_size != ''
+        """
+    ).fetchall()
+
+    # collapse customer spelling variants, then per (account, product, size) keep
+    # the single most-recent PO's row
+    canon = canonical_customer_map(r["customer_name"] for r in candidates)
+    best: dict[tuple, sqlite3.Row] = {}
+    for r in candidates:
+        key = (canon.get(r["customer_name"], r["customer_name"]), r["product_name"], r["container_size"])
+        cur = best.get(key)
+        rank = (r["po_date"] or "", r["po_id"] or 0)
+        if cur is None or rank > ((cur["po_date"] or ""), (cur["po_id"] or 0)):
+            best[key] = r
+
+    conn.execute("DELETE FROM reference_prices WHERE source = 'auto'")
+    conn.executemany(
         """
         INSERT OR REPLACE INTO reference_prices
             (customer_name, product_name, container_size, price, source, updated_at)
-        SELECT customer_name, product_name, container_size, unit_price, 'auto', ?
-        FROM (
-            SELECT po.customer_name AS customer_name, li.product_name AS product_name,
-                   li.container_size AS container_size, li.unit_price AS unit_price,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY po.customer_name, li.product_name, li.container_size
-                       ORDER BY po.po_date DESC, po.id DESC
-                   ) AS rn
-            FROM line_items li
-            JOIN purchase_orders po ON po.id = li.po_id
-            WHERE po.error IS NULL AND li.is_sample = 0
-              AND li.unit_price IS NOT NULL AND li.unit_price > 0
-              AND po.customer_name IS NOT NULL AND li.product_name IS NOT NULL
-              AND li.container_size IS NOT NULL AND li.container_size != ''
-        )
-        WHERE rn = 1
+        VALUES (?, ?, ?, ?, 'auto', ?)
         """,
-        (now,),
+        [
+            (cust, prod, size, r["unit_price"], now)
+            for (cust, prod, size), r in best.items()
+        ],
     )
     conn.commit()
 
