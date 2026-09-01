@@ -190,6 +190,40 @@ def test_line_diff_qty_and_only_rows():
     assert d["totals"]["delta"] == round(35.0 - 37.0, 2)
 
 
+def test_line_diff_folds_po_freight_against_invoice_delivery():
+    # PO carries $8 freight inside the product line's printed total; QBO books
+    # delivery as its own line. Net product figures match and the freight
+    # reconciles in the charges row, so the whole diff is clean.
+    po = [{**_li("Arugula", "4oz", 10, 2.5, 33.0), "additional_cost": 8.0}]
+    inv = [
+        _li("Arugula", "4oz", 10, 2.5, 25.0),
+        {**_li("Delivery", None, None, None, 8.0), "category": "delivery"},
+        {**_li("Sample Kale", "2oz", 1, 0.0, 0.0), "category": "sample", "is_sample": True},
+    ]
+    d = line_diff(po, inv)
+    assert d["clean"] and d["n_diff"] == 0
+    prod = next(r for r in d["rows"] if r["product"] == "Arugula")
+    assert prod["status"] == "match" and prod["po"]["line_total"] == 25.0
+    charge = next(r for r in d["rows"] if r["is_charges"])
+    assert charge["po"]["line_total"] == 8.0 and charge["inv"]["line_total"] == 8.0
+    assert charge["status"] == "match"
+    assert not any(r["product"] == "Sample Kale" for r in d["rows"])  # samples dropped
+    assert d["totals"] == {"po": 33.0, "inv": 33.0, "delta": 0.0}
+
+
+def test_line_diff_flags_freight_mismatch():
+    # No PO freight, but the invoice tacks on a $12.50 delivery line.
+    po = [_li("Arugula", "4oz", 10, 2.5, 25.0)]
+    inv = [
+        _li("Arugula", "4oz", 10, 2.5, 25.0),
+        {**_li("Mileage", None, None, None, 12.5), "category": "delivery"},
+    ]
+    d = line_diff(po, inv)
+    charge = next(r for r in d["rows"] if r["is_charges"])
+    assert charge["status"] == "total_diff" and not d["clean"]
+    assert d["totals"]["delta"] == 12.5
+
+
 def test_editor_route_allowed_for_editor_reaches_service():
     # editor tier passes the role gate; the call then fails at the DB (no server)
     # -> 500, NOT 403. Proves require_editor isn't blocking an editor.

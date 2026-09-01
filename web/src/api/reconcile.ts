@@ -25,6 +25,8 @@ export interface LineDiffRow {
   inv: LineDiffSide | null;
   status: LineDiffStatus;
   deltas: { quantity: number | null; unit_price: number | null; line_total: number | null };
+  /** the trailing row that reconciles PO freight vs the invoice's delivery lines */
+  is_charges?: boolean;
 }
 
 export interface LineDiff {

@@ -33,6 +33,9 @@ def _norm(product: str | None, size: str | None) -> str:
     return f"{p}|{s}"
 
 
+_CHARGES_LABEL = "Delivery / freight / charges"
+
+
 def _side(it: dict) -> dict:
     return {
         "quantity": _num(it.get("quantity")),
@@ -41,6 +44,29 @@ def _side(it: dict) -> dict:
         "product_name": it.get("product_name"),
         "container_size": it.get("container_size"),
     }
+
+
+def _po_product_side(it: dict) -> dict:
+    """A PO product line with any per-line delivery/freight stripped back out. The
+    extractor folds an 'Adtl. Cost' column into BOTH additional_cost and the
+    printed line_total, whereas QuickBooks carries delivery as its own line — so
+    the product figures only compare like-for-like once additional_cost is removed
+    here and reconciled separately in the charges row."""
+    s = _side(it)
+    add = _num(it.get("additional_cost")) or 0.0
+    if s["line_total"] is not None and add:
+        s["line_total"] = round(s["line_total"] - add, 4)
+    return s
+
+
+def _is_invoice_product(it: dict) -> bool:
+    return (it.get("category") or "product") == "product" and not it.get("is_sample")
+
+
+def _is_invoice_charge(it: dict) -> bool:
+    """Non-product, non-sample invoice line — delivery, freight, service, etc.
+    These move the invoice total but have no PO product-line counterpart."""
+    return (it.get("category") or "product") not in ("product", "sample") and not it.get("is_sample")
 
 
 def _delta(a, b):
@@ -70,12 +96,20 @@ def _classify(po: dict | None, inv: dict | None) -> tuple[str, dict]:
 
 def line_diff(po_items: list[dict], inv_items: list[dict]) -> dict:
     """Align PO lines to invoice lines by normalised product+size and classify each
-    row match | qty_diff | price_diff | total_diff | po_only | inv_only."""
+    row match | qty_diff | price_diff | total_diff | po_only | inv_only.
+
+    Product lines are compared net of any PO 'Adtl. Cost'; that freight, plus every
+    non-product invoice line (delivery / service / …), is reconciled in one trailing
+    charges row so it doesn't smear across the product rows or the total delta."""
     po_by: dict[str, list[dict]] = {}
     inv_by: dict[str, list[dict]] = {}
     for it in po_items:
-        po_by.setdefault(_norm(it.get("product_name"), it.get("container_size")), []).append(_side(it))
+        po_by.setdefault(_norm(it.get("product_name"), it.get("container_size")), []).append(
+            _po_product_side(it)
+        )
     for it in inv_items:
+        if not _is_invoice_product(it):
+            continue
         inv_by.setdefault(_norm(it.get("product_name"), it.get("container_size")), []).append(_side(it))
 
     rows = []
@@ -92,7 +126,25 @@ def line_diff(po_items: list[dict], inv_items: list[dict]) -> dict:
                 "inv": n,
                 "status": status,
                 "deltas": deltas,
+                "is_charges": False,
             })
+
+    # one row reconciling PO per-line freight against the invoice's own delivery /
+    # service lines — shown only when either side actually carries a charge.
+    po_charge = round(sum(_num(it.get("additional_cost")) or 0.0 for it in po_items), 2)
+    inv_charge = round(
+        sum(_num(it.get("line_total")) or 0.0 for it in inv_items if _is_invoice_charge(it)), 2
+    )
+    if po_charge or inv_charge:
+        p = {"quantity": None, "unit_price": None, "line_total": po_charge,
+             "product_name": _CHARGES_LABEL, "container_size": None}
+        n = {"quantity": None, "unit_price": None, "line_total": inv_charge,
+             "product_name": _CHARGES_LABEL, "container_size": None}
+        status, deltas = _classify(p, n)
+        rows.append({
+            "product": _CHARGES_LABEL, "size": None, "po": p, "inv": n,
+            "status": status, "deltas": deltas, "is_charges": True,
+        })
 
     po_total = sum(r["po"]["line_total"] for r in rows if r["po"] and r["po"]["line_total"] is not None)
     inv_total = sum(r["inv"]["line_total"] for r in rows if r["inv"] and r["inv"]["line_total"] is not None)

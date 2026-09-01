@@ -23,6 +23,12 @@ function Cell({ side }: { side: LineDiffRow["po"] }) {
         —
       </Text>
     );
+  if (side.quantity == null && side.unit_price == null)
+    return (
+      <Text size="xs" style={NUMERIC_STYLE}>
+        {fmtCurrency(side.line_total, true)}
+      </Text>
+    );
   return (
     <Text size="xs" style={NUMERIC_STYLE}>
       {num(side.quantity)} × {fmtCurrency(side.unit_price, true)} = {fmtCurrency(side.line_total, true)}
@@ -54,10 +60,20 @@ export function LineDiffTable({ diff }: { diff: LineDiff }) {
                     {r.product ?? "?"}
                     {r.size ? ` · ${r.size}` : ""}
                   </Text>
-                  {r.status !== "match" && (
-                    <Badge size="xs" variant="light" color={meta.badge}>
-                      {meta.label}
+                  {r.is_charges ? (
+                    <Badge
+                      size="xs"
+                      variant="light"
+                      color={r.status === "match" ? "gray" : meta.badge}
+                    >
+                      {r.status === "match" ? "reconciled" : meta.label}
                     </Badge>
+                  ) : (
+                    r.status !== "match" && (
+                      <Badge size="xs" variant="light" color={meta.badge}>
+                        {meta.label}
+                      </Badge>
+                    )
                   )}
                 </Table.Td>
                 <Table.Td>
