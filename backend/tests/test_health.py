@@ -105,6 +105,7 @@ def test_oauth_callback_state_guard():
         "/api/po/1/documents/1",
         "/api/archive",
         "/api/invoices",
+        "/api/pos",
         "/api/pricing",
         "/api/pricing/history?product=x&size=y",
         "/api/explore/pivot",

@@ -263,6 +263,24 @@ export function useInvoiceSearch(search: string) {
   });
 }
 
+export interface PoHit {
+  po_id: number;
+  po_number: string | null;
+  customer_name: string | null;
+  po_date: string | null;
+  total: number | null;
+}
+
+/** Latest-version PO lookup for the "revises PO" autocomplete. */
+export function usePoSearch(search: string) {
+  return useQuery({
+    queryKey: ["po-search", search],
+    queryFn: () => apiGet<PoHit[]>(`/api/pos`, { search, limit: 20 }),
+    enabled: search.trim().length >= 2,
+    staleTime: 30_000,
+  });
+}
+
 export interface ArchivedPo {
   po_id: number;
   po_number: string | null;

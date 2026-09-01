@@ -189,6 +189,30 @@ def search_invoices(
         return po_admin.search_invoices(conn, search, limit)
 
 
+@router.get("/pos")
+def search_pos(
+    search: str | None = Query(None, description="substring of po_number / customer / filename"),
+    limit: int = Query(20, le=100),
+    _: AuthedUser = Depends(current_user),
+) -> list[dict]:
+    """Latest-version PO lookup — the 'revises PO' autocomplete. Includes
+    already-matched POs (a revision can point at one)."""
+    import qbo_matcher  # shared/, via app.reuse
+
+    with reused_conn() as conn:
+        rows = qbo_matcher.search_pos(conn, (search or "").strip(), limit, include_matched=True)
+    return [
+        {
+            "po_id": r["id"],
+            "po_number": r.get("po_number"),
+            "customer_name": r.get("customer_name"),
+            "po_date": r["po_date"].isoformat() if r.get("po_date") else None,
+            "total": float(r["total"]) if r.get("total") is not None else None,
+        }
+        for r in rows
+    ]
+
+
 @router.post("/links")
 def create_link(body: LinkIn, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
