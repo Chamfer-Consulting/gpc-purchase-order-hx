@@ -99,6 +99,9 @@ def price_history(conn, product_name: str, container_size: str) -> dict:
               AND NOT COALESCE(li.voided, FALSE)
               AND COALESCE(po.status, 'active') = 'active' AND po.po_date IS NOT NULL
               AND li.product_name NOT IN (SELECT product_name FROM hidden_products)
+              -- exact match only: a "(deleted)" hidden entry can't collide with a
+              -- live customer's raw PO spelling. Fuzzy variants aren't caught here.
+              AND COALESCE(po.customer_name, '') NOT IN (SELECT customer_name FROM hidden_customers)
             ORDER BY po.po_date
             """,
             (product_name, container_size),

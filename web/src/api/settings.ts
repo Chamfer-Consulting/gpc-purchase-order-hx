@@ -41,8 +41,12 @@ export function useSetVisible(dim: VisibilityDim) {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: key });
-      // every analytics page's numbers depend on the hidden sets
-      for (const k of ["overview", "customers", "products", "explore", "lifecycle", "data-quality"]) {
+      // every analytics view + the filter dropdowns depend on the hidden sets
+      for (const k of [
+        "overview", "customers", "products", "explore", "explore-pivot",
+        "explore-compare", "lifecycle", "data-quality", "pricing", "pricing-history",
+        "filter-options",
+      ]) {
         qc.invalidateQueries({ queryKey: [k] });
       }
     },

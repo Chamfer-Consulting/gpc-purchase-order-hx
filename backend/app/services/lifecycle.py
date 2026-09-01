@@ -77,6 +77,15 @@ def matched_gap_summary(fp: FilterParams) -> GapSummary:
         if "customer_canonical" not in m.columns:
             m["customer_canonical"] = m["customer_name"]
         m["customer_canonical"] = m["customer_canonical"].fillna(m["customer_name"])
+        # Settings → Visibility: hidden products / customers drop out of every page.
+        # customer_canonical is the exact QBO invoice name, so this is a safe
+        # exact match (unlike the raw PO name vs the "(deleted)" hidden entries).
+        hidden_prod = set(_dash.load_hidden_products()) | {"UNKNOWN"}
+        hidden_cust = set(_dash.load_hidden_customers())
+        if hidden_prod:
+            m = m[~m["product_name"].isin(hidden_prod)]
+        if hidden_cust:
+            m = m[~m["customer_canonical"].isin(hidden_cust)]
         if fp.start:
             m = m[m["effective_date"] >= pd.Timestamp(fp.start)]
         if fp.end:
@@ -153,6 +162,10 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
     po_df, items_df, _matched_df = _dash.load_data()
     if "status" in po_df.columns:  # admin-CRUD soft delete / cancel — out of scope
         po_df = po_df[po_df["status"].fillna("active") == "active"]
+    # Settings → Visibility: keep hidden products out of the per-order waterfall totals
+    hidden_prod = set(_dash.load_hidden_products()) | {"UNKNOWN"}
+    if hidden_prod and "product_name" in items_df.columns:
+        items_df = items_df[~items_df["product_name"].isin(hidden_prod)]
     valid_po, latest_po, _all_items, _latest_items = _dash.prepare(po_df, items_df)
 
     scoped = latest_po
@@ -173,7 +186,20 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
             notes=["No orders in this scope."],
         )
 
-    lc = _dash.order_lifecycle(valid_po, keep_keys, _dash.load_matched_line_items())
+    raw_matched = _dash.load_matched_line_items()
+    lc = _dash.order_lifecycle(valid_po, keep_keys, raw_matched)
+
+    # per-order rows for a PO linked to a hidden-customer invoice drop out too —
+    # matched by the exact QBO name on the link, so the "(deleted)" hidden entries
+    # can't collide with a live customer's raw PO spelling.
+    hidden_cust = set(_dash.load_hidden_customers())
+    if hidden_cust and raw_matched is not None and not raw_matched.empty \
+            and "customer_canonical" in raw_matched.columns:
+        hidden_po_ids = set(
+            raw_matched.loc[raw_matched["customer_canonical"].isin(hidden_cust), "po_id"]
+        )
+        if hidden_po_ids and "po_id" in lc.columns:
+            lc = lc[~lc["po_id"].isin(hidden_po_ids)]
 
     # ---- line-level gap (the trending / by-customer / by-product view) ----------
     gs = matched_gap_summary(fp)
