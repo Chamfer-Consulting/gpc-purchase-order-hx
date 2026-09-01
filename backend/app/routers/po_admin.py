@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from ..auth import AuthedUser, current_user, require_admin, require_editor
 from ..reused_db import reused_conn
-from ..services import audit, po_admin
+from ..services import audit, extraction_retry, po_admin
 from .po_edit import HeaderIn, LineItemIn
 
 router = APIRouter(prefix="/api", tags=["po-admin"])
@@ -176,6 +176,18 @@ def regroup(po_id: int, body: RegroupIn, user: AuthedUser = Depends(require_edit
         out = _guard(po_admin.regroup, conn, _actor(user), po_id,
                      body.revision_of, body.standalone,
                      expected_version=body.expected_version)
+    return {"ok": True, **out}
+
+
+@router.post("/po/{po_id}/retry-extraction")
+def retry_extraction(po_id: int, user: AuthedUser = Depends(require_editor)) -> dict:
+    """Re-run the extraction pipeline for this PO's Gmail thread (it recorded a
+    transient failure). Synchronous — a single thread is one Claude call plus the
+    publish, on the order of a QuickBooks sync. Raises a typed ApiProblem for a
+    non-retryable row (settled 'not a purchase order', hand-edited, non-active,
+    non-thread source) or when the pipeline can't run here (503)."""
+    with reused_conn() as conn:
+        out = extraction_retry.retry(conn, po_id, _actor(user))
     return {"ok": True, **out}
 
 
