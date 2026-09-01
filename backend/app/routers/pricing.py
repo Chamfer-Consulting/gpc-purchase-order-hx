@@ -46,8 +46,10 @@ def history(product: str, size: str, _: AuthedUser = Depends(current_user)) -> d
 def save_prices(body: SaveIn, user: AuthedUser = Depends(require_editor)) -> dict:
     actor = _actor(user)
     with reused_conn() as conn:
+        # one transaction: a failed delete must not leave the save committed
         saved = pricing.save_reference_prices(
-            conn, [r.model_dump() for r in body.rows], actor
+            conn, [r.model_dump() for r in body.rows], actor, commit=False
         )
-        deleted = pricing.delete_reference_prices(conn, body.delete, actor)
+        deleted = pricing.delete_reference_prices(conn, body.delete, actor, commit=False)
+        conn.commit()
     return {"ok": True, "saved": saved, "deleted": deleted}

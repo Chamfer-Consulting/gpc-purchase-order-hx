@@ -11,9 +11,32 @@ from __future__ import annotations
 
 import psycopg2.extras
 
+from qbo_matcher import customers_match  # shared/, via app.reuse
+
 from . import audit
 
 _STANDARDIZED = "2024-06-01"  # the pricing-standardization line drawn on the history chart
+
+
+def _canonicalise(names: list[str]) -> dict[str, str]:
+    """{raw customer name -> display name} collapsing spelling variants ("Testa
+    Produce" / "Steve Testa") onto the longest (most complete) name in each
+    cluster — same `customers_match` fuzziness the rest of the app uses — so the
+    price-history chart draws one line per account."""
+    clusters: list[list[str]] = []
+    for n in dict.fromkeys(x for x in names if x):
+        for cl in clusters:
+            if any(customers_match(n, m) for m in cl):
+                cl.append(n)
+                break
+        else:
+            clusters.append([n])
+    out: dict[str, str] = {}
+    for cl in clusters:
+        display = max(cl, key=len)
+        for m in cl:
+            out[m] = display
+    return out
 
 
 def list_reference_prices(conn) -> list[dict]:
@@ -75,6 +98,7 @@ def price_history(conn, product_name: str, container_size: str) -> dict:
               AND NOT COALESCE(li.is_removed, FALSE)
               AND NOT COALESCE(li.voided, FALSE)
               AND po.status = 'active' AND po.po_date IS NOT NULL
+              AND li.product_name NOT IN (SELECT product_name FROM hidden_products)
             ORDER BY po.po_date
             """,
             (product_name, container_size),
@@ -92,6 +116,13 @@ def price_history(conn, product_name: str, container_size: str) -> dict:
         )
         refs = [dict(r) for r in cur.fetchall()]
 
+    # collapse customer-name spelling variants so one account = one line / one ref
+    canon = _canonicalise([r["customer_name"] for r in points + refs if r["customer_name"]])
+    for r in points:
+        r["customer_name"] = canon.get(r["customer_name"], r["customer_name"])
+    for r in refs:
+        r["customer_name"] = canon.get(r["customer_name"], r["customer_name"])
+
     return {
         "product_name": product_name,
         "container_size": container_size,
@@ -101,7 +132,7 @@ def price_history(conn, product_name: str, container_size: str) -> dict:
     }
 
 
-def save_reference_prices(conn, rows: list[dict], actor: str | None) -> int:
+def save_reference_prices(conn, rows: list[dict], actor: str | None, *, commit: bool = True) -> int:
     """Upsert each {customer_name, product_name, container_size, price} as a manual
     override (source='manual', edited=TRUE). Returns the count written."""
     clean: list[dict] = []
@@ -133,11 +164,12 @@ def save_reference_prices(conn, rows: list[dict], actor: str | None) -> int:
             )
     audit.log(conn, actor=actor, action="price_edit", entity="reference_price",
               entity_id=None, after={"rows": clean})
-    conn.commit()
+    if commit:
+        conn.commit()
     return len(clean)
 
 
-def delete_reference_prices(conn, keys: list[list[str]], actor: str | None) -> int:
+def delete_reference_prices(conn, keys: list[list[str]], actor: str | None, *, commit: bool = True) -> int:
     """Remove rows by [customer_name, product_name, container_size]. An 'auto' row
     removed here comes back on the next sync if a price is still being paid."""
     triples = [tuple(k) for k in keys if isinstance(k, (list, tuple)) and len(k) == 3]
@@ -152,5 +184,6 @@ def delete_reference_prices(conn, keys: list[list[str]], actor: str | None) -> i
             )
     audit.log(conn, actor=actor, action="price_delete", entity="reference_price",
               entity_id=None, after={"keys": [list(t) for t in triples]})
-    conn.commit()
+    if commit:
+        conn.commit()
     return len(triples)

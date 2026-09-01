@@ -193,7 +193,7 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: Line
 /** Multi-series line on a real time axis (irregular dates, e.g. price history). */
 export function timeLineOption(
   series: { name: string; points: [string, number][] }[],
-  opts?: { yName?: string; fmt?: NumFormat; palette?: Palette },
+  opts?: { yName?: string; fmt?: NumFormat; palette?: Palette; markX?: string; markLabel?: string },
 ): EChartsOption {
   const fmt = opts?.fmt ?? "currency2";
   const single = series.length === 1;
@@ -204,13 +204,23 @@ export function timeLineOption(
         : opts.palette.status.critical
       : undefined;
   const ch = crosshair(fmt);
+  const markLine = opts?.markX
+    ? {
+        silent: true,
+        symbol: "none" as const,
+        lineStyle: { type: "dashed" as const, opacity: 0.6 },
+        label: { formatter: opts.markLabel ?? "", position: "insideEndTop" as const },
+        data: [{ xAxis: opts.markX }],
+      }
+    : undefined;
 
   return {
     ...ch,
     legend: series.length > 1 ? {} : { show: false },
     xAxis: { type: "time", ...ch.xAxis },
-    yAxis: { type: "value", name: opts?.yName, axisLabel: { formatter: axisFormatter(fmt) }, ...ch.yAxis },
-    series: series.map((s) => ({
+    // don't force a zero baseline — unit prices move in a narrow band
+    yAxis: { type: "value", scale: true, name: opts?.yName, axisLabel: { formatter: axisFormatter(fmt) }, ...ch.yAxis },
+    series: series.map((s, i) => ({
       type: "line",
       name: s.name,
       data: s.points,
@@ -218,6 +228,7 @@ export function timeLineOption(
       lineStyle: accent ? { color: accent } : undefined,
       itemStyle: accent ? { color: accent } : undefined,
       areaStyle: single ? (accent ? areaGradient(accent) : { opacity: 0.08 }) : undefined,
+      markLine: i === 0 ? markLine : undefined,
     })),
   };
 }
