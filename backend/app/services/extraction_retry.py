@@ -16,13 +16,19 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+import time
 
 from ..reuse import REPO_ROOT
 from ..errors import ApiProblem, NotFound
 from . import audit, po_admin
 
 _SCRIPT = os.path.join(REPO_ROOT, "run_cloud_extraction.py")
-_TIMEOUT_S = 110  # under Cloudflare's ~100s edge timeout is ideal; give a little slack
+# How long the request waits on the child before returning "running". Kept well
+# under Cloudflare's ~100s edge timeout so the caller always gets a real JSON
+# response; the child is NOT killed and finishes (and writes the PO) on its own.
+_SOFT_WAIT_S = 80
+_POLL_S = 1.0
 
 # Outcomes is_known() / errored_thread_ids() treat as settled — re-running the
 # model won't move them, so the action is refused with a clear reason.
@@ -34,14 +40,6 @@ class RetryUnavailable(ApiProblem):
 
     status = 503
     code = "retry_unavailable"
-
-
-class RetryTimeout(ApiProblem):
-    """The extraction didn't finish inside the request budget. 504 — it may still
-    land; the batch `--retry-errors` workflow is the fallback."""
-
-    status = 504
-    code = "retry_timeout"
 
 
 def retry(conn, po_id: int, actor: str | None) -> dict:
@@ -104,26 +102,51 @@ def retry(conn, po_id: int, actor: str | None) -> dict:
 
 
 def _run_subprocess(thread_id: str) -> dict:
-    """`run_cloud_extraction.py --thread <id>` in a child process, parsed back from
-    its `RESULT_JSON:` line."""
+    """Launch `run_cloud_extraction.py --thread <id>` and wait up to _SOFT_WAIT_S
+    for it. If it finishes, parse its `RESULT_JSON:` line. If it doesn't, return
+    `{"status": "running"}` and leave the child running detached — it writes the
+    PO row on its own; the UI refetches to pick it up. So the request always
+    returns real JSON (with CORS), never a proxy 504.
+
+    The child's stdout+stderr go to a temp file, not a pipe: a pipe left unread
+    after we return "running" would fill and then break on the API process's fd
+    cleanup, killing the child mid-run."""
+    fd, out_path = tempfile.mkstemp(prefix="retry_ext_", suffix=".out")
+    proc = None
     try:
-        proc = subprocess.run(
-            [sys.executable, _SCRIPT, "--thread", thread_id, "--log-file", "/tmp/retry_extraction.log"],
-            capture_output=True, text=True, timeout=_TIMEOUT_S,
-            env={**os.environ},
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise RetryTimeout(
-            "The re-extraction is taking too long — it may still finish in the "
-            "background. Reload in a minute, or run the retry_errors workflow."
-        ) from exc
+        with os.fdopen(fd, "w") as sink:
+            proc = subprocess.Popen(
+                [sys.executable, _SCRIPT, "--thread", thread_id,
+                 "--log-file", "/tmp/retry_extraction.log"],
+                stdout=sink, stderr=subprocess.STDOUT, text=True,
+                env={**os.environ},
+                start_new_session=True,  # detach from the request's process group
+            )
+
+        deadline = time.monotonic() + _SOFT_WAIT_S
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            time.sleep(_POLL_S)
+        else:
+            return {"status": "running"}  # still going — don't kill it, don't clean up
+
+        with open(out_path, encoding="utf-8", errors="replace") as fh:
+            output = fh.read()
+    finally:
+        # only remove the file once the child is done with it
+        if proc is None or proc.poll() is not None:
+            try:
+                os.unlink(out_path)
+            except OSError:
+                pass
 
     line = next(
-        (ln for ln in reversed((proc.stdout or "").splitlines()) if ln.startswith("RESULT_JSON: ")),
+        (ln for ln in reversed(output.splitlines()) if ln.startswith("RESULT_JSON: ")),
         None,
     )
     if line is None:
-        tail = (proc.stderr or proc.stdout or "").strip()[-500:]
+        tail = output.strip()[-500:]
         raise ApiProblem(
             f"The extraction subprocess didn't return a result (exit {proc.returncode}). {tail}",
             code="retry_failed",

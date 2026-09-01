@@ -216,7 +216,8 @@ export function useSetCustomer(poId: number) {
 
 export interface RetryExtractionResult {
   ok: boolean;
-  status: "extracted" | "not_a_po" | "error" | "skipped";
+  /** "running" = the re-extraction is still going in the background; refetch shortly */
+  status: "extracted" | "not_a_po" | "error" | "skipped" | "running";
   po_number?: string | null;
   customer_name?: string | null;
   error?: string;
@@ -233,17 +234,26 @@ const RETRY_INVALIDATE_KEYS = (poId: number) => [
   ["archive"],
 ];
 
+function invalidateRetry(qc: ReturnType<typeof useQueryClient>, poId: number, status: string) {
+  for (const key of RETRY_INVALIDATE_KEYS(poId)) qc.invalidateQueries({ queryKey: key });
+  // the child process is still working — refetch again once it's likely done
+  if (status === "running") {
+    setTimeout(() => {
+      for (const key of RETRY_INVALIDATE_KEYS(poId)) qc.invalidateQueries({ queryKey: key });
+    }, 45_000);
+  }
+}
+
 /** Re-run the extraction pipeline for a PO row that recorded a transient failure.
- *  Synchronous on the server (one Claude call + publish). */
+ *  The server waits ~80s on the pipeline subprocess, then returns "running" if it
+ *  hasn't finished (the child keeps going and writes the row). */
 export function useRetryExtraction(poId: number) {
   const qc = useQueryClient();
   return useMutation({
     meta: { silent: true }, // caller shows the outcome inline
     mutationFn: () =>
       apiSend<RetryExtractionResult>("POST", `/api/po/${poId}/retry-extraction`),
-    onSuccess: () => {
-      for (const key of RETRY_INVALIDATE_KEYS(poId)) qc.invalidateQueries({ queryKey: key });
-    },
+    onSuccess: (d) => invalidateRetry(qc, poId, d.status),
   });
 }
 
@@ -255,9 +265,7 @@ export function useRetryExtractionAny() {
     meta: { silent: true },
     mutationFn: (poId: number) =>
       apiSend<RetryExtractionResult>("POST", `/api/po/${poId}/retry-extraction`),
-    onSuccess: (_d, poId) => {
-      for (const key of RETRY_INVALIDATE_KEYS(poId)) qc.invalidateQueries({ queryKey: key });
-    },
+    onSuccess: (d, poId) => invalidateRetry(qc, poId, d.status),
   });
 }
 

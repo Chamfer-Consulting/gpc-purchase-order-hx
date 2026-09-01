@@ -26,16 +26,21 @@ export function ExtractionFailureCard({
             r.customer_name ? ` · ${r.customer_name}` : ""
           }.`,
         }
-      : r?.status === "not_a_po"
-        ? { color: "gray", text: "The model decided this thread isn't a purchase order." }
-        : r?.status === "skipped"
-          ? {
-              color: "gray",
-              text: "The pipeline filtered this thread out (no customer order in it). Mark it “Not a PO” on the reconcile screen.",
-            }
-          : r?.status === "error"
-            ? { color: "red", text: `Failed again: ${r.error ?? "unknown error"}` }
-            : null;
+      : r?.status === "running"
+        ? {
+            color: "gpGold",
+            text: "Re-extraction started — it's still running (this can take a minute). The page refreshes itself when it's done.",
+          }
+        : r?.status === "not_a_po"
+          ? { color: "gray", text: "The model decided this thread isn't a purchase order." }
+          : r?.status === "skipped"
+            ? {
+                color: "gray",
+                text: "The pipeline filtered this thread out (no customer order in it). Mark it “Not a PO” on the reconcile screen.",
+              }
+            : r?.status === "error"
+              ? { color: "red", text: `Failed again: ${r.error ?? "unknown error"}` }
+              : null;
 
   return (
     <Alert color="red" variant="light" title="Extraction failed for this order">

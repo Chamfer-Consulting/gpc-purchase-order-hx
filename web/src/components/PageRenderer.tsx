@@ -89,11 +89,13 @@ export function PageRenderer({ data, showScope = true }: { data: PageResponse; s
               notifySuccess(
                 d.status === "extracted"
                   ? `Re-extracted PO ${d.po_number ?? r.po_id}.`
-                  : d.status === "not_a_po"
-                    ? "The model decided it isn't a purchase order."
-                    : d.status === "skipped"
-                      ? "The pipeline filtered this thread out."
-                      : `Still failing: ${d.error ?? "unknown error"}`,
+                  : d.status === "running"
+                    ? "Re-extraction started — still running; the table refreshes when it's done."
+                    : d.status === "not_a_po"
+                      ? "The model decided it isn't a purchase order."
+                      : d.status === "skipped"
+                        ? "The pipeline filtered this thread out."
+                        : `Still failing: ${d.error ?? "unknown error"}`,
               ),
             onError: (e) => notifyError(e),
           }),
