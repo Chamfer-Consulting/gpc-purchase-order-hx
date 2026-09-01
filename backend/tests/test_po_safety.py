@@ -9,6 +9,7 @@ import pytest
 
 os.environ.setdefault("DATABASE_URL", "postgresql://localhost/nonexistent")
 os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret-not-real")
+os.environ.setdefault("ALLOWED_EMAIL_DOMAINS", "example.com")  # test tokens use @example.com
 
 import app.reuse  # noqa: E402,F401 — sys.path shim for the reused repo modules
 
@@ -81,12 +82,19 @@ def test_bulk_transition_body():
     assert b["missing"] == [9] and len(b["invalid"]) == 1
 
 
-# --- authorization tiers (no DB: app_role falls back to 'editor') -----------
+# --- authorization tiers ---------------------------------------------------
+# No DB in these tests, so _app_user_role() can't read app_users. Fake it: the
+# test user is an 'editor', an unknown allowed-domain user falls back to 'viewer'.
 
 import datetime as _dt  # noqa: E402
 
 import jwt as _jwt  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+
+import app.auth as _auth  # noqa: E402
+
+_FAKE_ROLES = {"nobody@example.com": "editor"}
+_auth._app_user_role = lambda e: _FAKE_ROLES.get((e or "").lower(), "")  # type: ignore[assignment]
 
 from app.main import app  # noqa: E402
 
@@ -106,10 +114,24 @@ def _tok() -> str:
     )
 
 
-def test_me_defaults_to_editor_without_app_users():
+def _tok_for(email: str) -> str:
+    return _jwt.encode(
+        {"sub": "u", "email": email, "aud": "authenticated",
+         "exp": _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=1)},
+        os.environ["SUPABASE_JWT_SECRET"], algorithm="HS256",
+    )
+
+
+def test_me_reflects_the_app_users_role():
     r = _client.get("/api/me", headers={"Authorization": f"Bearer {_tok()}"})
     assert r.status_code == 200
     assert r.json() == {"email": "nobody@example.com", "role": "editor"}
+
+
+def test_me_defaults_to_viewer_for_an_allowed_user_with_no_row():
+    r = _client.get("/api/me", headers={"Authorization": f"Bearer {_tok_for('stranger@example.com')}"})
+    assert r.status_code == 200
+    assert r.json() == {"email": "stranger@example.com", "role": "viewer"}
 
 
 def test_admin_route_forbidden_for_editor():

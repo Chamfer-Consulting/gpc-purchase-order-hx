@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 os.environ.setdefault("DATABASE_URL", "postgresql://localhost/nonexistent")
 os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret-not-real")
+os.environ.setdefault("ALLOWED_EMAIL_DOMAINS", "example.com")  # test tokens use @example.com
 
 from app.main import app  # noqa: E402
 
@@ -37,6 +38,25 @@ def test_health():
 def test_auth_required():
     assert client.get("/api/overview").status_code == 403  # no bearer
     assert client.get("/api/customers", headers={"Authorization": "Bearer nope"}).status_code == 401
+
+
+def test_email_allow_list():
+    from app.auth import email_allowed
+
+    assert email_allowed("anyone@example.com")          # allow-listed domain
+    assert not email_allowed("outsider@gmail.com")      # not listed, no app_users row
+    assert not email_allowed(None) and not email_allowed("no-at-sign")
+
+
+def test_disallowed_email_is_rejected_with_a_typed_403():
+    tok = jwt.encode(
+        {"sub": "x", "email": "outsider@gmail.com", "aud": "authenticated",
+         "exp": dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)},
+        os.environ["SUPABASE_JWT_SECRET"], algorithm="HS256",
+    )
+    r = client.get("/api/me", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "account_not_allowed"
 
 
 def test_hs256_token_accepted():
@@ -115,6 +135,7 @@ def test_oauth_callback_state_guard():
         "/api/settings/hidden-products",
         "/api/settings/hidden-customers",
         "/api/settings/views?kind=customers",
+        "/api/settings/team",
         "/api/overview",
         "/api/filters/options",
         "/api/customers",
@@ -153,6 +174,8 @@ def test_all_data_routes_require_auth(path):
         ("post", "/api/settings/hidden-customers", {"name": "x", "hidden": True}),
         ("post", "/api/settings/views", {"kind": "customers", "name": "x", "config": {}}),
         ("delete", "/api/settings/views", {"kind": "customers", "name": "x"}),
+        ("post", "/api/settings/team", {"email": "x@garfieldproduce.com", "role": "viewer"}),
+        ("delete", "/api/settings/team/x@garfieldproduce.com", None),
     ],
 )
 def test_admin_mutations_require_auth(method, path, body):

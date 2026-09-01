@@ -11,6 +11,7 @@ import {
   SegmentedControl,
   Stack,
   Switch,
+  Table,
   Text,
   TextInput,
 } from "@mantine/core";
@@ -23,9 +24,10 @@ import {
 } from "@/api/connections";
 import { useBackfillDocs } from "@/api/poDocs";
 import { useSetVisible, useVisibility, type VisibilityDim } from "@/api/settings";
-import { useMe } from "@/api/me";
+import { useMe, type Role } from "@/api/me";
+import { useRemoveTeamMember, useSetTeamMember, useTeam } from "@/api/team";
 import { confirmAction } from "@/lib/modals";
-import { notifySuccess } from "@/lib/notify";
+import { notifyError, notifySuccess } from "@/lib/notify";
 import { PageLayout } from "@/components/PageLayout";
 import { QueryBoundary } from "@/components/ErrorState";
 import { SectionCard } from "@/components/SectionCard";
@@ -125,8 +127,148 @@ export function SettingsPage() {
 
         <DocumentsCard />
         <VisibilityCard />
+        {roleKnown && canAdmin && <TeamCard />}
       </Stack>
     </PageLayout>
+  );
+}
+
+function TeamCard() {
+  const { data, isLoading, error, refetch } = useTeam();
+  const { email: myEmail } = useMe();
+  const setMember = useSetTeamMember();
+  const removeMember = useRemoveTeamMember();
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<Role>("viewer");
+
+  const rows = [...(data ?? [])].sort((a, b) => a.email.localeCompare(b.email));
+  const adminCount = rows.filter((r) => r.role === "admin").length;
+
+  function add() {
+    const e = email.trim().toLowerCase();
+    if (!e.includes("@")) return;
+    setMember.mutate(
+      { email: e, role },
+      {
+        onSuccess: () => {
+          notifySuccess(`${e} added as ${role}.`);
+          setEmail("");
+        },
+        onError: (err) => notifyError(err),
+      },
+    );
+  }
+
+  return (
+    <SectionCard
+      title="Team"
+      subtitle="Who can sign in, and what they can do. viewer = read-only · editor = edit POs / matches / prices · admin = + status changes, delete, connections, this list."
+    >
+      <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
+        <Stack gap="sm">
+          <Table.ScrollContainer minWidth={520} type="native">
+            <Table verticalSpacing="xs">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Email</Table.Th>
+                  <Table.Th w={220}>Role</Table.Th>
+                  <Table.Th w={44} />
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {rows.map((m) => {
+                  const isSelf = m.email.toLowerCase() === (myEmail ?? "").toLowerCase();
+                  const lastAdmin = m.role === "admin" && adminCount === 1;
+                  return (
+                    <Table.Tr key={m.email}>
+                      <Table.Td>
+                        {m.email}
+                        {isSelf && (
+                          <Text span c="dimmed" size="xs">
+                            {" "}
+                            (you)
+                          </Text>
+                        )}
+                      </Table.Td>
+                      <Table.Td>
+                        <SegmentedControl
+                          size="xs"
+                          value={m.role}
+                          disabled={lastAdmin || setMember.isPending}
+                          onChange={(v) =>
+                            setMember.mutate(
+                              { email: m.email, role: v as Role, note: m.note },
+                              { onError: (err) => notifyError(err) },
+                            )
+                          }
+                          data={[
+                            { value: "viewer", label: "Viewer" },
+                            { value: "editor", label: "Editor" },
+                            { value: "admin", label: "Admin" },
+                          ]}
+                        />
+                      </Table.Td>
+                      <Table.Td>
+                        <Button
+                          size="compact-xs"
+                          variant="subtle"
+                          color="red"
+                          disabled={isSelf || lastAdmin || removeMember.isPending}
+                          onClick={() =>
+                            confirmAction({
+                              title: `Remove ${m.email}?`,
+                              body: "They lose access on their next request.",
+                              confirmLabel: "Remove",
+                              confirmColor: "red",
+                              onConfirm: () =>
+                                removeMember.mutate(m.email, {
+                                  onSuccess: () => notifySuccess(`${m.email} removed.`),
+                                  onError: (err) => notifyError(err),
+                                }),
+                            })
+                          }
+                        >
+                          Remove
+                        </Button>
+                      </Table.Td>
+                    </Table.Tr>
+                  );
+                })}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+
+          <Group gap="xs" align="flex-end">
+            <TextInput
+              label="Add teammate"
+              placeholder="name@garfieldproduce.com"
+              size="xs"
+              w={280}
+              value={email}
+              onChange={(e) => setEmail(e.currentTarget.value)}
+              onKeyDown={(e) => e.key === "Enter" && add()}
+            />
+            <SegmentedControl
+              size="xs"
+              value={role}
+              onChange={(v) => setRole(v as Role)}
+              data={[
+                { value: "viewer", label: "Viewer" },
+                { value: "editor", label: "Editor" },
+                { value: "admin", label: "Admin" },
+              ]}
+            />
+            <Button size="xs" onClick={add} loading={setMember.isPending} disabled={!email.includes("@")}>
+              Add
+            </Button>
+          </Group>
+          <Text size="xs" c="dimmed">
+            Only @garfieldproduce.com (and the owner) can sign in at all — set on the API as
+            <Code>ALLOWED_EMAIL_DOMAINS</Code>. Adding someone here also lets an off-domain address in.
+          </Text>
+        </Stack>
+      </QueryBoundary>
+    </SectionCard>
   );
 }
 

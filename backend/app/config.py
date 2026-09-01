@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     # value if set, else the JWT secret, else the DB URL — server-only either way.
     oauth_state_secret: str = Field("", alias="OAUTH_STATE_SECRET")
 
+    # Who may sign in. A verified token whose email is in neither list (and has no
+    # app_users row) is rejected at current_user. Comma-separated; case-insensitive.
+    # Leave both empty only in dev — then only app_users members can sign in.
+    allowed_email_domains: str = Field("", alias="ALLOWED_EMAIL_DOMAINS")
+    allowed_emails: str = Field("", alias="ALLOWED_EMAILS")
+
     # CORS — comma-separated list of allowed frontend origins.
     allowed_origins: str = Field("http://localhost:5173", alias="ALLOWED_ORIGINS")
     # Where OAuth callbacks redirect the browser back to once tokens are stored.
@@ -60,6 +66,14 @@ class Settings(BaseSettings):
     @property
     def origins(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+    @property
+    def allow_domains(self) -> set[str]:
+        return {d.strip().lower().lstrip("@") for d in self.allowed_email_domains.split(",") if d.strip()}
+
+    @property
+    def allow_emails(self) -> set[str]:
+        return {e.strip().lower() for e in self.allowed_emails.split(",") if e.strip()}
 
     @property
     def frontend(self) -> str:

@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user, require_editor
+from ..auth import AuthedUser, clear_role_cache, current_user, require_admin, require_editor
 from ..cache import clear as clear_cache
 from ..reused_db import reused_conn
 from ..services import settings as svc
@@ -64,6 +64,45 @@ def set_customer_hidden(body: HideIn, _: AuthedUser = Depends(require_editor)) -
     with reused_conn() as conn:
         svc.set_customer_hidden(conn, body.name, body.hidden)
     clear_cache()
+    return {"ok": True}
+
+
+# --- team / access control (admin only) --------------------------------
+
+
+class TeamMemberIn(BaseModel):
+    email: str
+    role: str  # viewer | editor | admin
+    note: str | None = None
+
+
+@router.get("/team")
+def list_team(_: AuthedUser = Depends(require_admin)) -> list[dict]:
+    with reused_conn() as conn:
+        return svc.list_team(conn)
+
+
+@router.post("/team")
+def set_team_member(body: TeamMemberIn, user: AuthedUser = Depends(require_admin)) -> dict:
+    try:
+        with reused_conn() as conn:
+            svc.set_team_member(conn, _owner(user), body.email, body.role, body.note)
+    except svc.TeamError as e:
+        raise HTTPException(422, str(e))
+    clear_role_cache(body.email)
+    return {"ok": True}
+
+
+@router.delete("/team/{email}")
+def remove_team_member(email: str, user: AuthedUser = Depends(require_admin)) -> dict:
+    if email.strip().lower() == (user.email or "").strip().lower():
+        raise HTTPException(422, "you can't remove your own access")
+    try:
+        with reused_conn() as conn:
+            svc.remove_team_member(conn, _owner(user), email)
+    except svc.TeamError as e:
+        raise HTTPException(422, str(e))
+    clear_role_cache(email)
     return {"ok": True}
 
 

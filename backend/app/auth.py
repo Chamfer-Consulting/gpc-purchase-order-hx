@@ -9,6 +9,8 @@ SUPABASE_JWT_SECRET. The token's `alg` header picks the path. `aud` =
 "authenticated" either way.
 """
 
+import logging
+
 import jwt
 from cachetools import TTLCache
 from fastapi import Depends, HTTPException, status
@@ -16,7 +18,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient
 
 from .config import get_settings
-from .errors import Forbidden
+from .errors import AccountNotAllowed, Forbidden
+
+_log = logging.getLogger("uvicorn.error")
 
 _bearer = HTTPBearer(auto_error=True)
 _ASYMMETRIC = ("ES256", "RS256", "EdDSA")
@@ -86,28 +90,34 @@ def current_user(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> Auth
             detail=f"invalid or expired token: {e}",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return AuthedUser(claims)
+    user = AuthedUser(claims)
+    if not email_allowed(user.email):
+        raise AccountNotAllowed(user.email)
+    return user
 
 
-# --- authorization tiers (app_users) --------------------------------------
+# --- who may sign in + authorization tiers (app_users) --------------------
 
-# viewer < editor < admin. No app_users row => 'editor' (see migration 0006):
-# every existing signed-in user keeps working; 'admin' must be granted.
+# viewer < editor < admin. No app_users row => 'viewer' (read-only): a new
+# allowed user can look but not touch; 'editor' / 'admin' must be granted.
 _ROLE_RANK = {"viewer": 0, "editor": 1, "admin": 2}
-_DEFAULT_ROLE = "editor"
+_DEFAULT_ROLE = "viewer"
+
+# Per-email: the app_users role string, or "" for "no row". Cached ~60s so both
+# the allow-list check and the role check cost one small query per user per minute.
+_NO_ROW = ""
 _role_cache: TTLCache = TTLCache(maxsize=512, ttl=60)
 
 
-def app_role(email: str | None) -> str:
-    """The signed-in user's app role. Cached ~60s so it costs one small query per
-    user per minute, not per request."""
+def _app_user_role(email: str | None) -> str:
+    """The email's app_users.role, or "" if there's no row. Cached."""
     key = (email or "").lower()
     if not key:
-        return "viewer"
+        return _NO_ROW
     hit = _role_cache.get(key)
     if hit is not None:
         return hit
-    role = _DEFAULT_ROLE
+    role = _NO_ROW
     try:
         from .reused_db import reused_conn
 
@@ -116,10 +126,44 @@ def app_role(email: str | None) -> str:
             row = cur.fetchone()
             if row and row[0] in _ROLE_RANK:
                 role = row[0]
-    except Exception:  # app_users missing / DB blip -> fall back to the default
+    except Exception:  # app_users missing / DB blip
         pass
     _role_cache[key] = role
     return role
+
+
+def clear_role_cache(email: str | None = None) -> None:
+    """Drop cached role(s) after a Team change so it takes effect at once."""
+    if email:
+        _role_cache.pop(email.lower(), None)
+    else:
+        _role_cache.clear()
+
+
+def email_allowed(email: str | None) -> bool:
+    """Gate on identity (not role): the email's domain is allow-listed, OR the
+    email is explicitly listed, OR it has an app_users row. With both env lists
+    empty (dev), only app_users members pass — a safe fail-closed default."""
+    key = (email or "").strip().lower()
+    if not key or "@" not in key:
+        return False
+    s = get_settings()
+    domain = key.rsplit("@", 1)[1]
+    if domain in s.allow_domains or key in s.allow_emails:
+        return True
+    if _app_user_role(key) != _NO_ROW:
+        return True
+    if not s.allow_domains and not s.allow_emails:
+        _log.warning(
+            "email allow-list not configured (ALLOWED_EMAIL_DOMAINS / ALLOWED_EMAILS) "
+            "— only app_users members can sign in; %s rejected", key,
+        )
+    return False
+
+
+def app_role(email: str | None) -> str:
+    """The signed-in user's app role — the app_users row's role, else viewer."""
+    return _app_user_role(email) or _DEFAULT_ROLE
 
 
 def require_role(minimum: str):

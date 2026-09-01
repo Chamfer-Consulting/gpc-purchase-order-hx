@@ -4,6 +4,7 @@ import { AuthProvider } from "@/auth/AuthProvider";
 import { LoginPage } from "@/auth/LoginPage";
 import { AuthCallback } from "@/auth/AuthCallback";
 import { RequireAuth } from "@/auth/RequireAuth";
+import { AccountGate } from "@/auth/AccountGate";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
 import { ExplorePage } from "@/pages/ExplorePage";
@@ -28,6 +29,7 @@ export default function App() {
             path="/*"
             element={
               <RequireAuth>
+                <AccountGate>
                 <AppShell>
                   <Routes>
                     <Route path="/" element={<OverviewPage />} />
@@ -50,6 +52,7 @@ export default function App() {
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Routes>
                 </AppShell>
+                </AccountGate>
               </RequireAuth>
             }
           />

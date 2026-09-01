@@ -79,6 +79,72 @@ def _set_hidden(conn, table: str, col: str, value: str, hidden: bool) -> None:
     conn.commit()
 
 
+# --- team / access control (app_users) -----------------------------------
+
+_TEAM_ROLES = ("viewer", "editor", "admin")
+
+
+class TeamError(ValueError):
+    """Bad Team change — 422 at the router (unknown role, last admin, self-lockout)."""
+
+
+def list_team(conn) -> list[dict]:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT email, role, note, created_at, updated_at FROM app_users ORDER BY role DESC, email"
+        )
+        return [
+            {**dict(r),
+             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+             "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None}
+            for r in cur.fetchall()
+        ]
+
+
+def _admin_emails(cur) -> set[str]:
+    cur.execute("SELECT lower(email) FROM app_users WHERE role = 'admin'")
+    return {r[0] for r in cur.fetchall()}
+
+
+def set_team_member(conn, actor: str | None, email: str, role: str, note: str | None) -> None:
+    email = (email or "").strip().lower()
+    role = (role or "").strip().lower()
+    if "@" not in email:
+        raise TeamError("a valid email is required")
+    if role not in _TEAM_ROLES:
+        raise TeamError(f"role must be one of {', '.join(_TEAM_ROLES)}")
+    with conn.cursor() as cur:
+        admins = _admin_emails(cur)
+        if role != "admin" and admins == {email}:
+            raise TeamError("can't demote the last admin")
+        cur.execute(
+            """
+            INSERT INTO app_users (email, role, note) VALUES (%s, %s, %s)
+            ON CONFLICT (email) DO UPDATE
+                SET role = EXCLUDED.role, note = EXCLUDED.note, updated_at = now()
+            """,
+            (email, role, note or None),
+        )
+    from . import audit
+    audit.log(conn, actor=actor, action="team_set", entity="app_user", entity_id=email,
+              after={"role": role, "note": note})
+    conn.commit()
+
+
+def remove_team_member(conn, actor: str | None, email: str) -> None:
+    email = (email or "").strip().lower()
+    with conn.cursor() as cur:
+        admins = _admin_emails(cur)
+        if email in admins and len(admins) == 1:
+            raise TeamError("can't remove the last admin")
+        cur.execute("DELETE FROM app_users WHERE lower(email) = %s", (email,))
+        removed = cur.rowcount
+    if removed:
+        from . import audit
+        audit.log(conn, actor=actor, action="team_remove", entity="app_user", entity_id=email)
+    conn.commit()
+
+
 def list_views(conn, kind: str, owner: str) -> list[dict]:
     """A user's own saved views for `kind`, plus any legacy shared ones
     (owner = '') migrated from before views were per-user (0007)."""

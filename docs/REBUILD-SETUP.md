@@ -260,6 +260,8 @@ proxied by the API. Existing inline rows stay inline until re-captured.
    | `SUPABASE_URL` | `https://<ref>.supabase.co` | required — token verification (JWKS) + Storage |
    | `SUPABASE_JWT_SECRET` | Supabase → API Keys → JWT Keys → Legacy JWT Secret | only if the project still signs HS256 (§1.6) |
    | `ALLOWED_ORIGINS` | `https://dashboard.garfieldproduce.com` | required in prod |
+   | `ALLOWED_EMAIL_DOMAINS` | `garfieldproduce.com` | **who may sign in** — a verified token whose email is off-domain, not in `ALLOWED_EMAILS`, and has no `app_users` row is rejected 403 at the API. Leave unset only in dev. |
+   | `ALLOWED_EMAILS` | `jcaternolo@gmail.com` | explicit off-domain exceptions, comma-separated |
    | `FRONTEND_BASE` | `https://dashboard.garfieldproduce.com` | required in prod |
    | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | from the GitHub Actions secrets (same values the pipeline uses) | Gmail connect |
    | `GMAIL_REDIRECT_URI` | `https://api.garfieldproduce.com/auth/gmail/callback` | Gmail connect |
@@ -466,29 +468,44 @@ Applied by `supabase/migrations/0005_rls_lockdown.sql` (part of §2). The model:
   that's a real design change: it needs per-table policies and re-granting the
   `authenticated` role — reconsider before doing it.
 
-### 6.3 Authorization tiers (`app_users`)
+### 6.3 Who can sign in + authorization tiers (`app_users`)
 
-Migration `0006` adds an `app_users (email, role)` table. Roles, least to most:
+**Two gates.** Identity first (are you allowed in at all), then role (what you can do).
+
+**Identity — the allow-list.** `current_user` rejects a valid token unless its email
+(a) has an `ALLOWED_EMAIL_DOMAINS` domain, (b) is in `ALLOWED_EMAILS`, or (c) has an
+`app_users` row. With both env lists unset, only `app_users` members get in — a safe
+fail-closed default. A rejected user sees a "request access" screen (403
+`account_not_allowed`), not a broken app.
+
+A second layer stops outsiders before an `auth.users` row is even created: the
+`before-user-created` Supabase hook `public.restrict_signup_domain` (migration
+`0011`). **Enable it:** Dashboard → Authentication → Hooks → "Before user created"
+→ Postgres → `public.restrict_signup_domain`. Keep its `ok_domains` / `ok_emails`
+in sync with the env vars. Also recommended: Authentication → Providers → Email →
+turn **"Enable signups" off** (accounts come via Google or an admin).
+
+**Roles** (`app_users (email, role)`, migration `0006`), least to most:
 
 | role | can | e.g. |
 |---|---|---|
-| `viewer` | read every page; no writes | |
+| `viewer` | read every page; no writes | **the default for an allowed user with no row** |
 | `editor` | edit POs, void lines, link/unlink invoices, run matching, review-queue decisions, reference prices, doc capture | day-to-day ops |
-| `admin` | everything an editor can, **plus** lifecycle status changes, soft-delete / restore, bulk status | you |
+| `admin` | everything an editor can, **plus** lifecycle status changes, soft-delete / restore, bulk status, connections, the team list | you |
 
-- **A signed-in user with no `app_users` row is treated as `editor`** — existing
-  users keep working after the migration. `admin` must be granted explicitly.
+- **A signed-in allowed user with no `app_users` row is `viewer`** (read-only). `editor`
+  / `admin` must be granted. (This changed from `editor` — see the Team section.)
 - The repo owner (`jcaternolo@gmail.com`) is seeded as `admin` by `0006`.
-- Grant / change a role:
+- Manage the team in-app: **Settings → Team** (admin only) — add by email, set role,
+  remove. Or by SQL:
   ```sql
-  INSERT INTO app_users (email, role) VALUES ('someone@garfieldproduce.com', 'admin')
+  INSERT INTO app_users (email, role) VALUES ('someone@garfieldproduce.com', 'editor')
     ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role, updated_at = now();
-  -- demote to read-only:
-  UPDATE app_users SET role = 'viewer' WHERE email = 'contractor@example.com';
   ```
-- The backend caches a user's role for ~60 s, so a change takes up to a minute to
-  take effect. Enforcement is server-side (403 `forbidden`); the SPA also disables
-  the controls a role can't use.
+- Adding someone to `app_users` also lets an **off-domain** address sign in (gate c).
+- Role is cached ~60 s (a Team change busts it immediately). Enforcement is
+  server-side (403 `forbidden` / `account_not_allowed`); the SPA also hides
+  controls a role can't use.
 
 ---
 

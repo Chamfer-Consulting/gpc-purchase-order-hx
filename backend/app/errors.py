@@ -106,3 +106,18 @@ class Forbidden(ApiProblem):
             need=need,
             have=have,
         )
+
+
+class AccountNotAllowed(ApiProblem):
+    """The token is valid but this email isn't on the allow-list. 403 — the
+    frontend shows a "request access" screen and keeps them signed out."""
+
+    status = 403
+    code = "account_not_allowed"
+
+    def __init__(self, email: str | None) -> None:
+        super().__init__(
+            "This account isn't authorized for the Garfield Produce dashboard. "
+            "Ask an admin to add you.",
+            email=email or "",
+        )
