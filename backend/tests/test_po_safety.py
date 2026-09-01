@@ -302,3 +302,17 @@ def test_validate_math_flags_a_real_line_mismatch():
     }
     _validate_math(data)
     assert data["line_items"][0]["math_mismatch"]  # "10 x $10.0 = $100.00, not $250.0"
+
+
+# --- PO revision recency ordering ---------------------------------------
+
+from qbo_matcher import po_recency as _po_recency  # noqa: E402
+
+
+def test_po_recency_prefers_printed_then_received_then_sent():
+    older_but_has_sent = {"sent_date": "2025-06-26", "po_date": "2025-06-25"}
+    newer_printed = {"document_printed_at": "06/28/25 11:35a", "po_date": "2025-06-25"}
+    newer_received = {"source_received_at": "2025-06-27 01:12:04", "po_date": "2025-06-25"}
+    assert _po_recency(newer_printed) > _po_recency(older_but_has_sent)
+    assert _po_recency(newer_received) > _po_recency(older_but_has_sent)
+    assert _po_recency({}).year == 1  # datetime.min -> everything beats an undated row

@@ -70,6 +70,8 @@ def matched_gap_summary(fp: FilterParams) -> GapSummary:
         m[c] = pd.to_numeric(m[c], errors="coerce").fillna(0.0)
     m["lost_amount"] = (m["requested_amount"] - m["delivered_amount"]).clip(lower=0)
     m["lost_qty"] = (m["requested_qty"] - m["delivered_qty"]).clip(lower=0)
+    m["over_amount"] = (m["delivered_amount"] - m["requested_amount"]).clip(lower=0)
+    m["over_qty"] = (m["delivered_qty"] - m["requested_qty"]).clip(lower=0)
     requested = finite(m["requested_amount"].sum())
     shipped = finite(m["delivered_amount"].sum())
     return GapSummary(
@@ -135,7 +137,7 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
         cust = (
             m.groupby("customer_name")
             .agg(requested=("requested_amount", "sum"), shipped=("delivered_amount", "sum"),
-                 lost=("lost_amount", "sum"), lost_units=("lost_qty", "sum"))
+                 lost=("lost_amount", "sum"), over=("over_amount", "sum"))
             .reset_index()
         )
         cust["fulfil_pct"] = (cust["shipped"] / cust["requested"].where(cust["requested"] > 0) * 100).round(1)
@@ -151,20 +153,24 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
                 TableColumn(key="customer_name", label="Customer"),
                 TableColumn(key="requested", label="Requested", kind="currency"),
                 TableColumn(key="shipped", label="Shipped", kind="currency"),
-                TableColumn(key="lost", label="Lost sales", kind="currency"),
+                TableColumn(key="lost", label="Short $", kind="currency"),
+                TableColumn(key="over", label="Over $", kind="currency"),
                 TableColumn(key="fulfil_pct", label="Fulfilment %", kind="percent"),
             ],
-            rows=records(cust.head(_ROW_CAP)[["customer_name", "requested", "shipped", "lost", "fulfil_pct"]]),
+            rows=records(cust.head(_ROW_CAP)[
+                ["customer_name", "requested", "shipped", "lost", "over", "fulfil_pct"]
+            ]),
             export_name="lifecycle_by_customer",
         )
 
         prod = (
             m.groupby(["product_name", "container_size"])
             .agg(requested_units=("requested_qty", "sum"), delivered_units=("delivered_qty", "sum"),
-                 lost_units=("lost_qty", "sum"), lost_amount=("lost_amount", "sum"))
+                 short_units=("lost_qty", "sum"), over_units=("over_qty", "sum"),
+                 short_amount=("lost_amount", "sum"))
             .reset_index()
         )
-        prod = prod[prod["lost_amount"] > 0].sort_values("lost_amount", ascending=False)
+        prod = prod[prod["short_amount"] > 0].sort_values("short_amount", ascending=False)
         tables["by_product"] = Table(
             title=f"Where the gap is, by product ({prod.shape[0]})",
             columns=[
@@ -172,8 +178,9 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
                 TableColumn(key="container_size", label="Size"),
                 TableColumn(key="requested_units", label="Requested units", kind="int"),
                 TableColumn(key="delivered_units", label="Delivered units", kind="int"),
-                TableColumn(key="lost_units", label="Units short", kind="int"),
-                TableColumn(key="lost_amount", label="Lost sales", kind="currency"),
+                TableColumn(key="short_units", label="Units short", kind="int"),
+                TableColumn(key="over_units", label="Units over", kind="int"),
+                TableColumn(key="short_amount", label="Short $", kind="currency"),
             ],
             rows=records(prod.head(_ROW_CAP)),
             export_name="lifecycle_by_product",
@@ -222,9 +229,12 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
         ],
         charts=charts,
         tables=tables,
-        notes=(
-            [f"Separately, ${withdrawn:,.0f} of requested value was negotiated down or "
-             "withdrawn before shipping (a PO revision) — not counted as lost sales above."]
-            if withdrawn else []
-        ),
+        notes=[
+            "“Short” counts only order lines that shipped less than the customer’s final "
+            "request; an over-ship on a different order doesn’t offset it. Per row: "
+            "Requested − Delivered = Short − Over.",
+            *([f"Separately, ${withdrawn:,.0f} of requested value was negotiated down or "
+               "withdrawn before shipping (a PO revision) — not counted as lost sales."]
+              if withdrawn else []),
+        ],
     )

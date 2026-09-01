@@ -101,6 +101,58 @@ def _parse_date(value):
         return None
 
 
+_PRINTED_AT_RE = re.compile(
+    r"(\d{1,2})/(\d{1,2})/(\d{2,4})\s+(\d{1,2}):(\d{2})\s*([ap])", re.IGNORECASE
+)
+
+
+def _parse_printed_at(value):
+    """The unlabelled reprint stamp the extractor pulls from a PO's page header,
+    e.g. '06/28/25 11:35a' -> datetime. The finest signal for ordering revisions of
+    one PO number (see purchase_orders.document_printed_at)."""
+    if not value:
+        return None
+    m = _PRINTED_AT_RE.search(str(value))
+    if not m:
+        return None
+    mo, dy, yr, hh, mm, ap = m.groups()
+    yr = int(yr)
+    yr += 2000 if yr < 100 else 0
+    hh = int(hh) % 12 + (12 if ap.lower() == "p" else 0)
+    try:
+        return datetime(yr, int(mo), int(dy), hh, int(mm))
+    except ValueError:
+        return None
+
+
+def _parse_ts(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    try:
+        return datetime.fromisoformat(str(value).strip().replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def po_recency(row: dict) -> datetime:
+    """When this PO version came in, for ordering the revisions of one PO number.
+    Finest / most reliable signal first: the doc's own printed timestamp, then when
+    we received the source, then its sent date, then the PO date. `sent_date` alone
+    (the old key) mis-orders a re-extraction that happens to carry one against a
+    genuinely-newer revision that only has a printed/received stamp."""
+    return (
+        _parse_printed_at(row.get("document_printed_at"))
+        or _parse_ts(row.get("source_received_at"))
+        or _parse_ts(_parse_date(row.get("sent_date")))
+        or _parse_ts(row.get("po_date"))
+        or datetime.min
+    )
+
+
 def _invoice_po_number(raw_json: dict):
     for field in raw_json.get("CustomField") or []:
         if field.get("Name", "").startswith("PO Number") and "StringValue" in field:
@@ -115,22 +167,25 @@ def _is_voided(row: dict) -> bool:
 
 
 def get_latest_pos(conn) -> list[dict]:
-    """The current (most recent) version of every successfully-extracted PO — same
-    dedup logic as dashboard/app.py's prepare(): group by po_number (falling back to
-    source_file), keep the row with the latest effective date (sent_date, else po_date)."""
+    """The current (most recent) version of every successfully-extracted PO —
+    grouped by po_number (falling back to source_file), keeping the row with the
+    latest po_recency() (document_printed_at > source_received_at > sent_date >
+    po_date). Same dedup the analytics pages' prepare() does."""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT id, po_number, source_file, customer_name, po_date, sent_date, "
-            "delivery_date, total FROM purchase_orders WHERE error IS NULL"
+            "delivery_date, total, document_printed_at, source_received_at "
+            "FROM purchase_orders WHERE error IS NULL"
         )
         cols = [d[0] for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
 
     for r in rows:
-        r["_effective_date"] = _parse_date(r.get("sent_date")) or r.get("po_date")
+        r["_recency"] = po_recency(r)
+        r["_effective_date"] = _parse_date(r.get("sent_date")) or r.get("po_date")  # kept for callers
         r["_po_key"] = r.get("po_number") or r.get("source_file")
 
-    rows.sort(key=lambda r: (r["_po_key"], r["_effective_date"] or date.min, r["id"]))
+    rows.sort(key=lambda r: (r["_po_key"], r["_recency"], r["id"]))
     latest = {}
     for r in rows:
         latest[r["_po_key"]] = r  # ascending sort -> last write per key is the latest version

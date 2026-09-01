@@ -47,7 +47,7 @@ except ModuleNotFoundError:  # headless: the FastAPI backend / CLI scripts impor
 
 import extraction_reviews
 from math_check import validate_math
-from qbo_matcher import customers_match
+from qbo_matcher import customers_match, po_recency
 
 # ── Palette (validated colorblind-safe set — see dataviz skill / schema.sql sibling) ──
 # Both Light and Dark are selected palettes from the same reference instance, not an
@@ -815,12 +815,17 @@ def prepare(po_df: pd.DataFrame, items_df: pd.DataFrame):
     po["po_date"] = pd.to_datetime(po["po_date"], errors="coerce")
     po["delivery_date"] = pd.to_datetime(po["delivery_date"], errors="coerce")
     po["effective_date"] = pd.to_datetime(po["sent_date"], errors="coerce").fillna(po["po_date"])
+    # Which revision of a po_number is "latest": document_printed_at >
+    # source_received_at > sent_date > po_date (qbo_matcher.po_recency). sent_date
+    # alone mis-orders a re-extraction that happens to carry one.
+    _rec_cols = ["document_printed_at", "source_received_at", "sent_date", "po_date"]
+    po["_recency"] = po[[c for c in _rec_cols if c in po.columns]].apply(
+        lambda r: po_recency(r.to_dict()), axis=1
+    )
 
     valid_po = po[po["error"].isna()].copy()
     latest_po = (
-        # na_position="first" so a version with a real effective_date always beats an
-        # undated one for "latest" (a mix of dated/undated versions is possible).
-        valid_po.sort_values(["po_key", "effective_date", "id"], na_position="first")
+        valid_po.sort_values(["po_key", "_recency", "id"])
         .groupby("po_key", as_index=False)
         .tail(1)
         .copy()
