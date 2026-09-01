@@ -1,8 +1,9 @@
-import { useId, useState, type ReactNode } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import dayjs from "dayjs";
-import { Group, MultiSelect, SegmentedControl, Stack, Text } from "@mantine/core";
+import { Badge, Group, MultiSelect, SegmentedControl, Stack, Tabs, Text } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import { useFilterOptions } from "@/api/filterOptions";
+import type { TableSpec } from "@/api/schema";
 import {
   useCompare,
   usePivot,
@@ -12,7 +13,8 @@ import {
   type Measure,
 } from "@/api/explore";
 import { PageLayout } from "@/components/PageLayout";
-import { PageRenderer } from "@/components/PageRenderer";
+import { PageRenderer, tableColumns } from "@/components/PageRenderer";
+import { DataGrid } from "@/components/DataGrid";
 import { QueryBoundary } from "@/components/ErrorState";
 import { SectionCard } from "@/components/SectionCard";
 import { FilterBar } from "@/filters/FilterBar";
@@ -111,12 +113,90 @@ export function ExplorePage() {
         </SectionCard>
 
         <QueryBoundary loading={pivot.isLoading} error={pivot.error} onRetry={() => void pivot.refetch()}>
-          {pivot.data && <PageRenderer data={pivot.data} showScope={false} />}
+          {pivot.data && (
+            <>
+              <PageRenderer data={pivot.data} showScope={false} hideTables />
+              {pivot.data.tables.pivot && (
+                <SectionCard title={pivot.data.tables.pivot.title ?? "Pivot table"}>
+                  <PivotTable table={pivot.data.tables.pivot} />
+                </SectionCard>
+              )}
+            </>
+          )}
         </QueryBoundary>
 
         <ComparePanel />
       </Stack>
     </PageLayout>
+  );
+}
+
+function yearOf(period: unknown): number | null {
+  const y = Number(String(period ?? "").slice(0, 4));
+  return Number.isFinite(y) && y > 1900 ? y : null;
+}
+
+/** The pivot table, split into year tabs when it has a "period" column spanning
+ *  more than one year — day/week/month grain × several years × a customer/product
+ *  break-down otherwise reads as one undifferentiated wall of rows. Defaults to
+ *  the most recent year rather than "All" (that's the whole point). */
+function PivotTable({ table }: { table: TableSpec }) {
+  const hasPeriod = table.columns.some((c) => c.key === "period");
+  const columns = useMemo(() => tableColumns(table), [table]);
+  const years = useMemo(() => {
+    if (!hasPeriod) return [];
+    const s = new Set<number>();
+    for (const r of table.rows) {
+      const y = yearOf(r.period);
+      if (y != null) s.add(y);
+    }
+    return [...s].sort((a, b) => b - a);
+  }, [table, hasPeriod]);
+
+  const [pick, setPick] = useState<string | null>(null);
+  const active = pick && (pick === "all" || years.includes(Number(pick)))
+    ? pick
+    : years.length > 1
+      ? String(years[0])
+      : "all";
+
+  if (!hasPeriod || years.length <= 1) {
+    return <DataGrid rows={table.rows} columns={columns} exportName={table.export_name ?? "pivot"} />;
+  }
+
+  const shown = active === "all" ? table.rows : table.rows.filter((r) => String(yearOf(r.period)) === active);
+
+  return (
+    <Stack gap="sm">
+      <Tabs value={active} onChange={setPick}>
+        <Tabs.List>
+          {years.map((y) => (
+            <Tabs.Tab
+              key={y}
+              value={String(y)}
+              rightSection={
+                <Badge size="xs" variant="light" color="gray">
+                  {table.rows.filter((r) => yearOf(r.period) === y).length}
+                </Badge>
+              }
+            >
+              {y}
+            </Tabs.Tab>
+          ))}
+          <Tabs.Tab
+            value="all"
+            rightSection={
+              <Badge size="xs" variant="light" color="gray">
+                {table.rows.length}
+              </Badge>
+            }
+          >
+            All years
+          </Tabs.Tab>
+        </Tabs.List>
+      </Tabs>
+      <DataGrid rows={shown} columns={columns} exportName={`${table.export_name ?? "pivot"}_${active}`} />
+    </Stack>
   );
 }
 

@@ -76,7 +76,7 @@ function columnLink(key: string): ((v: unknown) => string) | undefined {
   return undefined;
 }
 
-function tableColumns(t: TableSpec): Column<Record<string, unknown>>[] {
+export function tableColumns(t: TableSpec): Column<Record<string, unknown>>[] {
   return t.columns.map((c) => {
     // An id / row-key column is an identifier, never a magnitude — don't
     // thousands-group it ("23,692") or right-align it, even if the spec says int.
@@ -92,9 +92,19 @@ function tableColumns(t: TableSpec): Column<Record<string, unknown>>[] {
   });
 }
 
-/** Renders a backend PageResponse: scope → attention → KPIs → charts → tables. */
-export function PageRenderer({ data, showScope = true }: { data: PageResponse; showScope?: boolean }) {
-  const tableEntries = Object.entries(data.tables);
+/** Renders a backend PageResponse: scope → attention → KPIs → charts → tables.
+ *  `hideTables` skips the generic table section — for a page that takes over
+ *  rendering one of its tables itself (e.g. Explore's year-tabbed pivot). */
+export function PageRenderer({
+  data,
+  showScope = true,
+  hideTables = false,
+}: {
+  data: PageResponse;
+  showScope?: boolean;
+  hideTables?: boolean;
+}) {
+  const tableEntries = hideTables ? [] : Object.entries(data.tables);
   const palette = paletteFor(useComputedColorScheme("light"));
   const retry = useRetryExtractionAny();
   const ackMath = useAckLineMathAny();
