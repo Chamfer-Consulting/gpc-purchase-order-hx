@@ -21,6 +21,8 @@ Meant to run manually or via a scheduled GitHub Action
 Usage:
     python run_cloud_extraction.py                 # incremental, since gmail_connection's cursor
     python run_cloud_extraction.py --full-backlog   # ignore the cursor, scan each label's full history
+    python run_cloud_extraction.py --retry-errors   # re-process ONLY threads whose PO row recorded a
+                                                    # real extraction failure (cursor left untouched)
     python run_cloud_extraction.py --limit 5        # cap threads processed (for testing)
 
 Environment:
@@ -940,9 +942,171 @@ def _process_thread(
     return results
 
 
+def publish_results(database_url: str, results: list) -> tuple[list, list]:
+    """Dedupe, revision-annotate against just the affected POs' history, and publish
+    a batch of extraction result dicts to Postgres — retrying a transient DB error
+    FLUSH_MAX_ATTEMPTS times (every upsert is idempotent, so a redo is safe).
+    Returns (bad_date_notes, deduped_results).
+
+    This is the body of main()'s checkpoint _flush(), lifted out so
+    retry_single_thread() (the dashboard's per-PO "Retry extraction") publishes
+    through the identical path."""
+    if not results:
+        return [], []
+    # Dedupe by (source_file, file_hash) — the same attachment can show up on two
+    # threads; two such rows crash the batch publish's ON CONFLICT.
+    deduped, seen_keys = [], set()
+    for r in results:
+        key = (r.get("_source_file"), r.get("_file_hash"))
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped.append(r)
+    fresh_keys = seen_keys  # (source_file, file_hash) of everything we're about to publish
+    # Deferred thread-state rows (see _process_thread), collected up front so a
+    # retry doesn't lose the ones a partially-failed previous attempt already
+    # consumed.
+    thread_states = [r["_thread_state"] for r in deduped if r.get("_thread_state") is not None]
+
+    def _po_key(r):
+        return r.get("po_number") or r.get("_source_file")
+
+    batch_po_numbers = [r.get("po_number") for r in deduped]
+    batch_source_files = [r.get("_source_file") for r in deduped]
+    bad_dates: list = []
+
+    for attempt in range(1, FLUSH_MAX_ATTEMPTS + 1):
+        conn = None
+        try:
+            # Every DB touch here uses a freshly-opened, immediately-used, promptly-
+            # closed connection — the pattern _publish_to_postgres uses and the one
+            # that survives the GitHub Actions -> Neon link. A connection held across
+            # the CPU-bound annotate_revisions below reliably dies with "SSL
+            # connection has been closed unexpectedly".
+            conn = _connect(database_url)
+            # Only the revision history for POs in THIS batch — not the whole table.
+            # Drop any stored row a fresh result supersedes: a prior attempt that
+            # committed server-side but died before the client saw the ack leaves
+            # those rows here AND still in `deduped`; combining both would hand
+            # _publish_to_postgres two rows with the same (source_file, file_hash),
+            # which ON CONFLICT ... DO UPDATE cannot touch twice in one batch. The
+            # fresh copy is authoritative.
+            existing = [
+                r for r in postgres_store.get_related_dataset(
+                    conn, batch_po_numbers, batch_source_files
+                )
+                if (r.get("_source_file"), r.get("_file_hash")) not in fresh_keys
+            ]
+            # Human "is this a revision?" calls, authoritative for grouping.
+            group_overrides = extraction_reviews.group_override_map(conn)
+            conn.close()
+            conn = None
+            # annotate_revisions() mutates line_items in place and is NOT idempotent
+            # (re-running over its own output re-injects "Removed" ghost rows). Work
+            # on a deep copy each attempt so the originals in `deduped` stay pristine
+            # for a retry and for the thread-state bookkeeping below.
+            batch = copy.deepcopy(deduped)
+            combined = existing + batch
+            if group_overrides:
+                for r in combined:
+                    ov = group_overrides.get(r.get("gmail_thread_id")) or group_overrides.get(r.get("_source_file"))
+                    if ov:
+                        extraction_reviews.apply_group_override(r, ov)
+            combined.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
+            annotate_revisions(combined)
+            # Publish only the PO groups this batch touched; every other group's
+            # DELETE+reinsert would be pure churn.
+            touched = {_po_key(r) for r in batch}
+            to_publish = [r for r in combined if _po_key(r) in touched]
+            flush_bad_dates = _publish_to_postgres(to_publish, database_url)
+            # Now that these are persisted, record the deferred thread-state rows for
+            # the successful text-thread extractions. upsert is idempotent, so
+            # re-running these on a retry is harmless.
+            conn = _connect(database_url)
+            for ts in thread_states:
+                postgres_store.upsert_thread_state(conn, *ts)
+            conn.close()
+            conn = None
+            bad_dates.extend(flush_bad_dates)  # only on the success path
+            break
+        except Exception as e:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            if attempt == FLUSH_MAX_ATTEMPTS:
+                logger.error(f"checkpoint publish failed after {attempt} attempt(s) — {e}")
+                raise
+            backoff = FLUSH_RETRY_BASE_SLEEP_SECONDS * (2 ** (attempt - 1))
+            logger.warning(
+                f"checkpoint publish failed (attempt {attempt}/{FLUSH_MAX_ATTEMPTS}) — {e}; "
+                f"retrying in {backoff}s"
+            )
+            time.sleep(backoff)
+
+    return bad_dates, deduped
+
+
+def retry_single_thread(database_url: str, thread_id: str) -> dict:
+    """Re-extract ONE Gmail thread and publish it — bypassing the label scan, the
+    incremental cursor, and --full-backlog's handled-thread skip (but NOT
+    is_known(): a clean or 'not a purchase order' row is still left alone). For the
+    dashboard's per-PO "Retry extraction" on a row that recorded a real failure.
+
+    Returns {"status": ...}:
+      'extracted' — at least one PO was (re)written; also po_number / customer_name
+      'not_a_po'  — the model decided the thread isn't an order (row now says so)
+      'error'     — it failed again; also 'error' with the new message
+      'skipped'   — a pre-filter dropped the thread (no customer-side message, an
+                    invoice notification, all-Garfield, …) — nothing written
+
+    Raises RuntimeError if Gmail isn't connected, or the pipeline env
+    (ANTHROPIC_API_KEY / GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET) is absent."""
+    anthropic_api_key = _require_env("ANTHROPIC_API_KEY")
+    gmail_client_id = _require_env("GMAIL_CLIENT_ID")
+    gmail_client_secret = _require_env("GMAIL_CLIENT_SECRET")
+
+    pg_conn = _connect(database_url)
+    try:
+        postgres_store.ensure_cloud_schema(pg_conn)
+        connection = gmail_client.get_connection(pg_conn)
+        if connection is None:
+            raise RuntimeError("Gmail is not connected — connect it on the Email Ingestion settings page first.")
+        mailbox_email = connection["email_address"]
+        access_token = gmail_client.get_valid_access_token(pg_conn, gmail_client_id, gmail_client_secret)
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
+        reference_prices = postgres_store.get_reference_prices(pg_conn)
+        fewshot_block = extraction_reviews.build_fewshot_block(pg_conn)
+        stop_event = threading.Event()
+
+        results = _process_thread(
+            client, access_token, thread_id, reference_prices, pg_conn, stop_event,
+            mailbox_email, set(), fewshot_block,
+        )
+        if not results:
+            return {"status": "skipped"}
+        publish_results(database_url, results)
+    finally:
+        pg_conn.close()
+
+    first_err = next(
+        (r["error"] for r in results
+         if r.get("error") and r["error"] != postgres_store.NOT_A_PO_ERROR),
+        None,
+    )
+    if first_err is not None:
+        return {"status": "error", "error": first_err}
+    ok = next((r for r in results if not r.get("error")), None)
+    if ok is not None:
+        return {"status": "extracted", "po_number": ok.get("po_number"),
+                "customer_name": ok.get("customer_name")}
+    return {"status": "not_a_po"}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Extract PO data from labeled Gmail messages into Postgres")
     parser.add_argument("--full-backlog", action="store_true", help="Ignore the last-synced cursor, scan each label's full history")
+    parser.add_argument("--retry-errors", action="store_true", help="Re-process only the threads whose PO row recorded a genuine extraction failure (ignores the cursor; leaves it untouched)")
     parser.add_argument("--limit", type=int, default=None, help="Process only the first N messages found (for testing)")
     parser.add_argument("--log-file", default="run_cloud_extraction.log")
     args = parser.parse_args()
@@ -976,57 +1140,67 @@ def main():
         access_token = gmail_client.get_valid_access_token(pg_conn, gmail_client_id, gmail_client_secret)
 
         since_epoch = None
-        if not args.full_backlog and connection.get("last_synced_at"):
+        if not args.full_backlog and not args.retry_errors and connection.get("last_synced_at"):
             since_epoch = int(connection["last_synced_at"].timestamp())
 
         sync_started_at = datetime.now(timezone.utc)
 
-        # Resolved once, by ID — NOT via a q=label:"..." string, which was found
-        # live to silently return zero results for label names containing an
-        # apostrophe or ampersand (see gmail_client.search_messages's docstring).
-        all_labels = gmail_client.list_labels(access_token)
-        label_id_by_name = {l["name"]: l["id"] for l in all_labels}
+        if args.retry_errors:
+            # Skip the label scan entirely. The work list is exactly the threads
+            # whose PO row recorded a genuine extraction failure (not the settled
+            # 'not a purchase order' / unresolved-modification outcomes). The cursor
+            # is left untouched — this run isn't a time-windowed scan.
+            thread_ids = postgres_store.errored_thread_ids(pg_conn)
+            seen = set(thread_ids)
+            print(f"♻️  Retry-errors mode: {len(thread_ids)} thread(s) with a recorded extraction failure")
+        else:
+            # Resolved once, by ID — NOT via a q=label:"..." string, which was found
+            # live to silently return zero results for label names containing an
+            # apostrophe or ampersand (see gmail_client.search_messages's docstring).
+            all_labels = gmail_client.list_labels(access_token)
+            label_id_by_name = {l["name"]: l["id"] for l in all_labels}
 
-        thread_ids, seen = [], set()
-        for label in labels:
-            label_id = label_id_by_name.get(label)
-            if label_id is None:
-                print(f"⚠️  Label not found in this Gmail account, skipping: {label!r}")
-                continue
-            extra_query = f"after:{since_epoch}" if since_epoch is not None else None
-            matches = gmail_client.search_messages(access_token, label_id, extra_query, max_results=MAX_SEARCH_RESULTS)
-            if len(matches) >= MAX_SEARCH_RESULTS:
-                print(f"⚠️  {label}: hit the {MAX_SEARCH_RESULTS}-message search cap — "
-                      "older threads under this label may be missing from this run "
-                      "(raise MAX_SEARCH_RESULTS or narrow with the incremental cursor)")
-            # Dedupe by thread, not message — multiple matched messages from the
-            # same thread collapse into one unit of work (_process_thread fetches
-            # the whole thread anyway). Must update `seen` as we go: a single
-            # label's own match list already contains one entry per labeled
-            # message, so an N-message thread appears N times in `matches` — a
-            # comprehension that only checks the pre-loop `seen` would let every
-            # one of those copies through and extract the same thread N times.
-            new_thread_ids = []
-            for _, tid in matches:
-                if tid in seen:
+            thread_ids, seen = [], set()
+            for label in labels:
+                label_id = label_id_by_name.get(label)
+                if label_id is None:
+                    print(f"⚠️  Label not found in this Gmail account, skipping: {label!r}")
                     continue
-                seen.add(tid)
-                new_thread_ids.append(tid)
-            thread_ids.extend(new_thread_ids)
-            print(f"🔎 {label}: {len(matches)} message(s) across {len(new_thread_ids)} new thread(s)")
+                extra_query = f"after:{since_epoch}" if since_epoch is not None else None
+                matches = gmail_client.search_messages(access_token, label_id, extra_query, max_results=MAX_SEARCH_RESULTS)
+                if len(matches) >= MAX_SEARCH_RESULTS:
+                    print(f"⚠️  {label}: hit the {MAX_SEARCH_RESULTS}-message search cap — "
+                          "older threads under this label may be missing from this run "
+                          "(raise MAX_SEARCH_RESULTS or narrow with the incremental cursor)")
+                # Dedupe by thread, not message — multiple matched messages from the
+                # same thread collapse into one unit of work (_process_thread fetches
+                # the whole thread anyway). Must update `seen` as we go: a single
+                # label's own match list already contains one entry per labeled
+                # message, so an N-message thread appears N times in `matches` — a
+                # comprehension that only checks the pre-loop `seen` would let every
+                # one of those copies through and extract the same thread N times.
+                new_thread_ids = []
+                for _, tid in matches:
+                    if tid in seen:
+                        continue
+                    seen.add(tid)
+                    new_thread_ids.append(tid)
+                thread_ids.extend(new_thread_ids)
+                print(f"🔎 {label}: {len(matches)} message(s) across {len(new_thread_ids)} new thread(s)")
 
-        # A --full-backlog run ignores the time cursor, so a re-run after a timeout
-        # would otherwise re-scan every thread from the top. Skip threads already
-        # fully handled under the current schema (a Gmail fetch each, no Claude call,
-        # but still minutes over thousands) so the backfill is resumable. A thread
-        # that gained messages since is caught by the daily incremental run's cursor.
-        if args.full_backlog:
-            pg_conn = _ensure_connection(pg_conn, database_url)
-            handled = postgres_store.handled_thread_ids(pg_conn)
-            before = len(thread_ids)
-            thread_ids = [t for t in thread_ids if t not in handled]
-            if before != len(thread_ids):
-                print(f"⏭️  Skipping {before - len(thread_ids)} thread(s) already processed — {len(thread_ids)} left")
+            # A --full-backlog run ignores the time cursor, so a re-run after a
+            # timeout would otherwise re-scan every thread from the top. Skip threads
+            # already fully handled under the current schema (a Gmail fetch each, no
+            # Claude call, but still minutes over thousands) so the backfill is
+            # resumable. A thread that gained messages since is caught by the daily
+            # incremental run's cursor.
+            if args.full_backlog:
+                pg_conn = _ensure_connection(pg_conn, database_url)
+                handled = postgres_store.handled_thread_ids(pg_conn)
+                before = len(thread_ids)
+                thread_ids = [t for t in thread_ids if t not in handled]
+                if before != len(thread_ids):
+                    print(f"⏭️  Skipping {before - len(thread_ids)} thread(s) already processed — {len(thread_ids)} left")
 
         if args.limit:
             thread_ids = thread_ids[: args.limit]
@@ -1035,9 +1209,12 @@ def main():
         print(f"🤖 Text-thread extraction model: {CLOUD_EXTRACTION_MODEL}")
 
         if not thread_ids:
-            pg_conn = _ensure_connection(pg_conn, database_url)
-            gmail_client.mark_synced(pg_conn, sync_started_at)
-            print("Nothing new — cursor updated, exiting.")
+            if not args.retry_errors:
+                pg_conn = _ensure_connection(pg_conn, database_url)
+                gmail_client.mark_synced(pg_conn, sync_started_at)
+                print("Nothing new — cursor updated, exiting.")
+            else:
+                print("No errored threads to retry — exiting.")
             return
 
         client = anthropic.Anthropic(api_key=anthropic_api_key)
@@ -1088,98 +1265,8 @@ def main():
             nonlocal pending, published_total, error_total
             if not pending:
                 return
-            # Dedupe by (source_file, file_hash) — the same attachment can show up on
-            # two threads; two such rows crash the batch publish's ON CONFLICT.
-            deduped, seen_keys = [], set()
-            for r in pending:
-                key = (r.get("_source_file"), r.get("_file_hash"))
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    deduped.append(r)
-            fresh_keys = seen_keys  # (source_file, file_hash) of everything we're about to publish
-            # Deferred thread-state rows (see _process_thread), collected up front so a
-            # retry doesn't lose the ones a partially-failed previous attempt already
-            # consumed.
-            thread_states = [r["_thread_state"] for r in deduped if r.get("_thread_state") is not None]
-
-            def _po_key(r):
-                return r.get("po_number") or r.get("_source_file")
-
-            batch_po_numbers = [r.get("po_number") for r in deduped]
-            batch_source_files = [r.get("_source_file") for r in deduped]
-
-            for attempt in range(1, FLUSH_MAX_ATTEMPTS + 1):
-                conn = None
-                try:
-                    # Every DB touch in this flush uses a freshly-opened, immediately-
-                    # used, promptly-closed connection — the pattern _publish_to_postgres
-                    # uses and the one that survives the GitHub Actions -> Neon link.
-                    # A connection held across the checkpoint window (or even across the
-                    # CPU-bound annotate_revisions below) reliably dies with "SSL
-                    # connection has been closed unexpectedly".
-                    conn = _connect(database_url)
-                    # Only the revision history for POs in THIS batch — not the whole
-                    # table. Drop any stored row a fresh result supersedes: a prior
-                    # attempt that committed server-side but died before the client saw
-                    # the ack leaves those rows here AND still in `deduped`; combining
-                    # both would hand _publish_to_postgres two rows with the same
-                    # (source_file, file_hash), which ON CONFLICT ... DO UPDATE cannot
-                    # touch twice in one batch. The fresh copy is authoritative.
-                    existing = [
-                        r for r in postgres_store.get_related_dataset(
-                            conn, batch_po_numbers, batch_source_files
-                        )
-                        if (r.get("_source_file"), r.get("_file_hash")) not in fresh_keys
-                    ]
-                    # Human "is this a revision?" calls, authoritative for grouping.
-                    group_overrides = extraction_reviews.group_override_map(conn)
-                    conn.close()
-                    conn = None
-                    # annotate_revisions() mutates line_items in place and is NOT
-                    # idempotent (re-running over its own output re-injects "Removed"
-                    # ghost rows). Work on a deep copy each attempt so the originals in
-                    # `deduped` stay pristine for a retry and for the thread-state
-                    # bookkeeping below.
-                    batch = copy.deepcopy(deduped)
-                    combined = existing + batch
-                    if group_overrides:
-                        for r in combined:
-                            ov = group_overrides.get(r.get("gmail_thread_id")) or group_overrides.get(r.get("_source_file"))
-                            if ov:
-                                extraction_reviews.apply_group_override(r, ov)
-                    combined.sort(key=lambda r: (r.get("po_date") or "9999", r.get("_source_file") or ""))
-                    annotate_revisions(combined)
-                    # Publish only the PO groups this batch touched; every other group's
-                    # DELETE+reinsert would be pure churn.
-                    touched = {_po_key(r) for r in batch}
-                    to_publish = [r for r in combined if _po_key(r) in touched]
-                    flush_bad_dates = _publish_to_postgres(to_publish, database_url)
-                    # Now that these are persisted, record the deferred thread-state
-                    # rows for the successful text-thread extractions. upsert is
-                    # idempotent, so re-running these on a retry is harmless.
-                    conn = _connect(database_url)
-                    for ts in thread_states:
-                        postgres_store.upsert_thread_state(conn, *ts)
-                    conn.close()
-                    conn = None
-                    all_bad_dates.extend(flush_bad_dates)  # only on the success path
-                    break
-                except Exception as e:
-                    if conn is not None:
-                        try:
-                            conn.close()
-                        except Exception:
-                            pass
-                    if attempt == FLUSH_MAX_ATTEMPTS:
-                        logger.error(f"checkpoint publish failed after {attempt} attempt(s) — {e}")
-                        raise
-                    backoff = FLUSH_RETRY_BASE_SLEEP_SECONDS * (2 ** (attempt - 1))
-                    logger.warning(
-                        f"checkpoint publish failed (attempt {attempt}/{FLUSH_MAX_ATTEMPTS}) — {e}; "
-                        f"retrying in {backoff}s"
-                    )
-                    time.sleep(backoff)
-
+            bad_dates, deduped = publish_results(database_url, pending)
+            all_bad_dates.extend(bad_dates)  # only reached on the success path
             published_total += len(deduped)
             error_total += sum(1 for r in deduped if "error" in r)
             pending = []
@@ -1222,7 +1309,9 @@ def main():
         # permanently drop it from every future incremental search. Only advance when
         # nothing was skipped; a persistently-failing thread just means the same
         # (cheap-to-re-search) window gets rescanned next run, which is safe.
-        cursor_safe_to_advance = skipped == 0
+        # --retry-errors never touches the cursor — it's a targeted re-run of past
+        # failures, not a scan of a time window.
+        cursor_safe_to_advance = skipped == 0 and not args.retry_errors
         if skipped:
             print(f"⚠️  {skipped} thread(s) failed before extraction (see log) — cursor NOT advanced, will retry next run")
 
@@ -1245,6 +1334,8 @@ def main():
             pg_conn = _ensure_connection(pg_conn, database_url)
             gmail_client.mark_synced(pg_conn, sync_started_at)
             print("✅ Done — cursor advanced.")
+        elif args.retry_errors:
+            print("✅ Done — retry-errors run complete (cursor untouched).")
         else:
             print(f"✅ Done — cursor left as-is ({skipped} thread(s) to retry next run).")
     finally:

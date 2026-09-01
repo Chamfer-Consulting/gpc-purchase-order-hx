@@ -383,6 +383,32 @@ def handled_thread_ids(conn) -> set:
         return {row[0] for row in cur.fetchall()}
 
 
+def errored_thread_ids(conn) -> list[str]:
+    """Thread IDs whose purchase_orders row recorded a GENUINE extraction failure —
+    an expired token, an API/credit error, a timeout, an exception. Excludes the
+    outcomes is_known() treats as settled: 'not a purchase order', and
+    'modification — target PO unresolved' (a human links that one on the review
+    page; re-running the model won't resolve it). Skips rows a human has edited or
+    that aren't active. This is the work list for
+    `run_cloud_extraction.py --retry-errors` and the dashboard's per-PO
+    'Retry extraction' action."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT gmail_thread_id FROM purchase_orders
+            WHERE gmail_thread_id IS NOT NULL
+              AND COALESCE(status, 'active') = 'active'
+              AND COALESCE(edited, FALSE) = FALSE
+              AND error IS NOT NULL AND error <> ''
+              AND error <> %s
+              AND error NOT LIKE 'modification%%'
+            ORDER BY gmail_thread_id
+            """,
+            (NOT_A_PO_ERROR,),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
 def get_thread_state(conn, thread_id: str) -> dict | None:
     """The gmail_thread_state row for this thread, or None if it's never been fully
     processed. Keys: message_count, last_file_hash, was_po — see the table comment
