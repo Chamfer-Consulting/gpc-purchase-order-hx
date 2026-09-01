@@ -36,8 +36,8 @@ _ACTIONABLE_LINE = (
 
 
 def _rows(cur) -> list[dict]:
-    cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+    """cur must be a RealDictCursor — its rows are already dict-like."""
+    return [dict(r) for r in cur.fetchall()]
 
 
 def _jsonify(rows: list[dict]) -> list[dict]:
