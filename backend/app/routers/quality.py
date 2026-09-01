@@ -245,6 +245,30 @@ def data_quality(
         )
         rec_total = cur.fetchone()[0]
 
+        # -- voided invoices (reference: they stay visible, never counted) ---
+        cur.execute("SELECT count(*) FROM qbo_invoices WHERE private_note ILIKE '%void%'")
+        void_all_time = cur.fetchone()[0]
+        void_scope, void_p = _scope(fp, "i.txn_date", "i.customer_name")
+        dcur.execute(
+            f"""
+            SELECT i.doc_number, i.customer_name, i.txn_date, i.total_amt, i.private_note AS note,
+                   CASE WHEN EXISTS (SELECT 1 FROM po_invoice_links l
+                                     WHERE l.invoice_id = i.id AND l.confirmed)
+                        THEN 'yes' ELSE '—' END AS linked_to_a_po
+            FROM qbo_invoices i
+            WHERE i.private_note ILIKE '%%void%%'{void_scope}
+            ORDER BY i.txn_date DESC NULLS LAST
+            LIMIT %s
+            """,
+            [*void_p, _ROW_CAP],
+        )
+        void_rows = _jsonify(_rows(dcur))
+        cur.execute(
+            f"SELECT count(*) FROM qbo_invoices i WHERE i.private_note ILIKE '%%void%%'{void_scope}",
+            void_p,
+        )
+        void_total = cur.fetchone()[0]
+
     success = round((total_active - real_errors) / total_active * 100, 1) if total_active else 100.0
 
     kpis = [
@@ -254,6 +278,9 @@ def data_quality(
             delta=(f"+{not_po} classified 'not a PO'" if not_po else None)),
         Kpi(label="Math-check failures", value=math_pos),
         Kpi(label="Price anomalies", value=price_pos),
+        Kpi(label="Voided invoices", value=void_all_time,
+            help="Invoices voided in QuickBooks (all time). They stay listed below "
+                 "but never count toward revenue, matching or line-item totals."),
     ]
 
     tables = {
@@ -335,6 +362,19 @@ def data_quality(
             ],
             rows=rec_rows,
             export_name="invoice_reconciliation",
+        ),
+        "voided": Table(
+            title=_title(f"Voided invoices ({void_total})", len(void_rows), void_total),
+            columns=[
+                TableColumn(key="doc_number", label="Invoice #"),
+                TableColumn(key="customer_name", label="Customer"),
+                TableColumn(key="txn_date", label="Date", kind="date"),
+                TableColumn(key="total_amt", label="Total", kind="currency2"),
+                TableColumn(key="linked_to_a_po", label="Linked to a PO"),
+                TableColumn(key="note", label="QBO note"),
+            ],
+            rows=void_rows,
+            export_name="voided_invoices",
         ),
     }
 
