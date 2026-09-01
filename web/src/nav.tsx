@@ -58,7 +58,7 @@ export const NAV_SECTIONS: NavSection[] = [
         label: "Order Lifecycle",
         to: "/lifecycle",
         icon: IconRoute,
-        description: "Requested → revised → shipped → invoiced, and where value leaks.",
+        description: "Lost sales from requested (PO) to shipped (invoice) — trended, by customer and product.",
       },
     ],
   },

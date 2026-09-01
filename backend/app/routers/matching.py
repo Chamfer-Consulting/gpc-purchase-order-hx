@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..auth import AuthedUser, current_user, require_editor
+from ..cache import clear as clear_cache
 from ..reused_db import reused_conn
 from ..services import matching as matching_svc
 from ..services.po_admin import AdminError
@@ -54,13 +55,16 @@ def review(_: AuthedUser = Depends(current_user)) -> dict:
 @router.post("/run")
 def run(_: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
-        return qbo_matcher.run_matching(conn)
+        result = qbo_matcher.run_matching(conn)
+    clear_cache()  # links moved -> Order Lifecycle / analytics revenue-by-match shift
+    return result
 
 
 @router.post("/confirm")
 def confirm(ref: LinkRef, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         _guard(matching_svc.confirm, conn, _actor(user), ref.po_id, ref.invoice_id)
+    clear_cache()
     return {"ok": True}
 
 
@@ -68,6 +72,7 @@ def confirm(ref: LinkRef, user: AuthedUser = Depends(require_editor)) -> dict:
 def reject(ref: LinkRef, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         _guard(matching_svc.reject, conn, _actor(user), ref.po_id, ref.invoice_id)
+    clear_cache()
     return {"ok": True}
 
 
@@ -76,4 +81,5 @@ def confirm_batch(body: BatchIn, user: AuthedUser = Depends(require_editor)) -> 
     pairs = [(p.po_id, p.invoice_id) for p in body.pairs]
     with reused_conn() as conn:
         out = _guard(matching_svc.confirm_batch, conn, _actor(user), pairs)
+    clear_cache()
     return {"ok": True, **out}
