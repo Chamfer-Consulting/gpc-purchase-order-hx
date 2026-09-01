@@ -69,11 +69,14 @@ function themeObject(p: Palette): Record<string, unknown> {
       },
     },
 
+    // data labels drawn on/near a series: plain ink text, NO white halo
+    // (ECharts' default text-border makes small numbers muddy and hard to read).
     line: {
       symbol: "circle",
       symbolSize: 6,
       smooth: false,
       lineStyle: { width: 2 },
+      label: { color: p.inkPrimary, fontSize: 11, textBorderWidth: 0, textShadowBlur: 0 },
       emphasis: { focus: "series" },
       // hovering one legend entry (or one line) fades the rest — ECharts' default
       // blur opacity (~0.1) reads as "the other series vanished"; keep them faintly
@@ -83,6 +86,7 @@ function themeObject(p: Palette): Record<string, unknown> {
     bar: {
       barMaxWidth: 42,
       itemStyle: { borderWidth: 0, borderRadius: [2, 2, 0, 0] },
+      label: { color: p.inkPrimary, fontSize: 11, textBorderWidth: 0, textShadowBlur: 0 },
       emphasis: { focus: "series" },
       blur: { itemStyle: { opacity: 0.28 } },
     },

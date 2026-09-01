@@ -218,7 +218,12 @@ export function timeLineOption(
         silent: true,
         symbol: "none" as const,
         lineStyle: { type: "dashed" as const, opacity: 0.6 },
-        label: { formatter: opts.markLabel ?? "", position: "insideEndTop" as const },
+        label: {
+          formatter: opts.markLabel ?? "",
+          position: "insideEndTop" as const,
+          textBorderWidth: 0,
+          textShadowBlur: 0,
+        },
         data: [{ xAxis: opts.markX }],
       }
     : undefined;
@@ -338,7 +343,7 @@ export function horizontalBarOption(labels: string[], values: number[], name = "
           show: true,
           position: "right",
           formatter: (p: { value?: unknown }) => label(p.value as number),
-          fontSize: 11,
+          // style (colour / size / no halo) comes from the theme's `bar.label`
         },
       },
     ],
