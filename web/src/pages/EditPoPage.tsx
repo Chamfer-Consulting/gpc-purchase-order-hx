@@ -114,9 +114,15 @@ export function EditPoPage() {
   // this while the form is dirty, someone else saved.
   const [seededVersion, setSeededVersion] = useState<number | undefined>(undefined);
 
+  // Which PO's data is currently loaded into the form. Until the first payload
+  // for a PO lands, the form is "not seeded" — an empty form vs. real data must
+  // NOT read as a dirty edit.
+  const seededPoIdRef = useRef<number | null>(null);
+  const seeded = data != null && seededPoIdRef.current === data.header.id;
+
   const isDirty = useMemo(
-    () => (data ? !formEqual(header, items, data) : false),
-    [header, items, data],
+    () => (data && seeded ? !formEqual(header, items, data) : false),
+    [header, items, data, seeded],
   );
   const dirtyRef = useRef(false);
   dirtyRef.current = isDirty;
@@ -127,12 +133,15 @@ export function EditPoPage() {
     setStatusDraft(d.header.status ?? "active");
     setStatusReason(d.header.status_reason ?? "");
     setSeededVersion(d.header.lock_version);
+    seededPoIdRef.current = d.header.id;
   }
 
   useEffect(() => {
-    // Only take the server copy when the form is clean — a background refetch
-    // (fired by a void / status / link mutation on this page) must not wipe edits.
-    if (data && !dirtyRef.current) reseed(data);
+    if (!data) return;
+    // Seed on first load / when the route switched to a different PO; on a
+    // background refetch of the SAME PO, only take the server copy if the form
+    // is clean (a void / status / link mutation on this page must not wipe edits).
+    if (seededPoIdRef.current !== data.header.id || !dirtyRef.current) reseed(data);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
