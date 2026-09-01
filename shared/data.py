@@ -610,6 +610,56 @@ def _norm_product(name) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(name or "").lower()).strip()
 
 
+def _qty_overlap(a: dict, b: dict) -> float:
+    keys = set(a) | set(b)
+    inter = sum(min(a.get(k, 0.0), b.get(k, 0.0)) for k in keys)
+    union = sum(max(a.get(k, 0.0), b.get(k, 0.0)) for k in keys)
+    return inter / union if union else 0.0
+
+
+def _choose_revision(links, cand_pos, po_items, inv_items):
+    """Per confirmed link, swap po_id to the revision of that po_number whose line
+    items best match the linked invoice — closest total quantity, then most product
+    overlap, then most recent, then the originally-linked row. A po_number often has
+    several extracted revision rows (customer emailed updates) and the matcher's
+    date heuristic can leave the link on a stale small one, so the invoice looks
+    massively over-shipped. NULL-po_number links are left as-is."""
+    def _profile(df, id_col):
+        out = {}
+        for pid, grp in df.groupby(id_col):
+            out[pid] = grp.groupby("_pk")["quantity"].sum().apply(float).to_dict()
+        return out
+
+    po_map = _profile(po_items, "po_id")
+    inv_map = _profile(inv_items, "invoice_id")
+    po_tot = {k: sum(v.values()) for k, v in po_map.items()}
+    inv_tot = {k: sum(v.values()) for k, v in inv_map.items()}
+
+    rec = {r.po_id: po_recency(r._asdict()) for r in cand_pos.itertuples(index=False)}
+    by_num: dict = {}
+    for n, g in cand_pos.groupby("po_number"):
+        by_num[n] = g["po_id"].tolist()
+
+    chosen = []
+    for row in links.itertuples(index=False):
+        cands = by_num.get(row.po_number)
+        if row.po_number is None or not cands or len(cands) <= 1:
+            chosen.append(row.po_id)
+            continue
+        target = inv_tot.get(row.invoice_id, 0.0)
+        iprof = inv_map.get(row.invoice_id, {})
+        best = max(cands, key=lambda pid: (
+            -abs(po_tot.get(pid, 0.0) - target),
+            _qty_overlap(po_map.get(pid, {}), iprof),
+            rec[pid],
+            pid == row.po_id,
+        ))
+        chosen.append(best)
+    out = links.copy()
+    out["po_id"] = chosen
+    return out
+
+
 @st.cache_data(ttl=300, show_spinner="Loading requested vs. delivered detail...")
 def load_matched_line_items() -> pd.DataFrame:
     """Line-item-level requested-vs-delivered detail for every CONFIRMED PO<->invoice
@@ -628,7 +678,7 @@ def load_matched_line_items() -> pd.DataFrame:
     try:
         links = pd.read_sql_query(
             """
-            SELECT l.po_id, l.invoice_id, po.customer_name, po.po_date, po.sent_date
+            SELECT l.po_id, l.invoice_id, po.po_number, po.customer_name, po.po_date, po.sent_date
             FROM po_invoice_links l
             JOIN purchase_orders po ON po.id = l.po_id
             WHERE l.confirmed = TRUE
@@ -638,13 +688,27 @@ def load_matched_line_items() -> pd.DataFrame:
         if links.empty:
             return pd.DataFrame(columns=_MATCHED_ITEMS_COLUMNS)
 
-        po_ids = links["po_id"].unique().tolist()
         invoice_ids = links["invoice_id"].unique().tolist()
+        # ALL revisions of the linked PO numbers (+ the linked rows themselves for
+        # NULL-po_number / conversational orders) — the requested side is taken from
+        # whichever revision best matches each invoice, not blindly the linked row.
+        po_numbers = [n for n in links["po_number"].dropna().unique().tolist()]
+        po_ids = links["po_id"].unique().tolist()
+        cand_pos = pd.read_sql_query(
+            """
+            SELECT po.id AS po_id, po.po_number,
+                   po.document_printed_at, po.source_received_at, po.sent_date, po.po_date
+            FROM purchase_orders po
+            WHERE po.error IS NULL AND COALESCE(po.status, 'active') = 'active'
+              AND (po.po_number = ANY(%(nums)s) OR po.id = ANY(%(ids)s))
+            """,
+            conn, params={"nums": po_numbers, "ids": po_ids},
+        )
         po_items = pd.read_sql_query(
             "SELECT po_id, product_name, container_size, quantity, line_total, math_mismatch "
             "FROM line_items "
             "WHERE po_id = ANY(%(ids)s) AND is_sample = FALSE AND is_removed = FALSE",
-            conn, params={"ids": po_ids},
+            conn, params={"ids": cand_pos["po_id"].tolist()},
         )
         inv_items = pd.read_sql_query(
             "SELECT invoice_id, product_name, container_size, quantity, line_total FROM qbo_invoice_items "
@@ -657,10 +721,12 @@ def load_matched_line_items() -> pd.DataFrame:
     links["effective_date"] = pd.to_datetime(links["sent_date"], errors="coerce").fillna(
         pd.to_datetime(links["po_date"], errors="coerce")
     )
-    links = links[["po_id", "invoice_id", "customer_name", "effective_date"]]
 
     po_items["_pk"] = po_items["product_name"].map(_norm_product)
     inv_items["_pk"] = inv_items["product_name"].map(_norm_product)
+
+    links = _choose_revision(links, cand_pos, po_items, inv_items)
+    links = links[["po_id", "invoice_id", "customer_name", "effective_date"]]
 
     def _first_real(s):
         return next((x for x in s if x is not None and str(x).strip()), None)
