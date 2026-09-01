@@ -8,6 +8,7 @@ import re
 
 import psycopg2.extras
 
+import qbo_client  # shared/, via app.reuse
 import qbo_matcher  # shared/, via app.reuse
 
 from . import po_admin, review_queue
@@ -168,6 +169,34 @@ def queue(conn) -> dict:
 # ----------------------------------------------------------------- per-PO view
 
 
+def _po_num_match(po_number, inv_po_number):
+    """True/False when the invoice carries its own PO number, else None."""
+    if not inv_po_number:
+        return None
+    return qbo_matcher.normalize_po_number(po_number) == qbo_matcher.normalize_po_number(inv_po_number)
+
+
+def _invoice_meta(conn, inv_ids) -> dict[int, dict]:
+    """Per-invoice QBO extras the Match stage needs: a deep link into QuickBooks'
+    own UI and the PO number recorded on the invoice itself (QBO 'PO Number'
+    custom field), so a reviewer can eyeball both sides without leaving the page."""
+    ids = list(inv_ids)
+    if not ids:
+        return {}
+    out: dict[int, dict] = {}
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT id, qbo_invoice_id, raw_json FROM qbo_invoices WHERE id = ANY(%s)",
+            (ids,),
+        )
+        for r in cur.fetchall():
+            out[r["id"]] = {
+                "qbo_url": qbo_client.invoice_url(r["qbo_invoice_id"]) if r["qbo_invoice_id"] else None,
+                "inv_po_number": qbo_matcher._invoice_po_number(r["raw_json"] or {}),
+            }
+    return out
+
+
 _EXTRACTION_SQL = """
 SELECT s.content AS snapshot, s.content_hash AS snapshot_hash,
        r.verdict, r.revision_of, r.standalone, r.note, r.updated_at,
@@ -220,6 +249,7 @@ def po_view(conn, po_id: int) -> dict | None:
     link_inv_ids = [l["invoice_id"] for l in base.get("links", [])]
     inv_ids = sorted({*(c["invoice_id"] for c in pending), *link_inv_ids})
     _, inv_items_map = qbo_matcher.get_line_items_for_review(conn, [], inv_ids)
+    inv_meta = _invoice_meta(conn, inv_ids)
 
     base["candidates"] = [
         {
@@ -230,11 +260,21 @@ def po_view(conn, po_id: int) -> dict | None:
             "quick": qbo_matcher.is_quick_confirm(
                 qbo_matcher.confidence_label(c["match_method"], c["match_score"])
             ),
+            "qbo_url": inv_meta.get(c["invoice_id"], {}).get("qbo_url"),
+            "inv_po_number": inv_meta.get(c["invoice_id"], {}).get("inv_po_number"),
+            "po_number_match": _po_num_match(
+                c.get("po_number"), inv_meta.get(c["invoice_id"], {}).get("inv_po_number")
+            ),
             "diff": line_diff(po_items, inv_items_map.get(c["invoice_id"], [])),
         }
         for c in pending
     ]
     for l in base.get("links", []):
         l["diff"] = line_diff(po_items, inv_items_map.get(l["invoice_id"], []))
+        meta = inv_meta.get(l["invoice_id"], {})
+        l["inv_po_number"] = meta.get("inv_po_number")
+        l["po_number_match"] = _po_num_match(hdr.get("po_number"), meta.get("inv_po_number"))
+        if not l.get("qbo_url"):
+            l["qbo_url"] = meta.get("qbo_url")
 
     return base

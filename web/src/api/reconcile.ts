@@ -49,6 +49,12 @@ export interface ReconcileCandidate {
   total_amt: number | null;
   confidence: string;
   quick: boolean;
+  /** deep link into QuickBooks' own invoice view */
+  qbo_url: string | null;
+  /** the PO number recorded on the QBO invoice itself ("PO Number" custom field) */
+  inv_po_number: string | null;
+  /** invoice's PO number vs this order's, normalised — null if the invoice has none */
+  po_number_match: boolean | null;
   diff: LineDiff;
 }
 
@@ -69,7 +75,11 @@ export interface ReconcileExtraction {
 export interface ReconcilePoView extends PoDetail {
   extraction: ReconcileExtraction;
   candidates: ReconcileCandidate[];
-  links: (PoLink & { diff?: LineDiff })[];
+  links: (PoLink & {
+    diff?: LineDiff;
+    inv_po_number?: string | null;
+    po_number_match?: boolean | null;
+  })[];
 }
 
 export type Stage = "extraction" | "lifecycle" | "match";
