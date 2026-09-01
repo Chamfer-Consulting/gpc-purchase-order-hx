@@ -144,6 +144,24 @@ _NON_PO_FILENAME_PATTERN = re.compile(
 # extractable text still goes to vision regardless of page count.
 NON_PO_TEXT_CEILING = 30000
 
+# QuickBooks / Intuit send an "Invoice <n> from Garfield Produce Company" email
+# (plus payment receipts, statements, reminders) from an intuit.com / quickbooks.com
+# address. That is a copy of a QBO invoice we already hold on the invoice side —
+# never a customer purchase order. If every non-Garfield sender in the thread is
+# one of these addresses, skip the thread entirely before any model call. A thread
+# where a real person ALSO wrote (e.g. a customer forwarding the invoice with a
+# question) is not matched — it still goes to extraction as before.
+_INTUIT_SENDER = re.compile(r"@[\w.-]*\b(?:intuit|quickbooks)\.com\b", re.IGNORECASE)
+
+
+def _is_invoice_notification(messages: list) -> bool:
+    non_ours = [
+        frm.lower()
+        for frm in ((gmail_client.message_headers(m).get("from") or "") for m in messages)
+        if frm and GARFIELD_DOMAIN not in frm.lower()
+    ]
+    return bool(non_ours) and all(_INTUIT_SENDER.search(f) for f in non_ours)
+
 
 def configure_logging(log_path: str) -> None:
     logging.basicConfig(
@@ -602,6 +620,14 @@ def _process_thread(
     # or model call. (Meta is already written above, so it's still traceable.)
     if not any(_is_customer_message(m) for m in messages):
         logger.info(f"gmail-thread:{thread_id}: no customer-side message in thread — skipping (no API call)")
+        return []
+
+    # A QuickBooks/Intuit invoice-notification email — a copy of a QBO invoice,
+    # never a PO. Skip before any model call (meta already written above).
+    if _is_invoice_notification(messages):
+        logger.info(
+            f"gmail-thread:{thread_id}: QuickBooks/Intuit invoice notification — skipping (no API call)"
+        )
         return []
 
     results = []
