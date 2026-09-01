@@ -8,6 +8,8 @@ questionable matches and invoice reconciliation. Extraction failures are NOT
 scoped — an errored source usually has no usable date or customer.
 """
 
+from decimal import Decimal
+
 import psycopg2.extras
 from fastapi import APIRouter, Depends
 
@@ -39,9 +41,13 @@ def _rows(cur) -> list[dict]:
 
 
 def _jsonify(rows: list[dict]) -> list[dict]:
+    """Coerce psycopg2 types the JSON encoder doesn't take — dates -> ISO strings,
+    Decimal/numeric -> float — in place."""
     for r in rows:
         for k, v in r.items():
-            if hasattr(v, "isoformat"):
+            if isinstance(v, Decimal):
+                r[k] = float(v)
+            elif hasattr(v, "isoformat"):
                 r[k] = v.isoformat()
     return rows
 
