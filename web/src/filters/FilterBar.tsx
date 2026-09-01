@@ -9,6 +9,8 @@ interface FilterBarProps {
   productOptions?: string[];
   sizeOptions?: string[];
   showSamples?: boolean;
+  /** hide the customer selector — the customer detail page fixes it via the route */
+  hideCustomers?: boolean;
   /** when set, shows the saved-views control scoped to this page key */
   viewKind?: string;
 }
@@ -25,6 +27,7 @@ export function FilterBar({
   productOptions = [],
   sizeOptions = [],
   showSamples = true,
+  hideCustomers = false,
   viewKind,
 }: FilterBarProps) {
   const { filters, setFilters } = useFilters();
@@ -40,17 +43,19 @@ export function FilterBar({
         onChange={([s, e]) => setFilters({ start: iso(s), end: iso(e) })}
         clearable
       />
-      <MultiSelect
-        label="Customers"
-        size="xs"
-        w={220}
-        data={customerOptions}
-        value={filters.customers}
-        onChange={(v) => setFilters({ customers: v })}
-        searchable
-        clearable
-        nothingFoundMessage="No match"
-      />
+      {!hideCustomers && (
+        <MultiSelect
+          label="Customers"
+          size="xs"
+          w={220}
+          data={customerOptions}
+          value={filters.customers}
+          onChange={(v) => setFilters({ customers: v })}
+          searchable
+          clearable
+          nothingFoundMessage="No match"
+        />
+      )}
       <MultiSelect
         label="Products"
         size="xs"

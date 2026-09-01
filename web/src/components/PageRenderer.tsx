@@ -55,9 +55,9 @@ function chartOption(c: ChartSpec) {
 
 function columnLink(key: string): ((v: unknown) => string) | undefined {
   if (key === "po_id") return (v) => `/po/${v}`;
-  // any customer column drills into Explore, pre-filtered to that account
+  // any customer column drills into that account's dossier
   if (key === "customer_name")
-    return (v) => `/explore?customers=${encodeURIComponent(String(v))}`;
+    return (v) => `/customers/${encodeURIComponent(String(v))}`;
   return undefined;
 }
 

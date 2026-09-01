@@ -7,6 +7,7 @@ import { RequireAuth } from "@/auth/RequireAuth";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
 import { ExplorePage } from "@/pages/ExplorePage";
+import { CustomerDetailPage } from "@/pages/CustomerDetailPage";
 import { DataQualityPage } from "@/pages/DataQualityPage";
 import { ReconcilePage } from "@/pages/ReconcilePage";
 import { EditPoPage } from "@/pages/EditPoPage";
@@ -31,6 +32,7 @@ export default function App() {
                   <Routes>
                     <Route path="/" element={<OverviewPage />} />
                     <Route path="/customers" element={<AnalyticsPage name="customers" title="Customers" />} />
+                    <Route path="/customers/:name" element={<CustomerDetailPage />} />
                     <Route path="/products" element={<AnalyticsPage name="products" title="Products & Sizes" />} />
                     <Route path="/explore" element={<ExplorePage />} />
                     <Route path="/lifecycle" element={<AnalyticsPage name="lifecycle" title="Order Lifecycle" />} />
