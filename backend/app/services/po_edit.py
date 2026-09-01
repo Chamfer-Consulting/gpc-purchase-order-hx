@@ -23,7 +23,7 @@ _HEADER_COLS = (
     "id", "source_file", "po_number", "po_date", "delivery_date", "sent_date",
     "customer_name", "customer_id", "subtotal", "tax", "total", "notes",
     "math_check_failed", "math_check_detail", "edited", "edited_at", "edited_by",
-    "lock_version", "gmail_thread_id",
+    "lock_version", "gmail_thread_id", "error",
 )
 _ITEM_COLS = (
     "id", "product_raw", "product_name", "container_size", "quantity", "unit_price",

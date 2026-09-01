@@ -26,6 +26,7 @@ import { errorMessage } from "@/lib/errors";
 import { PageLayout } from "@/components/PageLayout";
 import { ErrorState } from "@/components/ErrorState";
 import { pageMeta } from "@/nav";
+import { ExtractionFailureCard } from "@/components/po/ExtractionFailureCard";
 import { Queue } from "@/components/reconcile/Queue";
 import { StageExtraction } from "@/components/reconcile/StageExtraction";
 import { StageLifecycle } from "@/components/reconcile/StageLifecycle";
@@ -186,6 +187,14 @@ export function ReconcilePage() {
                 <Alert color="red" variant="light">
                   {errorMessage(upsert.error)}
                 </Alert>
+              )}
+
+              {view.data.header.error && (
+                <ExtractionFailureCard
+                  poId={poId}
+                  error={view.data.header.error}
+                  canEdit={canEdit}
+                />
               )}
 
               <StageExtraction view={view.data} />

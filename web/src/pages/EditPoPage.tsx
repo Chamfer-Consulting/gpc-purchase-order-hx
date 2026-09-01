@@ -54,6 +54,7 @@ import { conflictInfo, errorMessage, fieldErrors, isConflict } from "@/lib/error
 import { useUnsavedGuard } from "@/hooks/useUnsavedGuard";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
+import { ExtractionFailureCard } from "@/components/po/ExtractionFailureCard";
 import { PoHeaderFields, headerErrors } from "@/components/po/PoHeaderFields";
 import { EMPTY_LINE, PoLineItemsEditor, type EditableLine } from "@/components/po/PoLineItemsEditor";
 import { NUMERIC_STYLE } from "@/theme/tokens";
@@ -243,6 +244,10 @@ export function EditPoPage() {
             {data.header.status_reason ? ` — ${data.header.status_reason}` : ""}. It is hidden from
             reports and skipped by the extraction pipeline.
           </Alert>
+        )}
+
+        {data.header.error && (
+          <ExtractionFailureCard poId={poId} error={data.header.error} canEdit={canEdit} />
         )}
 
         {serverMovedAhead && (

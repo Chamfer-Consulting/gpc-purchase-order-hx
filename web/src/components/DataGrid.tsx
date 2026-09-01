@@ -16,9 +16,20 @@ export interface Column<Row> {
   linkTo?: (value: unknown, row: Row) => string;
 }
 
+export interface RowAction<Row> {
+  label: string;
+  onClick: (row: Row) => void;
+  loading?: (row: Row) => boolean;
+  disabled?: (row: Row) => boolean;
+  /** don't render the button for this row at all */
+  hidden?: (row: Row) => boolean;
+}
+
 interface DataGridProps<Row extends Record<string, unknown>> {
   rows: Row[];
   columns: Column<Row>[];
+  /** trailing per-row action buttons (e.g. "Retry" on an extraction failure) */
+  rowActions?: RowAction<Row>[];
   /** show a "Download CSV" button */
   exportName?: string;
   maxHeight?: number;
@@ -33,10 +44,12 @@ interface DataGridProps<Row extends Record<string, unknown>> {
 export function DataGrid<Row extends Record<string, unknown>>({
   rows,
   columns,
+  rowActions,
   exportName,
   maxHeight = 480,
   minWidth = 520,
 }: DataGridProps<Row>) {
+  const hasActions = (rowActions?.length ?? 0) > 0;
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [asc, setAsc] = useState(true);
 
@@ -120,6 +133,7 @@ export function DataGrid<Row extends Record<string, unknown>>({
                   </Table.Th>
                 );
               })}
+              {hasActions && <Table.Th aria-label="actions" />}
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -143,6 +157,26 @@ export function DataGrid<Row extends Record<string, unknown>>({
                     </Table.Td>
                   );
                 })}
+                {hasActions && (
+                  <Table.Td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    <Group gap={6} justify="flex-end" wrap="nowrap">
+                      {rowActions!
+                        .filter((a) => !a.hidden?.(r))
+                        .map((a) => (
+                          <Button
+                            key={a.label}
+                            size="compact-xs"
+                            variant="light"
+                            loading={a.loading?.(r) ?? false}
+                            disabled={a.disabled?.(r) ?? false}
+                            onClick={() => a.onClick(r)}
+                          >
+                            {a.label}
+                          </Button>
+                        ))}
+                    </Group>
+                  </Table.Td>
+                )}
               </Table.Tr>
             ))}
           </Table.Tbody>

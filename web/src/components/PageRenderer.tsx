@@ -7,12 +7,27 @@ import {
   stackedBarOption,
 } from "@/charts/options";
 import { AttentionList } from "./AttentionList";
-import { DataGrid, type Column } from "./DataGrid";
+import { DataGrid, type Column, type RowAction } from "./DataGrid";
 import { KpiCard } from "./KpiCard";
 import { ScopeBar } from "./ScopeBar";
 import { SectionCard } from "./SectionCard";
 import { formatCell } from "@/lib/format";
+import { notifySuccess } from "@/lib/notify";
+import { useRetryExtractionAny } from "@/api/poEdit";
 import type { ChartSpec, Kpi, PageResponse, TableSpec } from "@/api/schema";
+
+type AnyRow = Record<string, unknown>;
+
+/** Mirrors the backend guard: an errored PO row can be re-extracted unless the
+ *  failure is a settled outcome. */
+function isRetryableError(e: unknown): e is string {
+  return (
+    typeof e === "string" &&
+    e.trim() !== "" &&
+    e !== "not a purchase order" &&
+    !e.startsWith("modification")
+  );
+}
 
 function kpiValue(k: Kpi): string {
   return typeof k.value === "number" ? formatCell(k.value, k.format === "text" ? "text" : k.format) : String(k.value);
@@ -56,6 +71,34 @@ function tableColumns(t: TableSpec): Column<Record<string, unknown>>[] {
 /** Renders a backend PageResponse: scope → attention → KPIs → charts → tables. */
 export function PageRenderer({ data, showScope = true }: { data: PageResponse; showScope?: boolean }) {
   const tableEntries = Object.entries(data.tables);
+  const retry = useRetryExtractionAny();
+
+  /** A "Retry" button for any table whose rows carry both a po_id and an error
+   *  (the Data Quality extraction-failures table). Re-runs the pipeline in-place. */
+  function retryActions(rows: AnyRow[]): RowAction<AnyRow>[] | undefined {
+    if (!rows.some((r) => "po_id" in r && "error" in r)) return undefined;
+    return [
+      {
+        label: "Retry",
+        hidden: (r) => !isRetryableError(r.error),
+        loading: (r) => retry.isPending && retry.variables === Number(r.po_id),
+        disabled: () => retry.isPending,
+        onClick: (r) =>
+          retry.mutate(Number(r.po_id), {
+            onSuccess: (d) =>
+              notifySuccess(
+                d.status === "extracted"
+                  ? `Re-extracted PO ${d.po_number ?? r.po_id}.`
+                  : d.status === "not_a_po"
+                    ? "The model decided it isn't a purchase order."
+                    : d.status === "skipped"
+                      ? "The pipeline filtered this thread out."
+                      : `Still failing: ${d.error ?? "unknown error"}`,
+              ),
+          }),
+      },
+    ];
+  }
 
   return (
     <Stack gap="lg">
@@ -111,7 +154,12 @@ export function PageRenderer({ data, showScope = true }: { data: PageResponse; s
 
       {tableEntries.map(([key, t]) => (
         <SectionCard key={key} title={t.title || undefined}>
-          <DataGrid rows={t.rows} columns={tableColumns(t)} exportName={t.export_name ?? key} />
+          <DataGrid
+            rows={t.rows}
+            columns={tableColumns(t)}
+            rowActions={retryActions(t.rows as AnyRow[])}
+            exportName={t.export_name ?? key}
+          />
         </SectionCard>
       ))}
     </Stack>

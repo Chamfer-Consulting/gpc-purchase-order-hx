@@ -46,6 +46,8 @@ export interface PoHeader {
   status_reason?: string | null;
   status_at?: string | null;
   deleted_at?: string | null;
+  /** set when this row is an extraction failure rather than a real order */
+  error?: string | null;
 }
 
 export interface PoRevision {
@@ -209,6 +211,53 @@ export function useSetCustomer(poId: number) {
       expected_version?: number | null;
     }) => apiSend<{ ok: boolean; header: PoHeader }>("POST", `/api/po/${poId}/customer`, body),
     onSuccess: invalidate,
+  });
+}
+
+export interface RetryExtractionResult {
+  ok: boolean;
+  status: "extracted" | "not_a_po" | "error" | "skipped";
+  po_number?: string | null;
+  customer_name?: string | null;
+  error?: string;
+  po?: PoDetail;
+}
+
+const RETRY_INVALIDATE_KEYS = (poId: number) => [
+  ["po", poId],
+  ["reconcile-po", poId],
+  ["data-quality"],
+  ["overview"],
+  ["matching"],
+  ["reconcile-queue"],
+  ["archive"],
+];
+
+/** Re-run the extraction pipeline for a PO row that recorded a transient failure.
+ *  Synchronous on the server (one Claude call + publish). */
+export function useRetryExtraction(poId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { silent: true }, // caller shows the outcome inline
+    mutationFn: () =>
+      apiSend<RetryExtractionResult>("POST", `/api/po/${poId}/retry-extraction`),
+    onSuccess: () => {
+      for (const key of RETRY_INVALIDATE_KEYS(poId)) qc.invalidateQueries({ queryKey: key });
+    },
+  });
+}
+
+/** Same, but the PO id is the mutation argument — for list surfaces (Data Quality)
+ *  that retry an arbitrary row. */
+export function useRetryExtractionAny() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { silent: true },
+    mutationFn: (poId: number) =>
+      apiSend<RetryExtractionResult>("POST", `/api/po/${poId}/retry-extraction`),
+    onSuccess: (_d, poId) => {
+      for (const key of RETRY_INVALIDATE_KEYS(poId)) qc.invalidateQueries({ queryKey: key });
+    },
   });
 }
 
