@@ -236,6 +236,8 @@ export function timeLineOption(
 interface BarOpts {
   fmt?: NumFormat;
   breakdowns?: ChartBreakdown[] | null;
+  /** colour each bar green/red by sign — for a month-over-month change series. */
+  palette?: Palette;
 }
 
 /** shared axis-trigger tooltip for the bar builders. */
@@ -247,15 +249,27 @@ function barTooltip(fmt: NumFormat, breakdowns?: ChartBreakdown[] | null) {
     : { ...base, valueFormatter: (v: unknown) => label(v as number) };
 }
 
-/** Grouped or single vertical bars over x categories. */
+/** Grouped or single vertical bars over x categories. A single series that dips
+ *  below zero (a month-over-month change) gets per-bar green/red colouring. */
 export function barOption(x: (string | number)[], series: Series[], opts?: BarOpts): EChartsOption {
   const fmt = opts?.fmt ?? "int";
+  const diverging =
+    !!opts?.palette && series.length === 1 && series[0].data.some((v) => v != null && v < 0);
+  const up = opts?.palette?.status.good;
+  const down = opts?.palette?.status.critical;
   return {
     tooltip: barTooltip(fmt, opts?.breakdowns),
     legend: series.length > 1 ? {} : { show: false },
     xAxis: { type: "category", data: x },
-    yAxis: { type: "value", axisLabel: { formatter: axisFormatter(fmt) } },
-    series: series.map((s) => ({ type: "bar", name: s.name, data: s.data })),
+    yAxis: { type: "value", scale: diverging, axisLabel: { formatter: axisFormatter(fmt) } },
+    series: series.map((s) => ({
+      type: "bar",
+      name: s.name,
+      data:
+        diverging
+          ? s.data.map((v) => (v == null ? v : { value: v, itemStyle: { color: v >= 0 ? up : down } }))
+          : s.data,
+    })),
   };
 }
 

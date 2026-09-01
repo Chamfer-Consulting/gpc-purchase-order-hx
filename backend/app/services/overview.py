@@ -163,6 +163,14 @@ def overview_page(fp: FilterParams) -> PageResponse:
 
     gap_ix = _month_index(gap.m) if not gap.m.empty else []
     month_ix = _month_index(f_prod, f_inv)
+    inv_counts = _series_on(month_ix, f_inv, value_col="id", agg="nunique")
+    # month-over-month change in the invoice count — +ve = more invoices than the
+    # prior month, -ve = fewer. First month has no prior, so it's null.
+    inv_change = [None] + [
+        (inv_counts[i] - inv_counts[i - 1])
+        if inv_counts[i] is not None and inv_counts[i - 1] is not None else None
+        for i in range(1, len(inv_counts))
+    ]
     charts = [
         Chart(id="req_vs_shipped", title="Requested vs shipped by month", kind="line", x=gap_ix,
               series=[
@@ -185,13 +193,15 @@ def overview_page(fp: FilterParams) -> PageResponse:
                                label="Top customers"),
               ]),
         Chart(id="inv_month", title="Invoices by month", kind="bar", x=month_ix,
-              series=[ChartSeries(name="Invoices",
-                                  data=_series_on(month_ix, f_inv, value_col="id", agg="nunique"))],
+              series=[ChartSeries(name="Invoices", data=inv_counts)],
               y_format="int",
               breakdowns=[
                   _bd.by_month(f_inv, month_ix, group="customer_name", value="id", agg="nunique",
                                label="Top customers", fmt="int"),
               ]),
+        Chart(id="inv_change", title="Invoice change, month over month", kind="bar", x=month_ix,
+              series=[ChartSeries(name="Change vs. prior month", data=inv_change)],
+              y_format="int"),
         Chart(id="rev_yoy", title="Revenue by month, year over year", kind="line", x=list(_MONTHS),
               series=_yoy(prod_all, value_col="line_total", agg="sum"), y_format="currency"),
         Chart(id="inv_yoy", title="Invoices by month, year over year", kind="line", x=list(_MONTHS),

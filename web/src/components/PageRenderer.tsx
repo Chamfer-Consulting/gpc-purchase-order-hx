@@ -40,7 +40,7 @@ function chartOption(c: ChartSpec, palette: Palette) {
   const fmt = c.y_format;
   switch (c.kind) {
     case "bar":
-      return barOption(c.x, c.series, { fmt, breakdowns: c.breakdowns });
+      return barOption(c.x, c.series, { fmt, breakdowns: c.breakdowns, palette });
     case "stacked_bar":
       return stackedBarOption(c.x, c.series, { fmt });
     case "hbar":
