@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from .. import oauth_state
 from ..auth import AuthedUser, current_user, require_admin, require_editor
+from ..cache import clear as clear_cache
 from ..config import get_settings
 from ..reused_db import reused_conn
 
@@ -87,4 +88,7 @@ def qbo_sync(full_resync: bool = False, _: AuthedUser = Depends(require_editor))
             result = qbo_client.sync_invoices(conn, full_resync=full_resync)
         except qbo_client.QBOReauthRequired as e:
             raise HTTPException(409, f"reconnect required: {e}")
+    # the analytics pages (@cached by filter params) are all invoice-derived —
+    # rebuild them so a "sync now" is visible immediately, not after the 5-min TTL.
+    clear_cache()
     return {"items": items, **result}

@@ -16,21 +16,11 @@ import pandas as pd
 
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope
+from ._util import finite as _finite
 from .context import prepared_frames, slice_by_date
 
 _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 _SPARK_MONTHS = 6
-
-
-def _finite(x, default: float = 0.0) -> float:
-    """A JSON-safe float — NaN/inf (e.g. .mean() of an all-null column) serialise as
-    the bare token `NaN`, which the browser's response.json() then rejects, blanking
-    the whole page."""
-    try:
-        v = float(x)
-    except (TypeError, ValueError):
-        return default
-    return v if math.isfinite(v) else default
 
 
 def _prev_window(start: str, end: str) -> tuple[pd.Timestamp, pd.Timestamp]:

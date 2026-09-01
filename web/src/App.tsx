@@ -30,7 +30,7 @@ export default function App() {
                 <AppShell>
                   <Routes>
                     <Route path="/" element={<OverviewPage />} />
-                    <Route path="/customers" element={<AnalyticsPage name="customers" title="Customer 360" />} />
+                    <Route path="/customers" element={<AnalyticsPage name="customers" title="Customers" />} />
                     <Route path="/products" element={<AnalyticsPage name="products" title="Products & Sizes" />} />
                     <Route path="/explore" element={<ExplorePage />} />
                     <Route path="/lifecycle" element={<AnalyticsPage name="lifecycle" title="Order Lifecycle" />} />

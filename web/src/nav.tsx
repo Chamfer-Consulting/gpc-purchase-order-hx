@@ -37,10 +37,10 @@ export const NAV_SECTIONS: NavSection[] = [
         description: "Revenue and order health across the selected scope.",
       },
       {
-        label: "Customer 360",
+        label: "Customers",
         to: "/customers",
         icon: IconUsers,
-        description: "Per-customer revenue, cadence, product mix and price history.",
+        description: "Revenue, orders, average order value and recency per customer.",
       },
       {
         label: "Products & Sizes",
