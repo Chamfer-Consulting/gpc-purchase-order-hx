@@ -91,6 +91,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
 
 _client = TestClient(app)
+# same app, but a 500 comes back as a response instead of re-raising the
+# underlying exception into the test (used where a handler hits the absent DB).
+_client_noraise = TestClient(app, raise_server_exceptions=False)
 
 
 def _tok() -> str:
@@ -190,12 +193,12 @@ def test_line_diff_qty_and_only_rows():
 def test_editor_route_allowed_for_editor_reaches_service():
     # editor tier passes the role gate; the call then fails at the DB (no server)
     # -> 500, NOT 403. Proves require_editor isn't blocking an editor.
-    r = _client.post(
+    r = _client_noraise.post(
         "/api/po/1",
         json={"header": {}, "items": [], "removed_items": []},
         headers={"Authorization": f"Bearer {_tok()}"},
     )
-    assert r.status_code != 403
+    assert r.status_code == 500  # reached the handler, DB absent — not a 403
 
 
 # --- doc upload guards (pre-DB, no server needed) -------------------------
