@@ -26,7 +26,9 @@ def _attention(conn) -> list[AttentionItem]:
         cur.execute(
             "SELECT count(DISTINCT li.po_id) FROM line_items li "
             "JOIN purchase_orders po ON po.id = li.po_id "
-            "WHERE li.math_mismatch IS NOT NULL AND NOT li.is_removed AND po.status = 'active'"
+            "WHERE li.math_mismatch IS NOT NULL AND NOT li.is_removed "
+            "  AND NOT COALESCE(li.voided, FALSE) AND NOT COALESCE(li.math_ack, FALSE) "
+            "  AND po.status = 'active'"
         )
         if (n := cur.fetchone()[0]):
             items.append(AttentionItem(severity="critical", count=n, href="/data-quality",

@@ -102,6 +102,14 @@ CREATE TABLE IF NOT EXISTS app_users (
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS voided BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS void_reason TEXT;
 
+-- Line math-check acknowledgement (0009): keep math_mismatch on record but drop
+-- the line from the Data Quality fix queue when the arithmetic is genuinely off
+-- on the source document (vendor rounding / unmodelled discount).
+ALTER TABLE line_items ADD COLUMN IF NOT EXISTS math_ack        BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE line_items ADD COLUMN IF NOT EXISTS math_ack_by     TEXT;
+ALTER TABLE line_items ADD COLUMN IF NOT EXISTS math_ack_at     TIMESTAMPTZ;
+ALTER TABLE line_items ADD COLUMN IF NOT EXISTS math_ack_reason TEXT;
+
 -- Who changed what, for the admin CRUD surface. before/after are the row (or the
 -- touched slice) as JSON. Written by backend/app/services/audit.py.
 CREATE TABLE IF NOT EXISTS audit_log (

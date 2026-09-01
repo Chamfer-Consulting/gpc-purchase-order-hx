@@ -8,7 +8,10 @@ _QUEUE_SQL = """
 WITH li AS (
     SELECT po_id,
            count(*) FILTER (WHERE NOT is_removed) AS n_items,
-           count(*) FILTER (WHERE math_mismatch IS NOT NULL AND NOT is_removed) AS n_math
+           count(*) FILTER (
+               WHERE math_mismatch IS NOT NULL AND NOT is_removed
+                 AND NOT COALESCE(voided, FALSE) AND NOT COALESCE(math_ack, FALSE)
+           ) AS n_math
     FROM line_items GROUP BY po_id
 )
 SELECT po.id AS po_id,

@@ -27,13 +27,15 @@ _HEADER_COLS = (
 )
 _ITEM_COLS = (
     "id", "product_raw", "product_name", "container_size", "quantity", "unit_price",
-    "line_total", "additional_cost", "sku", "is_sample", "math_mismatch",
-    "price_anomaly", "revision_status", "is_removed", "voided", "void_reason",
+    "line_total", "additional_cost", "sku", "is_sample", "math_mismatch", "math_ack",
+    "math_ack_reason", "price_anomaly", "revision_status", "is_removed", "voided",
+    "void_reason",
 )
-# math_mismatch is recomputed by validate_math (it mutates the item dicts in place
-# for non-voided lines); price_anomaly is pipeline-owned. _update_line never writes
-# either column, so an edit preserves the DB value; _insert_line takes the fresh
-# math_mismatch and leaves price_anomaly for the next sync to re-evaluate.
+# math_mismatch is recomputed from scratch by validate_math (it clears + re-sets
+# the item dicts in place for non-voided lines); both _insert_line and _update_line
+# write the fresh value, so an edit that fixes the arithmetic clears the flag.
+# price_anomaly is pipeline-owned — neither insert nor update touches it; the next
+# sync re-evaluates it against the reference prices.
 
 
 def _jsonify(row: dict) -> dict:
@@ -122,6 +124,7 @@ def _update_line(cur, po_id: int, line_id: int, it: dict, *, removed: bool) -> N
             container_size = %(container_size)s, quantity = %(quantity)s,
             unit_price = %(unit_price)s, line_total = %(line_total)s,
             additional_cost = %(additional_cost)s, sku = %(sku)s, is_sample = %(is_sample)s,
+            math_mismatch = %(math_mismatch)s,
             revision_status = %(revision_status)s, is_removed = %(is_removed)s,
             voided = %(voided)s, void_reason = %(void_reason)s
         WHERE id = %(id)s AND po_id = %(po_id)s

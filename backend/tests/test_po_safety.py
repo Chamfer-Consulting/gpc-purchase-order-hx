@@ -279,3 +279,26 @@ def test_math_tolerance_scales_with_magnitude():
     small = {"subtotal": 100.0, "tax": 0.0, "total": 103.0, "line_items": []}
     _validate_math(small)
     assert small["math_check_failed"]
+
+
+def test_validate_math_clears_a_stale_line_flag():
+    # a line whose arithmetic now checks out but carries an old mismatch string
+    data = {
+        "subtotal": 100.0, "tax": 0.0, "total": 100.0,
+        "line_items": [
+            {"quantity": 10, "unit_price": 10.0, "line_total": 100.0,
+             "math_mismatch": "10 x $9 = $90, not $100"},  # stale
+        ],
+    }
+    _validate_math(data)
+    assert data["line_items"][0]["math_mismatch"] is None
+    assert not data["math_check_failed"]
+
+
+def test_validate_math_flags_a_real_line_mismatch():
+    data = {
+        "subtotal": None, "tax": None, "total": None,
+        "line_items": [{"quantity": 10, "unit_price": 10.0, "line_total": 250.0}],
+    }
+    _validate_math(data)
+    assert data["line_items"][0]["math_mismatch"]  # "10 x $10.0 = $100.00, not $250.0"

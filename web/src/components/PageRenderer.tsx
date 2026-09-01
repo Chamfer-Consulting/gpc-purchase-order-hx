@@ -13,7 +13,8 @@ import { ScopeBar } from "./ScopeBar";
 import { SectionCard } from "./SectionCard";
 import { formatCell } from "@/lib/format";
 import { notifyError, notifySuccess } from "@/lib/notify";
-import { useRetryExtractionAny } from "@/api/poEdit";
+import { promptReason } from "@/lib/modals";
+import { useAckLineMathAny, useRetryExtractionAny } from "@/api/poEdit";
 import type { ChartSpec, Kpi, PageResponse, TableSpec } from "@/api/schema";
 
 type AnyRow = Record<string, unknown>;
@@ -72,35 +73,67 @@ function tableColumns(t: TableSpec): Column<Record<string, unknown>>[] {
 export function PageRenderer({ data, showScope = true }: { data: PageResponse; showScope?: boolean }) {
   const tableEntries = Object.entries(data.tables);
   const retry = useRetryExtractionAny();
+  const ackMath = useAckLineMathAny();
 
-  /** A "Retry" button for any table whose rows carry both a po_id and an error
-   *  (the Data Quality extraction-failures table). Re-runs the pipeline in-place. */
-  function retryActions(rows: AnyRow[]): RowAction<AnyRow>[] | undefined {
-    if (!rows.some((r) => "po_id" in r && "error" in r)) return undefined;
-    return [
-      {
-        label: "Retry",
-        hidden: (r) => !isRetryableError(r.error),
-        loading: (r) => retry.isPending && retry.variables === Number(r.po_id),
-        disabled: () => retry.isPending,
-        onClick: (r) =>
-          retry.mutate(Number(r.po_id), {
-            onSuccess: (d) =>
-              notifySuccess(
-                d.status === "extracted"
-                  ? `Re-extracted PO ${d.po_number ?? r.po_id}.`
-                  : d.status === "running"
-                    ? "Re-extraction started — still running; the table refreshes when it's done."
-                    : d.status === "not_a_po"
-                      ? "The model decided it isn't a purchase order."
-                      : d.status === "skipped"
-                        ? "The pipeline filtered this thread out."
-                        : `Still failing: ${d.error ?? "unknown error"}`,
-              ),
-            onError: (e) => notifyError(e),
-          }),
-      },
-    ];
+  /** Inline row actions for the Data Quality tables:
+   *  - "Retry" when a row carries po_id + error  (extraction-failures)
+   *  - "Acknowledge" when a row carries po_id + line_id + math_mismatch (math checks) */
+  function rowActionsFor(rows: AnyRow[]): RowAction<AnyRow>[] | undefined {
+    if (rows.some((r) => "po_id" in r && "error" in r)) {
+      return [
+        {
+          label: "Retry",
+          hidden: (r) => !isRetryableError(r.error),
+          loading: (r) => retry.isPending && retry.variables === Number(r.po_id),
+          disabled: () => retry.isPending,
+          onClick: (r) =>
+            retry.mutate(Number(r.po_id), {
+              onSuccess: (d) =>
+                notifySuccess(
+                  d.status === "extracted"
+                    ? `Re-extracted PO ${d.po_number ?? r.po_id}.`
+                    : d.status === "running"
+                      ? "Re-extraction started — still running; the table refreshes when it's done."
+                      : d.status === "not_a_po"
+                        ? "The model decided it isn't a purchase order."
+                        : d.status === "skipped"
+                          ? "The pipeline filtered this thread out."
+                          : `Still failing: ${d.error ?? "unknown error"}`,
+                ),
+              onError: (e) => notifyError(e),
+            }),
+        },
+      ];
+    }
+
+    if (rows.some((r) => "po_id" in r && "line_id" in r && "math_mismatch" in r)) {
+      return [
+        {
+          label: "Acknowledge",
+          loading: () => ackMath.isPending,
+          disabled: () => ackMath.isPending,
+          onClick: (r) =>
+            promptReason({
+              title: "Acknowledge this math mismatch",
+              description:
+                "The arithmetic is genuinely off on the source document (vendor rounding, a " +
+                "discount we don't model). It stays on record but drops out of this queue.",
+              label: "Reason (optional)",
+              confirmLabel: "Acknowledge",
+              onSubmit: (reason) =>
+                ackMath.mutate(
+                  { po_id: Number(r.po_id), line_id: Number(r.line_id), ack: true, reason },
+                  {
+                    onSuccess: () => notifySuccess("Acknowledged — removed from the fix queue."),
+                    onError: (e) => notifyError(e),
+                  },
+                ),
+            }),
+        },
+      ];
+    }
+
+    return undefined;
   }
 
   return (
@@ -160,7 +193,7 @@ export function PageRenderer({ data, showScope = true }: { data: PageResponse; s
           <DataGrid
             rows={t.rows}
             columns={tableColumns(t)}
-            rowActions={retryActions(t.rows as AnyRow[])}
+            rowActions={rowActionsFor(t.rows as AnyRow[])}
             exportName={t.export_name ?? key}
           />
         </SectionCard>

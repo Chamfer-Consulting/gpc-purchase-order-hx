@@ -30,6 +30,13 @@ ON CONFLICT (email) DO NOTHING;
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS voided BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS void_reason TEXT;
 
+-- Line math-check acknowledgement (0009) — keep the mismatch on record but drop it
+-- from the Data Quality fix queue (genuine vendor-side discrepancy).
+ALTER TABLE line_items ADD COLUMN IF NOT EXISTS math_ack BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE line_items ADD COLUMN IF NOT EXISTS math_ack_by TEXT;
+ALTER TABLE line_items ADD COLUMN IF NOT EXISTS math_ack_at TIMESTAMPTZ;
+ALTER TABLE line_items ADD COLUMN IF NOT EXISTS math_ack_reason TEXT;
+
 CREATE TABLE IF NOT EXISTS audit_log (
     id         BIGSERIAL PRIMARY KEY,
     actor      TEXT,

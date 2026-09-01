@@ -33,6 +33,9 @@ _ACTIONABLE_LINE = (
     "AND li.product_name NOT IN "
     "  (SELECT product_name FROM hidden_products WHERE product_name IS NOT NULL)"
 )
+# math-check table also drops lines a human acknowledged as a genuine source-doc
+# discrepancy (routers/po_admin.ack_line_math).
+_NOT_MATH_ACKED = "AND NOT COALESCE(li.math_ack, FALSE)"
 
 
 def _rows(cur) -> list[dict]:
@@ -111,7 +114,7 @@ def data_quality(
             f"SELECT count(DISTINCT li.po_id), count(*) FROM line_items li "
             f"JOIN purchase_orders po ON po.id = li.po_id "
             f"WHERE li.math_mismatch IS NOT NULL AND po.status = 'active' "
-            f"  AND {_ACTIONABLE_LINE}{math_scope}",
+            f"  AND {_ACTIONABLE_LINE} {_NOT_MATH_ACKED}{math_scope}",
             math_p,
         )
         math_pos, math_total = cur.fetchone()
@@ -146,12 +149,12 @@ def data_quality(
         # -- math-check failures ----------------------------------------
         dcur.execute(
             f"""
-            SELECT po.id AS po_id, po.po_number, po.customer_name, po.po_date,
+            SELECT po.id AS po_id, li.id AS line_id, po.po_number, po.customer_name, po.po_date,
                    li.product_name, li.container_size, li.quantity, li.unit_price,
                    li.line_total, li.math_mismatch
             FROM line_items li JOIN purchase_orders po ON po.id = li.po_id
             WHERE li.math_mismatch IS NOT NULL AND po.status = 'active'
-              AND {_ACTIONABLE_LINE}{math_scope}
+              AND {_ACTIONABLE_LINE} {_NOT_MATH_ACKED}{math_scope}
             ORDER BY abs(coalesce(li.line_total, 0)) DESC, po.po_date DESC NULLS LAST
             LIMIT %s
             """,

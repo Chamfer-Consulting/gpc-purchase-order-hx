@@ -49,6 +49,12 @@ class VoidLineIn(BaseModel):
     expected_version: int | None = None
 
 
+class MathAckIn(BaseModel):
+    ack: bool = True
+    reason: str | None = None
+    expected_version: int | None = None
+
+
 class CustomerIn(BaseModel):
     customer_name: str | None = None
     customer_id: str | None = None
@@ -158,6 +164,17 @@ def void_line(po_id: int, line_id: int, body: VoidLineIn,
     with reused_conn() as conn:
         row = _guard(po_admin.void_line, conn, _actor(user), po_id, line_id,
                      body.voided, body.reason, expected_version=body.expected_version)
+    return {"ok": True, "line": row}
+
+
+@router.post("/po/{po_id}/line/{line_id}/math-ack")
+def ack_line_math(po_id: int, line_id: int, body: MathAckIn,
+                  user: AuthedUser = Depends(require_editor)) -> dict:
+    """Acknowledge a line's math_mismatch as a genuine source-document discrepancy —
+    keeps it on record, drops it from the Data Quality fix queue."""
+    with reused_conn() as conn:
+        row = _guard(po_admin.ack_line_math, conn, _actor(user), po_id, line_id,
+                     body.ack, body.reason, expected_version=body.expected_version)
     return {"ok": True, "line": row}
 
 

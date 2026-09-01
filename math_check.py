@@ -40,6 +40,10 @@ def validate_math(data: dict) -> None:
     has_totals = False
 
     for item in items:
+        # Recompute from scratch — clear any stale flag the caller passed in so an
+        # edit that fixes the arithmetic actually removes the mismatch (and a
+        # tolerance change re-evaluates old rows). validate_math OWNS this field.
+        item["math_mismatch"] = None
         qty, price, total = _n(item.get("quantity")), _n(item.get("unit_price")), _n(item.get("line_total"))
         additional = _n(item.get("additional_cost")) or 0
         if qty is not None and price is not None and total is not None:

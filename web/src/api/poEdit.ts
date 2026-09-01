@@ -19,6 +19,9 @@ export interface PoLineItem {
   sku?: string | null;
   is_sample?: boolean;
   math_mismatch?: string | null;
+  /** the math_mismatch was acknowledged as a genuine source-document discrepancy */
+  math_ack?: boolean;
+  math_ack_reason?: string | null;
   price_anomaly?: string | null;
   revision_status?: string | null;
   voided?: boolean;
@@ -199,6 +202,56 @@ export function useVoidLine(poId: number) {
         { voided: body.voided, reason: body.reason, expected_version: body.expected_version },
       ),
     onSuccess: invalidate,
+  });
+}
+
+/** Acknowledge (or clear) a line's math_mismatch as a genuine source-doc
+ *  discrepancy — keeps it on record, drops it from the Data Quality fix queue. */
+export function useAckLineMath(poId: number) {
+  const invalidate = useInvalidatePo(poId);
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      line_id: number;
+      ack: boolean;
+      reason?: string | null;
+      expected_version?: number | null;
+    }) =>
+      apiSend<{ ok: boolean; line: PoLineItem }>(
+        "POST",
+        `/api/po/${poId}/line/${body.line_id}/math-ack`,
+        { ack: body.ack, reason: body.reason, expected_version: body.expected_version },
+      ),
+    onSuccess: () => {
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["data-quality"] });
+    },
+  });
+}
+
+/** poId + lineId as mutation args — for the Data Quality math table's inline
+ *  Acknowledge button. */
+export function useAckLineMathAny() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { silent: true },
+    mutationFn: (v: { po_id: number; line_id: number; ack: boolean; reason?: string | null }) =>
+      apiSend<{ ok: boolean; line: PoLineItem }>(
+        "POST",
+        `/api/po/${v.po_id}/line/${v.line_id}/math-ack`,
+        { ack: v.ack, reason: v.reason },
+      ),
+    onSuccess: (_d, v) => {
+      for (const key of [
+        ["data-quality"],
+        ["overview"],
+        ["po", v.po_id],
+        ["reconcile-po", v.po_id],
+        ["reconcile-queue"],
+      ]) {
+        qc.invalidateQueries({ queryKey: key });
+      }
+    },
   });
 }
 

@@ -132,6 +132,7 @@ def test_all_data_routes_require_auth(path):
         ("delete", "/api/po/1", {"reason": "x"}),
         ("post", "/api/po/1/restore", {}),
         ("post", "/api/po/1/line/1/void", {"voided": True}),
+        ("post", "/api/po/1/line/1/math-ack", {"ack": True}),
         ("post", "/api/po/1/customer", {"customer_name": "x"}),
         ("post", "/api/po/1/regroup", {"standalone": True}),
         ("post", "/api/po/1/retry-extraction", {}),

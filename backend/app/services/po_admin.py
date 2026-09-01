@@ -445,6 +445,51 @@ def void_line(conn, actor: str | None, po_id: int, line_id: int,
     return out
 
 
+def ack_line_math(conn, actor: str | None, po_id: int, line_id: int,
+                  ack: bool, reason: str | None = None, *,
+                  expected_version: int | None = None) -> dict:
+    """Acknowledge (or un-acknowledge) a line's math_mismatch: the arithmetic is
+    genuinely off on the source document and editing the numbers would misrepresent
+    the order. Keeps math_mismatch on record; drops the line from the Data Quality
+    fix queue. Stamps the PO edited so a re-sync can't silently un-ack it."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        hdr = _lock_header(cur, po_id)
+        if hdr is None:
+            raise AdminError("PO not found")
+        _guard_version(hdr, expected_version)
+        _guard_active(hdr)
+        cur.execute(
+            "SELECT id, product_name, math_mismatch, math_ack FROM line_items "
+            "WHERE id = %s AND po_id = %s",
+            (line_id, po_id),
+        )
+        before = cur.fetchone()
+        if before is None:
+            raise AdminError("line item not found on this PO")
+        if ack and not before["math_mismatch"]:
+            raise AdminError("this line has no math-check mismatch to acknowledge")
+        cur.execute(
+            "UPDATE line_items SET math_ack = %s, "
+            "math_ack_by = %s, math_ack_at = CASE WHEN %s THEN now() ELSE NULL END, "
+            "math_ack_reason = %s WHERE id = %s",
+            (ack, actor if ack else None, ack, reason if ack else None, line_id),
+        )
+        _stamp_edited(cur, po_id, actor)
+        audit.log(conn, actor=actor, action="line_math_ack", entity="purchase_order",
+                  entity_id=po_id,
+                  before={"line_id": line_id, "product": before["product_name"],
+                          "math_ack": before["math_ack"]},
+                  after={"line_id": line_id, "math_ack": ack, "reason": reason if ack else None})
+        cur.execute(
+            "SELECT id, po_id, product_name, math_mismatch, math_ack, math_ack_by, "
+            "math_ack_at, math_ack_reason FROM line_items WHERE id = %s",
+            (line_id,),
+        )
+        out = _jsonify(dict(cur.fetchone()))
+    conn.commit()
+    return out
+
+
 def set_customer(conn, actor: str | None, po_id: int, customer_name: str | None,
                  customer_id: str | None = None, *,
                  expected_version: int | None = None) -> dict:
