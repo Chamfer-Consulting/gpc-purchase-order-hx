@@ -227,8 +227,18 @@ export function timeLineOption(
     ...ch,
     legend: series.length > 1 ? {} : { show: false },
     xAxis: { type: "time", ...ch.xAxis },
-    // don't force a zero baseline — unit prices move in a narrow band
-    yAxis: { type: "value", scale: true, name: opts?.yName, axisLabel: { formatter: axisFormatter(fmt) }, ...ch.yAxis },
+    // don't force a zero baseline — unit prices move in a narrow band. A y-axis
+    // `name` defaults to sitting above the axis, right where the legend also
+    // lives — put it vertically along the axis instead so the two can't collide.
+    yAxis: {
+      type: "value",
+      scale: true,
+      name: opts?.yName,
+      nameLocation: "middle" as const,
+      nameGap: 42,
+      axisLabel: { formatter: axisFormatter(fmt) },
+      ...ch.yAxis,
+    },
     series: series.map((s, i) => ({
       type: "line",
       name: s.name,

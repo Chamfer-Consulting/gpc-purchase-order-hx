@@ -217,12 +217,17 @@ export function PageRenderer({
       {data.charts.length > 0 && (
         <SimpleGrid cols={{ base: 1, lg: data.charts.length > 1 ? 2 : 1 }} spacing="lg">
           {data.charts.map((c) => {
+            // an hbar with enough rows to want a taller card always goes
+            // full-width — so it's never paired in a row with a fixed-height
+            // chart it doesn't match (that mismatch is what made cards look
+            // randomly different sizes). Anything sharing a row stays at the
+            // one standard height.
+            const tallHbar = c.kind === "hbar" && c.x.length > 10;
             const full =
               c.width === "full" ||
               (c.width == null &&
-                (c.kind === "stacked_bar" || (c.kind !== "hbar" && c.x.length > 18)));
-            const h =
-              c.kind === "hbar" ? Math.max(260, Math.min(560, c.x.length * 26 + 48)) : 300;
+                (c.kind === "stacked_bar" || tallHbar || (c.kind !== "hbar" && c.x.length > 18)));
+            const h = tallHbar ? Math.min(560, c.x.length * 26 + 48) : 300;
             return (
               <SectionCard
                 key={c.id}

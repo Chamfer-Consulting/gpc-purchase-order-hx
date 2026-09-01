@@ -153,7 +153,7 @@ export function PricingPage() {
       <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
         {data && (
           <>
-            <SectionCard title="Price history">
+            <SectionCard title="Price history" subtitle="Unit price ($)">
               <Group gap="sm" align="flex-end">
                 <Select
                   label="Product"
@@ -288,7 +288,6 @@ function HistoryChart({ product, size }: { product: string | null; size: string 
     return timeLineOption(
       [...byCust.entries()].map(([name, points]) => ({ name, points })),
       {
-        yName: "Unit price ($)",
         fmt: "currency2",
         markX: data.standardized_on || undefined,
         markLabel: "Standardized",
