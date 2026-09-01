@@ -8,7 +8,9 @@ import {
 } from "@/charts/options";
 import { paletteFor } from "@/charts/theme";
 import type { Palette } from "@/charts/palette";
+import { useFilters } from "@/filters/useFilters";
 import { AttentionList } from "./AttentionList";
+import { ChartExportMenu } from "./ChartExportMenu";
 import { DataGrid, type Column, type RowAction } from "./DataGrid";
 import { KpiCard } from "./KpiCard";
 import { ScopeBar } from "./ScopeBar";
@@ -105,6 +107,20 @@ export function PageRenderer({
   hideTables?: boolean;
 }) {
   const tableEntries = hideTables ? [] : Object.entries(data.tables);
+  const { filters } = useFilters();
+  const exportScope = (() => {
+    const parts: string[] = [
+      data.scope.start && data.scope.end
+        ? `${data.scope.start.slice(0, 10)} – ${data.scope.end.slice(0, 10)}`
+        : "All time",
+    ];
+    if (filters.customers.length)
+      parts.push(`${filters.customers.length} customer${filters.customers.length > 1 ? "s" : ""}`);
+    if (filters.products.length)
+      parts.push(`${filters.products.length} product${filters.products.length > 1 ? "s" : ""}`);
+    if (filters.sizes.length) parts.push(`${filters.sizes.length} size${filters.sizes.length > 1 ? "s" : ""}`);
+    return parts.join("  ·  ");
+  })();
   const palette = paletteFor(useComputedColorScheme("light"));
   const retry = useRetryExtractionAny();
   const ackMath = useAckLineMathAny();
@@ -235,17 +251,20 @@ export function PageRenderer({
               (c.width == null &&
                 (c.kind === "stacked_bar" || tallHbar || (c.kind !== "hbar" && c.x.length > 18)));
             const h = tallHbar ? Math.min(560, c.x.length * 26 + 48) : 300;
+            const opt = chartOption(c, palette);
+            const drawable = c.series.length > 0 && c.x.length > 0;
             return (
               <SectionCard
                 key={c.id}
                 title={c.title || undefined}
                 style={full ? { gridColumn: "1 / -1" } : undefined}
+                actions={
+                  drawable && c.title ? (
+                    <ChartExportMenu option={opt} title={c.title} scope={exportScope} />
+                  ) : undefined
+                }
               >
-                <Chart
-                  option={chartOption(c, palette)}
-                  empty={c.series.length === 0 || c.x.length === 0}
-                  height={h}
-                />
+                <Chart option={opt} empty={!drawable} height={h} />
               </SectionCard>
             );
           })}
