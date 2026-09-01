@@ -7,7 +7,7 @@ from ..auth import AuthedUser, current_user
 from ..cache import cached
 from ..deps import FilterParams, filter_params
 from ..schemas import PageResponse
-from ..services.customers import customer_360, customer_detail
+from ..services.customers import customer_detail, customers_page
 from ..services.explore import explore as explore_svc
 from ..services.lifecycle import order_lifecycle
 from ..services.products import products_and_sizes
@@ -25,7 +25,7 @@ def _key(*args, **kwargs):
 @router.get("/customers", response_model=PageResponse)
 @cached(_key)
 def customers(fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)) -> PageResponse:
-    return customer_360(fp)
+    return customers_page(fp)
 
 
 def _cust_detail_key(*args, **kwargs):
