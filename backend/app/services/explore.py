@@ -13,6 +13,8 @@ from .context import build_context, monthly_revenue, prepared_frames, slice_by_d
 from ._util import records
 
 _TOP_N = 15
+_EMPTY_NOTE = ("No data for this scope — widen the date range or clear a filter. "
+               "Deleted / hidden accounts and products follow Settings → Visibility.")
 
 # --- pivot configurator -------------------------------------------------------
 
@@ -40,12 +42,13 @@ def pivot(fp: FilterParams, measure: str, grain: str, dims: list[str]) -> PageRe
 
     ctx = build_context(fp)
     prod = ctx.f_prod
-    if prod.empty or val_col not in prod.columns:
-        return PageResponse(scope=Scope(count=0, noun="invoices", start=fp.start, end=fp.end))
+    if prod.empty or val_col not in prod.columns or prod.dropna(subset=["effective_date"]).empty:
+        return PageResponse(
+            scope=Scope(count=0, noun="invoices", start=fp.start, end=fp.end),
+            notes=[_EMPTY_NOTE],
+        )
 
     detail = prod.dropna(subset=["effective_date"]).copy()
-    if detail.empty:
-        return PageResponse(scope=Scope(count=0, noun="invoices", start=fp.start, end=fp.end))
 
     group_cols: list[str] = []
     if grain != "all":
@@ -184,7 +187,10 @@ def explore(fp: FilterParams) -> PageResponse:
     ctx = build_context(fp)
     prod = ctx.f_prod
     if prod.empty:
-        return PageResponse(scope=Scope(count=0, noun="POs", start=fp.start, end=fp.end))
+        return PageResponse(
+            scope=Scope(count=0, noun="invoices", start=fp.start, end=fp.end),
+            notes=[_EMPTY_NOTE],
+        )
 
     months, rev_series = monthly_revenue(prod)
     by_cust = (
