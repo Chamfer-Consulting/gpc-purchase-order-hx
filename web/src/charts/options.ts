@@ -173,11 +173,6 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: Line
   const tooltip = opts?.breakdowns?.length
     ? { ...ch.tooltip, formatter: breakdownFormatter(fmt, opts.breakdowns), confine: true }
     : ch.tooltip;
-  // hide the dots on a dense series (the stock-tracker look); show them when the
-  // series is short enough that a bare line — or a single point — would read as empty.
-  const maxPts = Math.max(...series.map((s) => s.data.filter((v) => v != null).length), 0);
-  const showSymbol = maxPts <= 8;
-
   return {
     ...ch,
     tooltip,
@@ -191,7 +186,12 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: Line
       type: "line",
       name: s.name,
       data: s.data,
-      showSymbol,
+      // per-series, not chart-wide: a sparse series (a customer who only ordered
+      // a few times against a long shared x-axis) has no adjacent non-null points
+      // to draw a line between, so with symbols off it's invisible outright —
+      // easy to read as "the chart is empty" once hover/legend-click blurs the
+      // one dense series that WAS carrying the visible line.
+      showSymbol: s.data.filter((v) => v != null).length <= 8,
       lineStyle: accent ? { color: accent } : undefined,
       itemStyle: accent ? { color: accent } : undefined,
       areaStyle: wantArea ? (accent ? areaGradient(accent) : { opacity: 0.08 }) : undefined,

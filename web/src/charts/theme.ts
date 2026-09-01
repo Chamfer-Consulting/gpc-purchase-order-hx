@@ -75,11 +75,16 @@ function themeObject(p: Palette): Record<string, unknown> {
       smooth: false,
       lineStyle: { width: 2 },
       emphasis: { focus: "series" },
+      // hovering one legend entry (or one line) fades the rest — ECharts' default
+      // blur opacity (~0.1) reads as "the other series vanished"; keep them faintly
+      // present as context instead of near-invisible.
+      blur: { lineStyle: { opacity: 0.28 }, itemStyle: { opacity: 0.28 }, areaStyle: { opacity: 0.05 } },
     },
     bar: {
       barMaxWidth: 42,
       itemStyle: { borderWidth: 0, borderRadius: [2, 2, 0, 0] },
       emphasis: { focus: "series" },
+      blur: { itemStyle: { opacity: 0.28 } },
     },
     pie: {
       itemStyle: { borderColor: p.surface, borderWidth: 1 },
