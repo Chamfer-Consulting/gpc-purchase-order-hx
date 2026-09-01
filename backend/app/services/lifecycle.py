@@ -138,8 +138,8 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
                   ChartSeries(name="Requested", data=_series(months, m, "requested_amount") if not m.empty else []),
                   ChartSeries(name="Shipped", data=_series(months, m, "delivered_amount") if not m.empty else []),
               ], y_format="currency"),
-        Chart(id="lost_by_month", title="Lost sales by month (requested − shipped)", kind="bar", x=months,
-              series=[ChartSeries(name="Lost sales", data=_series(months, m, "lost_amount") if not m.empty else [])],
+        Chart(id="lost_by_month", title="Under-shipped by month (requested − shipped)", kind="bar", x=months,
+              series=[ChartSeries(name="Under-shipped", data=_series(months, m, "lost_amount") if not m.empty else [])],
               y_format="currency"),
     ]
     tables = {}
@@ -154,9 +154,9 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
         cust["fulfil_pct"] = (cust["shipped"] / cust["requested"].where(cust["requested"] > 0) * 100).round(1)
         cust = cust.sort_values("lost", ascending=False)
         charts.append(Chart(
-            id="lost_by_customer", title=f"Lost sales by customer (top {_TOP_N})", kind="hbar",
+            id="lost_by_customer", title=f"Under-shipped by customer (top {_TOP_N})", kind="hbar",
             x=list(cust.head(_TOP_N)["customer_name"]),
-            series=[ChartSeries(name="Lost sales", data=[finite(v) for v in cust.head(_TOP_N)["lost"]])],
+            series=[ChartSeries(name="Under-shipped", data=[finite(v) for v in cust.head(_TOP_N)["lost"]])],
             y_format="currency"))
         tables["by_customer"] = Table(
             title=f"By customer ({cust.shape[0]})",
@@ -164,8 +164,8 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
                 TableColumn(key="customer_name", label="Customer"),
                 TableColumn(key="requested", label="Requested", kind="currency"),
                 TableColumn(key="shipped", label="Shipped", kind="currency"),
-                TableColumn(key="lost", label="Short $", kind="currency"),
-                TableColumn(key="over", label="Over $", kind="currency"),
+                TableColumn(key="lost", label="Under-shipped $", kind="currency"),
+                TableColumn(key="over", label="Over-shipped $", kind="currency"),
                 TableColumn(key="fulfil_pct", label="Fulfilment %", kind="percent"),
             ],
             rows=records(cust.head(_ROW_CAP)[
@@ -183,15 +183,15 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
         )
         prod = prod[prod["short_amount"] > 0].sort_values("short_amount", ascending=False)
         tables["by_product"] = Table(
-            title=f"Where the gap is, by product ({prod.shape[0]})",
+            title=f"Under-shipped by product ({prod.shape[0]})",
             columns=[
                 TableColumn(key="product_name", label="Product"),
                 TableColumn(key="container_size", label="Size"),
                 TableColumn(key="requested_units", label="Requested units", kind="int"),
                 TableColumn(key="delivered_units", label="Delivered units", kind="int"),
-                TableColumn(key="short_units", label="Units short", kind="int"),
+                TableColumn(key="short_units", label="Units under", kind="int"),
                 TableColumn(key="over_units", label="Units over", kind="int"),
-                TableColumn(key="short_amount", label="Short $", kind="currency"),
+                TableColumn(key="short_amount", label="Under-shipped $", kind="currency"),
             ],
             rows=records(prod.head(_ROW_CAP)),
             export_name="lifecycle_by_product",
@@ -228,16 +228,17 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
         scope=Scope(count=int(len(lc)), noun="orders", start=fp.start, end=fp.end,
                     note=f"{int(have_ship.sum())} of {len(lc)} orders have a confirmed invoice match"),
         kpis=[
-            Kpi(label="Lost sales", value=round(lost, 2), format="currency",
-                help="Σ (requested − shipped) on the order lines that came up short. An "
-                     "over-ship on a different order doesn't refund a shorted one, so this "
-                     "exceeds the net (Requested − Shipped)."),
+            Kpi(label="Under-shipped", value=round(lost, 2), format="currency",
+                help="Σ (requested − shipped) on the order lines invoiced for LESS than "
+                     "the PO asked — the lost sales. An over-ship on a different order "
+                     "doesn't refund a shorted one, so this exceeds the net "
+                     "(Requested − Shipped)."),
             Kpi(label="Over-shipped", value=round(over, 2), format="currency",
-                help="Σ (shipped − requested) on lines that over-delivered. "
-                     "Lost sales − Over-shipped = Requested − Shipped."),
+                help="Σ (shipped − requested) on lines invoiced for MORE than the PO asked. "
+                     "Under-shipped − Over-shipped = Requested − Shipped."),
             Kpi(label="Fulfilment rate", value=fulfil, format="percent",
                 help="Σ shipped ÷ Σ requested across matched order lines (over-ships mask "
-                     "shortfalls here — see Lost sales for the per-order view)."),
+                     "under-ships here — see Under-shipped for the per-order view)."),
             Kpi(label="Requested", value=round(requested, 2), format="currency"),
             Kpi(label="Shipped", value=round(shipped, 2), format="currency"),
         ],
@@ -245,12 +246,13 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
         tables=tables,
         notes=[
             "Matched PO ⇄ invoice lines are aligned by product name (sizes and the two "
-            "sides' spellings vary). $ shortfall / overage cover only lines the PO priced.",
-            "“Short” counts only order lines that shipped less than the customer's final "
-            "request; an over-ship elsewhere doesn't offset it. Per row: "
-            "Requested − Delivered = Short − Over.",
+            "sides' spellings vary); the requested side is taken from whichever PO "
+            "revision best matches each invoice. $ figures cover only lines the PO priced.",
+            "“Under-shipped” counts only order lines invoiced for less than the customer's "
+            "final request; an over-ship elsewhere doesn't offset it. Per row: "
+            "Requested − Delivered = Under − Over.",
             *([f"Separately, ${withdrawn:,.0f} of requested value was negotiated down or "
-               "withdrawn before shipping (a PO revision) — not counted as lost sales."]
+               "withdrawn before shipping (a PO revision) — not counted as under-shipped."]
               if withdrawn else []),
         ],
     )

@@ -140,8 +140,8 @@ def overview_page(fp: FilterParams) -> PageResponse:
                  "Shipping / services / samples are not counted — see the note below.",
             spark=_trailing(f_prod, value_col="line_total", agg="sum") or None),
         Kpi(label="Lost sales", value=round(gap.lost, 2), format="currency",
-            help="Revenue requested on a PO but not invoiced — Σ (requested − shipped) over "
-                 "matched order lines, shortfalls only. Full breakdown on Order Lifecycle."),
+            help="Under-shipped revenue: Σ (requested − shipped) over matched order lines "
+                 "invoiced for less than the PO asked. Full breakdown on Order Lifecycle."),
         Kpi(label="Fulfilment rate", value=gap.fulfil, format="percent",
             help="Shipped ÷ requested across matched order lines."),
         Kpi(label="Invoices", value=n_invoices, format="int",
