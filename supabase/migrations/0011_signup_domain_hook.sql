@@ -20,7 +20,7 @@ as $$
 declare
   v_email    text := lower(coalesce(event -> 'user' ->> 'email', ''));
   v_domain   text := split_part(v_email, '@', 2);
-  ok_domains text[] := array['garfieldproduce.com'];
+  ok_domains text[] := array['garfieldproduce.com', 'adelantecenter.org'];
   ok_emails  text[] := array['jcaternolo@gmail.com'];
 begin
   if v_email = '' then

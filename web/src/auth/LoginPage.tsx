@@ -53,12 +53,7 @@ export function LoginPage() {
     setErr(null);
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-        // hint Google to surface the work account first (not a hard restriction —
-        // the API allow-list is the real gate)
-        queryParams: { hd: "garfieldproduce.com" },
-      },
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
     // On success the browser redirects to Google and never returns here.
     if (error) {

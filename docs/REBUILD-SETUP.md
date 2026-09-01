@@ -260,7 +260,7 @@ proxied by the API. Existing inline rows stay inline until re-captured.
    | `SUPABASE_URL` | `https://<ref>.supabase.co` | required — token verification (JWKS) + Storage |
    | `SUPABASE_JWT_SECRET` | Supabase → API Keys → JWT Keys → Legacy JWT Secret | only if the project still signs HS256 (§1.6) |
    | `ALLOWED_ORIGINS` | `https://dashboard.garfieldproduce.com` | required in prod |
-   | `ALLOWED_EMAIL_DOMAINS` | `garfieldproduce.com` | **who may sign in** — a verified token whose email is off-domain, not in `ALLOWED_EMAILS`, and has no `app_users` row is rejected 403 at the API. Leave unset only in dev. |
+   | `ALLOWED_EMAIL_DOMAINS` | `garfieldproduce.com,adelantecenter.org` | **who may sign in** — a verified token whose email is off-domain, not in `ALLOWED_EMAILS`, and has no `app_users` row is rejected 403 at the API. Leave unset only in dev. |
    | `ALLOWED_EMAILS` | `jcaternolo@gmail.com` | explicit off-domain exceptions, comma-separated |
    | `FRONTEND_BASE` | `https://dashboard.garfieldproduce.com` | required in prod |
    | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | from the GitHub Actions secrets (same values the pipeline uses) | Gmail connect |
