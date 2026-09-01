@@ -100,7 +100,16 @@ async function request<T>(
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined || v === null || v === "") continue;
-      url.searchParams.set(k, Array.isArray(v) ? v.join(",") : String(v));
+      if (Array.isArray(v)) {
+        // repeated key (?k=a&k=b) — so a value containing a comma survives
+        for (const item of v) {
+          if (item !== undefined && item !== null && item !== "") {
+            url.searchParams.append(k, String(item));
+          }
+        }
+      } else {
+        url.searchParams.set(k, String(v));
+      }
     }
   }
 

@@ -65,19 +65,21 @@ def test_config_needs_a_verification_path(monkeypatch):
 
 
 def test_filter_params_parsing():
-    """FilterParams is the contract the SPA's useFilters mirrors."""
+    """FilterParams is the contract the SPA's useFilters mirrors — list filters
+    arrive as repeated query keys, so a value with a comma stays intact."""
     from app.deps import filter_params
 
     fp = filter_params(
-        start="2026-01-01", end="2026-03-31", customers="Get Fresh,Testa",
-        products=None, sizes="4oz", include_samples="1",
+        start="2026-01-01", end="2026-03-31",
+        customers=["Get Fresh", "Get Fresh Produce, Inc."],
+        products=None, sizes=["4oz"], include_samples="1",
     )
     assert fp.start == "2026-01-01"
-    assert fp.customers == ("Get Fresh", "Testa")
+    assert fp.customers == ("Get Fresh", "Get Fresh Produce, Inc.")
     assert fp.sizes == ("4oz",)
     assert fp.include_samples is True
     assert fp.cache_key() == (
-        "2026-01-01", "2026-03-31", ("Get Fresh", "Testa"), (), ("4oz",), True
+        "2026-01-01", "2026-03-31", ("Get Fresh", "Get Fresh Produce, Inc."), (), ("4oz",), True
     )
 
 

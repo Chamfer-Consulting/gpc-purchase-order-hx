@@ -227,6 +227,11 @@ function VisibilityList({ dim }: { dim: VisibilityDim }) {
                 <Text span size="xs" c="dimmed" style={{ flex: "none" }}>
                   ({r.n_lines} {UNIT[dim]})
                 </Text>
+                {/\(deleted/i.test(r.name ?? "") && (
+                  <Badge size="xs" color="gray" variant="light" style={{ flex: "none" }}>
+                    deleted in QBO
+                  </Badge>
+                )}
                 {r.hidden && (
                   <Badge size="xs" color="orange" variant="light" style={{ flex: "none" }}>
                     hidden

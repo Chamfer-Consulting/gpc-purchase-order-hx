@@ -53,6 +53,14 @@ function chartOption(c: ChartSpec) {
   }
 }
 
+function columnLink(key: string): ((v: unknown) => string) | undefined {
+  if (key === "po_id") return (v) => `/po/${v}`;
+  // any customer column drills into Explore, pre-filtered to that account
+  if (key === "customer_name")
+    return (v) => `/explore?customers=${encodeURIComponent(String(v))}`;
+  return undefined;
+}
+
 function tableColumns(t: TableSpec): Column<Record<string, unknown>>[] {
   return t.columns.map((c) => {
     // An id / row-key column is an identifier, never a magnitude — don't
@@ -64,7 +72,7 @@ function tableColumns(t: TableSpec): Column<Record<string, unknown>>[] {
       label: c.label,
       kind,
       align: kind !== "text" && kind !== "date" ? "right" : "left",
-      linkTo: c.key === "po_id" ? (v: unknown) => `/po/${v}` : undefined,
+      linkTo: columnLink(c.key),
     };
   });
 }
