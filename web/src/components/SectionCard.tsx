@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
 import { IconHelpCircle } from "@tabler/icons-react";
 
@@ -14,6 +14,8 @@ interface SectionCardProps {
   /** drop the card chrome, keep the header + spacing (for nesting) */
   plain?: boolean;
   padding?: string | number;
+  /** passed to the outer Paper (e.g. grid-column span) */
+  style?: CSSProperties;
 }
 
 /**
@@ -29,6 +31,7 @@ export function SectionCard({
   children,
   plain = false,
   padding = "lg",
+  style,
 }: SectionCardProps) {
   const header = (title || actions) && (
     <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm">
@@ -69,7 +72,7 @@ export function SectionCard({
   if (plain) return body;
 
   return (
-    <Paper withBorder radius="md" p={padding} bg="var(--gp-surface)">
+    <Paper withBorder radius="md" p={padding} bg="var(--gp-surface)" style={style}>
       {body}
     </Paper>
   );

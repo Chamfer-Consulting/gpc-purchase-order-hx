@@ -11,7 +11,8 @@ from ._util import records
 
 _SIZE_NULL = "(no size)"
 _CHART_CAP = 20   # bars drawn on the hbar charts (tables stay full)
-_MIX_SERIES = 12  # coloured products on the mix chart; the rest roll into "Other"
+_MIX_SERIES = 6  # coloured products on the mix chart; the rest roll into "Other"
+                # (a stacked bar with more segments than this is unreadable)
 _EMPTY_NOTE = ("No product data for this scope — widen the date range or clear a filter. "
                "Hidden products and deleted accounts follow Settings → Visibility.")
 

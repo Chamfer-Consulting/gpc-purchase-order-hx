@@ -40,6 +40,8 @@ export interface ChartSpec {
   series: ChartSeries[];
   y_format: NumFormat;
   breakdowns?: ChartBreakdown[] | null;
+  /** grid span: "full" = one column, "half" = paired. Omitted => auto by shape. */
+  width?: "half" | "full";
 }
 
 export interface TableColumnSpec {

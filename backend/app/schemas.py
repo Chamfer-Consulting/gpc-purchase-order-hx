@@ -55,6 +55,7 @@ class Chart(BaseModel):
     series: list[ChartSeries] = Field(default_factory=list)
     y_format: NumFormat = "int"
     breakdowns: list[ChartBreakdown] | None = None
+    width: Literal["half", "full"] | None = None  # None => the SPA auto-picks by shape
 
 
 class TableColumn(BaseModel):

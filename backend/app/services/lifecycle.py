@@ -220,6 +220,7 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
     months = _months(m) if not m.empty else []
     charts = [
         Chart(id="req_vs_shipped", title="Requested vs shipped by month", kind="line", x=months,
+              width="full",
               series=[
                   ChartSeries(name="Requested", data=_series(months, m, "requested_amount") if not m.empty else []),
                   ChartSeries(name="Shipped", data=_series(months, m, "delivered_amount") if not m.empty else []),

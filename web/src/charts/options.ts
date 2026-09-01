@@ -127,15 +127,22 @@ function breakdownFormatter(fmt: NumFormat, breakdowns: ChartBreakdown[]) {
 }
 
 /** snapping cross-hair + formatted value labels; shared by the time-series builders. */
-function crosshair(fmt: NumFormat) {
+function crosshair(fmt: NumFormat, timeAxis = false) {
   const label = valueFormatter(fmt);
   return {
     tooltip: {
       trigger: "axis" as const,
       axisPointer: { type: "cross" as const, snap: true },
+      confine: true,
       valueFormatter: (v: unknown) => label(v as number),
     },
-    xAxis: { axisPointer: { show: true, label: { show: true } } },
+    xAxis: {
+      axisPointer: {
+        show: true,
+        // a raw timestamp on a time axis is unreadable — show a short date
+        label: timeAxis ? { show: true, formatter: "{yyyy}-{MM}-{dd}" } : { show: true },
+      },
+    },
     yAxis: {
       axisPointer: {
         show: true,
@@ -176,7 +183,9 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: Line
     tooltip,
     legend: series.length > 1 ? {} : { show: false },
     xAxis: { type: "category", data: x, boundaryGap: false, ...ch.xAxis },
-    yAxis: { type: "value", scale: single, axisLabel: { formatter: axisFormatter(fmt) }, ...ch.yAxis },
+    // honest zero baseline — a revenue/count line zoomed to its own min..max
+    // makes routine variation look like a cliff. (Price history keeps scale:true.)
+    yAxis: { type: "value", axisLabel: { formatter: axisFormatter(fmt) }, ...ch.yAxis },
     ...zoomBits(!!opts?.zoom),
     series: series.map((s) => ({
       type: "line",
@@ -203,7 +212,7 @@ export function timeLineOption(
         ? opts.palette.status.good
         : opts.palette.status.critical
       : undefined;
-  const ch = crosshair(fmt);
+  const ch = crosshair(fmt, true);
   const markLine = opts?.markX
     ? {
         silent: true,
@@ -241,12 +250,16 @@ interface BarOpts {
 }
 
 /** shared axis-trigger tooltip for the bar builders. */
-function barTooltip(fmt: NumFormat, breakdowns?: ChartBreakdown[] | null) {
+function barTooltip(fmt: NumFormat, breakdowns?: ChartBreakdown[] | null, signed = false) {
   const label = valueFormatter(fmt);
-  const base = { trigger: "axis" as const, axisPointer: { type: "shadow" as const } };
+  const show = (v: unknown) => {
+    const s = label(v as number);
+    return signed && Number(v) > 0 ? `+${s}` : s;
+  };
+  const base = { trigger: "axis" as const, axisPointer: { type: "shadow" as const }, confine: true };
   return breakdowns?.length
-    ? { ...base, confine: true, formatter: breakdownFormatter(fmt, breakdowns) }
-    : { ...base, valueFormatter: (v: unknown) => label(v as number) };
+    ? { ...base, formatter: breakdownFormatter(fmt, breakdowns) }
+    : { ...base, valueFormatter: (v: unknown) => show(v) };
 }
 
 /** Grouped or single vertical bars over x categories. A single series that dips
@@ -258,7 +271,7 @@ export function barOption(x: (string | number)[], series: Series[], opts?: BarOp
   const up = opts?.palette?.status.good;
   const down = opts?.palette?.status.critical;
   return {
-    tooltip: barTooltip(fmt, opts?.breakdowns),
+    tooltip: barTooltip(fmt, opts?.breakdowns, diverging),
     legend: series.length > 1 ? {} : { show: false },
     xAxis: { type: "category", data: x },
     yAxis: { type: "value", scale: diverging, axisLabel: { formatter: axisFormatter(fmt) } },
@@ -280,6 +293,7 @@ export function stackedBarOption(x: (string | number)[], series: Series[], opts?
     tooltip: {
       trigger: "axis",
       axisPointer: { type: "shadow" },
+      confine: true,
       valueFormatter: (v: unknown) => label(v as number),
     },
     legend: {},
@@ -289,16 +303,35 @@ export function stackedBarOption(x: (string | number)[], series: Series[], opts?
   };
 }
 
-/** Horizontal bars, sorted, for "top N by …". */
+/** Horizontal bars, sorted, for "top N by …". Value printed at each bar's end;
+ *  long category names ellipsize (full name in the tooltip). */
 export function horizontalBarOption(labels: string[], values: number[], name = "", opts?: BarOpts): EChartsOption {
   const fmt = opts?.fmt ?? "int";
+  const label = valueFormatter(fmt);
   return {
     tooltip: barTooltip(fmt, opts?.breakdowns),
     legend: { show: false },
-    grid: { left: 8, right: 24, top: 12, bottom: 8, containLabel: true },
+    grid: { left: 8, right: 56, top: 8, bottom: 8, containLabel: true },
     xAxis: { type: "value", axisLabel: { formatter: axisFormatter(fmt) } },
-    yAxis: { type: "category", data: labels, inverse: true },
-    series: [{ type: "bar", name, data: values }],
+    yAxis: {
+      type: "category",
+      data: labels,
+      inverse: true,
+      axisLabel: { width: 150, overflow: "truncate" },
+    },
+    series: [
+      {
+        type: "bar",
+        name,
+        data: values,
+        label: {
+          show: true,
+          position: "right",
+          formatter: (p: { value?: unknown }) => label(p.value as number),
+          fontSize: 11,
+        },
+      },
+    ],
   };
 }
 

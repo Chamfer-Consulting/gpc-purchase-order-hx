@@ -173,6 +173,7 @@ def overview_page(fp: FilterParams) -> PageResponse:
     ]
     charts = [
         Chart(id="req_vs_shipped", title="Requested vs shipped by month", kind="line", x=gap_ix,
+              width="full",
               series=[
                   ChartSeries(name="Requested",
                               data=_series_on(gap_ix, gap.m, value_col="requested_amount", agg="sum")
@@ -203,8 +204,10 @@ def overview_page(fp: FilterParams) -> PageResponse:
               series=[ChartSeries(name="Change vs. prior month", data=inv_change)],
               y_format="int"),
         Chart(id="rev_yoy", title="Revenue by month, year over year", kind="line", x=list(_MONTHS),
+              width="full",
               series=_yoy(prod_all, value_col="line_total", agg="sum"), y_format="currency"),
         Chart(id="inv_yoy", title="Invoices by month, year over year", kind="line", x=list(_MONTHS),
+              width="full",
               series=_yoy(inv_all, value_col="id", agg="nunique"), y_format="int"),
     ]
 
