@@ -51,9 +51,20 @@ function chartOption(c: ChartSpec, palette: Palette) {
         { fmt },
       );
     case "area":
-      return lineOption(c.x, c.series, { area: true, palette, fmt, zoom: c.x.length > 24 });
+      return lineOption(c.x, c.series, {
+        area: true,
+        palette,
+        fmt,
+        zoom: c.x.length > 24,
+        breakdowns: c.breakdowns,
+      });
     default:
-      return lineOption(c.x, c.series, { palette, fmt, zoom: c.x.length > 24 });
+      return lineOption(c.x, c.series, {
+        palette,
+        fmt,
+        zoom: c.x.length > 24,
+        breakdowns: c.breakdowns,
+      });
   }
 }
 

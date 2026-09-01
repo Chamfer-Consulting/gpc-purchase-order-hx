@@ -18,7 +18,7 @@ from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope
 from ._util import finite as _finite
 from .context import prepared_frames, slice_by_date
-from .lifecycle import matched_gap_summary
+from .lifecycle import matched_gap_summary, month_breakdowns
 
 _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 _SPARK_MONTHS = 6
@@ -165,7 +165,8 @@ def overview_page(fp: FilterParams) -> PageResponse:
                   ChartSeries(name="Shipped",
                               data=_series_on(gap_ix, gap.m, value_col="delivered_amount", agg="sum")
                               if not gap.m.empty else []),
-              ], y_format="currency"),
+              ], y_format="currency",
+              breakdowns=month_breakdowns(gap.m, gap_ix) if not gap.m.empty else None),
         Chart(id="rev_month", title="Product revenue by month", kind="line", x=month_ix,
               series=[ChartSeries(name="Revenue",
                                   data=_series_on(month_ix, f_prod, value_col="line_total", agg="sum"))],

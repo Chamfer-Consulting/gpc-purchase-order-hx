@@ -18,6 +18,18 @@ export interface ChartSeries {
   data: (number | null)[];
 }
 
+export interface BreakdownRow {
+  name: string;
+  requested: number;
+  shipped: number;
+}
+
+export interface ChartBreakdown {
+  by: string;
+  label: string;
+  points: { x: string | number; rows: BreakdownRow[] }[];
+}
+
 export interface ChartSpec {
   id: string;
   title?: string | null;
@@ -25,6 +37,7 @@ export interface ChartSpec {
   x: (string | number)[];
   series: ChartSeries[];
   y_format: NumFormat;
+  breakdowns?: ChartBreakdown[] | null;
 }
 
 export interface TableColumnSpec {

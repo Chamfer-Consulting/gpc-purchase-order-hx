@@ -7,7 +7,7 @@
  * cross-hair with value labels on both axes, and — for a single metric over time
  * — the line coloured green when it ends above where it started, red when below.
  */
-import type { NumFormat } from "@/api/schema";
+import type { ChartBreakdown, NumFormat } from "@/api/schema";
 import { fmtCurrency, fmtInt, fmtPercent } from "@/lib/format";
 import { echarts, type EChartsOption } from "./echartsCore";
 import type { Palette } from "./palette";
@@ -25,6 +25,8 @@ interface LineOpts {
   fmt?: NumFormat;
   /** add a range slider under the plot (for long series). */
   zoom?: boolean;
+  /** per-x constituent rows (top products / customers) shown in the tooltip. */
+  breakdowns?: ChartBreakdown[] | null;
 }
 
 const compactUsd = new Intl.NumberFormat("en-US", {
@@ -79,6 +81,44 @@ function trendUp(data: (number | null)[]): boolean {
   return pts.length < 2 || pts[pts.length - 1] >= pts[0];
 }
 
+const esc = (s: string) =>
+  s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
+
+/** axis-trigger tooltip formatter that appends the top products / customers
+ *  (requested → shipped) behind the hovered x. */
+function breakdownFormatter(fmt: NumFormat, breakdowns: ChartBreakdown[]) {
+  const label = valueFormatter(fmt);
+  type P = { axisValueLabel?: string; axisValue?: string | number; seriesName?: string; value?: unknown; marker?: unknown };
+  return (raw: unknown) => {
+    const arr = (Array.isArray(raw) ? raw : [raw]) as P[];
+    const x = arr[0]?.axisValueLabel ?? arr[0]?.axisValue ?? "";
+    const head = `<div style="font-weight:600;margin-bottom:2px">${esc(String(x))}</div>`;
+    const series = arr
+      .map(
+        (p) =>
+          `${typeof p.marker === "string" ? p.marker : ""}${esc(p.seriesName ?? "")}: <b>${label(p.value as number)}</b>`,
+      )
+      .join("<br/>");
+    const blocks = breakdowns
+      .map((b) => {
+        const pt = b.points.find((q) => String(q.x) === String(x));
+        if (!pt || !pt.rows.length) return "";
+        const rows = pt.rows
+          .map(
+            (r) =>
+              `<div style="display:flex;gap:14px;justify-content:space-between">` +
+              `<span>${esc(r.name)}</span>` +
+              `<span style="opacity:.7;white-space:nowrap">${label(r.requested)} &rarr; ${label(r.shipped)}</span>` +
+              `</div>`,
+          )
+          .join("");
+        return `<div style="margin-top:6px;font-weight:600;opacity:.65;font-size:11px">${esc(b.label)}</div>${rows}`;
+      })
+      .join("");
+    return head + series + blocks;
+  };
+}
+
 /** snapping cross-hair + formatted value labels; shared by the time-series builders. */
 function crosshair(fmt: NumFormat) {
   const label = valueFormatter(fmt);
@@ -116,9 +156,13 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: Line
   const wantArea = opts?.area ?? single;
   const accent = single && opts?.palette ? (trendUp(series[0].data) ? opts.palette.status.good : opts.palette.status.critical) : undefined;
   const ch = crosshair(fmt);
+  const tooltip = opts?.breakdowns?.length
+    ? { ...ch.tooltip, formatter: breakdownFormatter(fmt, opts.breakdowns), confine: true }
+    : ch.tooltip;
 
   return {
     ...ch,
+    tooltip,
     legend: series.length > 1 ? {} : { show: false },
     xAxis: { type: "category", data: x, boundaryGap: false, ...ch.xAxis },
     yAxis: { type: "value", scale: single, axisLabel: { formatter: axisFormatter(fmt) }, ...ch.yAxis },

@@ -17,8 +17,21 @@ import data as _dash  # shared/data.py, via app.reuse
 from qbo_matcher import customers_match  # shared/, via app.reuse
 
 from ..deps import FilterParams
-from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope, Table, TableColumn
+from ..schemas import (
+    BreakdownPoint,
+    BreakdownRow,
+    Chart,
+    ChartBreakdown,
+    ChartSeries,
+    Kpi,
+    PageResponse,
+    Scope,
+    Table,
+    TableColumn,
+)
 from ._util import finite, records
+
+_BREAKDOWN_TOP_N = 5
 
 _TOP_N = 12
 _ROW_CAP = 300
@@ -91,6 +104,44 @@ def matched_gap_summary(fp: FilterParams) -> GapSummary:
     )
 
 
+def _one_breakdown(m: pd.DataFrame, months: list[str], col: str, label: str) -> ChartBreakdown:
+    """Per month, the top `col` values by (requested + shipped) $, each with its
+    own requested / shipped split — for the requested-vs-shipped tooltip."""
+    d = m.dropna(subset=["effective_date"]).copy()
+    d["_m"] = d["effective_date"].dt.to_period("M").astype(str)
+    d[col] = d[col].fillna("—").replace("", "—")
+    pts: list[BreakdownPoint] = []
+    for mo in months:
+        sub = d[d["_m"] == mo]
+        rows: list[BreakdownRow] = []
+        if not sub.empty:
+            g = (
+                sub.groupby(col)
+                .agg(requested=("requested_amount", "sum"), shipped=("delivered_amount", "sum"))
+                .reset_index()
+            )
+            g = g.assign(_t=g["requested"].abs() + g["shipped"].abs())
+            g = g[g["_t"] > 0].sort_values("_t", ascending=False).head(_BREAKDOWN_TOP_N)
+            rows = [
+                BreakdownRow(name=str(r[col]), requested=round(float(r["requested"]), 2),
+                             shipped=round(float(r["shipped"]), 2))
+                for _, r in g.iterrows()
+            ]
+        pts.append(BreakdownPoint(x=mo, rows=rows))
+    return ChartBreakdown(by=col.replace("_name", ""), label=label, points=pts)
+
+
+def month_breakdowns(m: pd.DataFrame, months: list[str]) -> list[ChartBreakdown]:
+    """Top products + top customers behind each month of the requested-vs-shipped
+    series. Empty list when there are no matched lines."""
+    if m is None or m.empty or not months:
+        return []
+    return [
+        _one_breakdown(m, months, "product_name", "Top products"),
+        _one_breakdown(m, months, "customer_name", "Top customers"),
+    ]
+
+
 def order_lifecycle(fp: FilterParams) -> PageResponse:
     po_df, items_df, _matched_df = _dash.load_data()
     if "status" in po_df.columns:  # admin-CRUD soft delete / cancel — out of scope
@@ -137,7 +188,8 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
               series=[
                   ChartSeries(name="Requested", data=_series(months, m, "requested_amount") if not m.empty else []),
                   ChartSeries(name="Shipped", data=_series(months, m, "delivered_amount") if not m.empty else []),
-              ], y_format="currency"),
+              ], y_format="currency",
+              breakdowns=month_breakdowns(m, months) if not m.empty else None),
         Chart(id="lost_by_month", title="Under-shipped by month (requested − shipped)", kind="bar", x=months,
               series=[ChartSeries(name="Under-shipped", data=_series(months, m, "lost_amount") if not m.empty else [])],
               y_format="currency"),
