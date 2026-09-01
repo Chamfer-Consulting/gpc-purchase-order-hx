@@ -2,6 +2,7 @@ import dayjs from "dayjs";
 import { Group, MultiSelect, Switch } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import { useFilters } from "./useFilters";
+import { RangePresets } from "./RangePresets";
 import { SavedViewsControl } from "./SavedViewsControl";
 
 interface FilterBarProps {
@@ -43,6 +44,9 @@ export function FilterBar({
         onChange={([s, e]) => setFilters({ start: iso(s), end: iso(e) })}
         clearable
       />
+      <div style={{ marginBottom: 6 }}>
+        <RangePresets />
+      </div>
       {!hideCustomers && (
         <MultiSelect
           label="Customers"

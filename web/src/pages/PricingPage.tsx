@@ -289,7 +289,7 @@ function HistoryChart({ product, size }: { product: string | null; size: string 
     }
     return timeLineOption(
       [...byCust.entries()].map(([name, points]) => ({ name, points })),
-      { yName: "Unit price ($)" },
+      { yName: "Unit price ($)", fmt: "currency2" },
     );
   }, [data]);
 

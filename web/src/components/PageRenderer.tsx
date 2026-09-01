@@ -1,4 +1,4 @@
-import { Alert, SimpleGrid, Stack, Text } from "@mantine/core";
+import { Alert, SimpleGrid, Stack, Text, useComputedColorScheme } from "@mantine/core";
 import { Chart } from "@/charts/Chart";
 import {
   barOption,
@@ -6,6 +6,8 @@ import {
   lineOption,
   stackedBarOption,
 } from "@/charts/options";
+import { paletteFor } from "@/charts/theme";
+import type { Palette } from "@/charts/palette";
 import { AttentionList } from "./AttentionList";
 import { DataGrid, type Column, type RowAction } from "./DataGrid";
 import { KpiCard } from "./KpiCard";
@@ -34,22 +36,24 @@ function kpiValue(k: Kpi): string {
   return typeof k.value === "number" ? formatCell(k.value, k.format === "text" ? "text" : k.format) : String(k.value);
 }
 
-function chartOption(c: ChartSpec) {
+function chartOption(c: ChartSpec, palette: Palette) {
+  const fmt = c.y_format;
   switch (c.kind) {
     case "bar":
-      return barOption(c.x, c.series);
+      return barOption(c.x, c.series, { fmt });
     case "stacked_bar":
-      return stackedBarOption(c.x, c.series);
+      return stackedBarOption(c.x, c.series, { fmt });
     case "hbar":
       return horizontalBarOption(
         c.x.map(String),
         (c.series[0]?.data ?? []).map((v) => v ?? 0),
         c.series[0]?.name,
+        { fmt },
       );
     case "area":
-      return lineOption(c.x, c.series, { area: true });
+      return lineOption(c.x, c.series, { area: true, palette, fmt, zoom: c.x.length > 24 });
     default:
-      return lineOption(c.x, c.series);
+      return lineOption(c.x, c.series, { palette, fmt, zoom: c.x.length > 24 });
   }
 }
 
@@ -80,6 +84,7 @@ function tableColumns(t: TableSpec): Column<Record<string, unknown>>[] {
 /** Renders a backend PageResponse: scope → attention → KPIs → charts → tables. */
 export function PageRenderer({ data, showScope = true }: { data: PageResponse; showScope?: boolean }) {
   const tableEntries = Object.entries(data.tables);
+  const palette = paletteFor(useComputedColorScheme("light"));
   const retry = useRetryExtractionAny();
   const ackMath = useAckLineMathAny();
 
@@ -192,7 +197,7 @@ export function PageRenderer({ data, showScope = true }: { data: PageResponse; s
         <SimpleGrid cols={{ base: 1, lg: data.charts.length > 1 ? 2 : 1 }} spacing="lg">
           {data.charts.map((c) => (
             <SectionCard key={c.id} title={c.title || undefined}>
-              <Chart option={chartOption(c)} empty={c.series.length === 0 || c.x.length === 0} />
+              <Chart option={chartOption(c, palette)} empty={c.series.length === 0 || c.x.length === 0} />
             </SectionCard>
           ))}
         </SimpleGrid>
