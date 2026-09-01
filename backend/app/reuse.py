@@ -10,6 +10,7 @@ import os
 import sys
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+REPO_ROOT = _REPO_ROOT  # public alias — e.g. services/extraction_retry.py shells out to a script here
 _SHARED = os.path.join(_REPO_ROOT, "shared")
 
 for p in (_SHARED, _REPO_ROOT):

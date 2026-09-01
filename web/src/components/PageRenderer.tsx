@@ -12,7 +12,7 @@ import { KpiCard } from "./KpiCard";
 import { ScopeBar } from "./ScopeBar";
 import { SectionCard } from "./SectionCard";
 import { formatCell } from "@/lib/format";
-import { notifySuccess } from "@/lib/notify";
+import { notifyError, notifySuccess } from "@/lib/notify";
 import { useRetryExtractionAny } from "@/api/poEdit";
 import type { ChartSpec, Kpi, PageResponse, TableSpec } from "@/api/schema";
 
@@ -95,6 +95,7 @@ export function PageRenderer({ data, showScope = true }: { data: PageResponse; s
                       ? "The pipeline filtered this thread out."
                       : `Still failing: ${d.error ?? "unknown error"}`,
               ),
+            onError: (e) => notifyError(e),
           }),
       },
     ];

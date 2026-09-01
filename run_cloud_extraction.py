@@ -42,6 +42,7 @@ it.
 import argparse
 import copy
 import hashlib
+import json
 import logging
 import os
 import re
@@ -1107,11 +1108,25 @@ def main():
     parser = argparse.ArgumentParser(description="Extract PO data from labeled Gmail messages into Postgres")
     parser.add_argument("--full-backlog", action="store_true", help="Ignore the last-synced cursor, scan each label's full history")
     parser.add_argument("--retry-errors", action="store_true", help="Re-process only the threads whose PO row recorded a genuine extraction failure (ignores the cursor; leaves it untouched)")
+    parser.add_argument("--thread", default=None, help="Re-extract + publish exactly ONE thread by id, print the result as JSON, and exit (the dashboard's per-PO 'Retry extraction' shells out to this)")
     parser.add_argument("--limit", type=int, default=None, help="Process only the first N messages found (for testing)")
     parser.add_argument("--log-file", default="run_cloud_extraction.log")
     args = parser.parse_args()
 
     configure_logging(args.log_file)
+
+    if args.thread:
+        # One-shot mode for the backend: isolate the heavy import graph (pdfplumber
+        # et al.) and the extraction in a short-lived subprocess so it can't block
+        # or OOM the API worker. Emits a single machine-readable line.
+        database_url = _require_env("DATABASE_URL")
+        try:
+            out = retry_single_thread(database_url, args.thread)
+        except RuntimeError as exc:
+            print("RESULT_JSON: " + json.dumps({"status": "unavailable", "error": str(exc)}))
+            sys.exit(2)
+        print("RESULT_JSON: " + json.dumps(out))
+        return
 
     anthropic_api_key = _require_env("ANTHROPIC_API_KEY")
     database_url = _require_env("DATABASE_URL")
