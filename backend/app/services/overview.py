@@ -18,6 +18,7 @@ from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope
 from ._util import finite as _finite
 from .context import prepared_frames, slice_by_date
+from .lifecycle import matched_gap_summary
 
 _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 _SPARK_MONTHS = 6
@@ -106,8 +107,10 @@ def overview_page(fp: FilterParams) -> PageResponse:
     other = round(gross - revenue, 2)
     n_invoices = int(f_inv["id"].nunique())
     n_customers = int(f_inv["customer_name"].nunique())
-    n_products = int(f_prod["product_name"].nunique())
     aiv = _finite(f_inv["total_amt"].mean()) if n_invoices else 0.0
+
+    # requested (PO) vs shipped (invoice) — the app's core metric
+    gap = matched_gap_summary(fp)
 
     rev_delta = inv_delta = aiv_delta = None
     rev_dir = inv_dir = aiv_dir = None
@@ -136,19 +139,33 @@ def overview_page(fp: FilterParams) -> PageResponse:
             help="Sum of product line items (category='product') on invoices in scope. "
                  "Shipping / services / samples are not counted — see the note below.",
             spark=_trailing(f_prod, value_col="line_total", agg="sum") or None),
+        Kpi(label="Lost sales", value=round(gap.lost, 2), format="currency",
+            help="Revenue requested on a PO but not invoiced — Σ (requested − shipped) over "
+                 "matched order lines, shortfalls only. Full breakdown on Order Lifecycle."),
+        Kpi(label="Fulfilment rate", value=gap.fulfil, format="percent",
+            help="Shipped ÷ requested across matched order lines."),
         Kpi(label="Invoices", value=n_invoices, format="int",
             delta=inv_delta, delta_direction=inv_dir, delta_label=delta_label,
             spark=_trailing(f_inv, value_col="id", agg="nunique") or None),
         Kpi(label="Customers", value=n_customers, format="int"),
-        Kpi(label="Products", value=n_products, format="int"),
         Kpi(label="Avg invoice value", value=round(aiv, 2), format="currency2",
             delta=aiv_delta, delta_direction=aiv_dir, delta_label=delta_label,
             help="Mean of the invoice header total (gross — includes shipping / tax), "
                  "not the product-revenue basis."),
     ]
 
+    gap_ix = _month_index(gap.m) if not gap.m.empty else []
     month_ix = _month_index(f_prod, f_inv)
     charts = [
+        Chart(id="req_vs_shipped", title="Requested vs shipped by month", kind="line", x=gap_ix,
+              series=[
+                  ChartSeries(name="Requested",
+                              data=_series_on(gap_ix, gap.m, value_col="requested_amount", agg="sum")
+                              if not gap.m.empty else []),
+                  ChartSeries(name="Shipped",
+                              data=_series_on(gap_ix, gap.m, value_col="delivered_amount", agg="sum")
+                              if not gap.m.empty else []),
+              ], y_format="currency"),
         Chart(id="rev_month", title="Product revenue by month", kind="line", x=month_ix,
               series=[ChartSeries(name="Revenue",
                                   data=_series_on(month_ix, f_prod, value_col="line_total", agg="sum"))],

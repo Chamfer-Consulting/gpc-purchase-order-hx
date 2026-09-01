@@ -9,6 +9,8 @@ Two lenses:
     (order, product, size), trended by month and broken out by customer / product.
 """
 
+from dataclasses import dataclass
+
 import pandas as pd
 
 import data as _dash  # shared/data.py, via app.reuse
@@ -37,6 +39,45 @@ def _series(index: list[str], df: pd.DataFrame, col: str) -> list[float | None]:
     return [finite(g[m]) if m in g.index else None for m in index]
 
 
+@dataclass
+class GapSummary:
+    """Line-level requested-vs-shipped rollup, scoped to a FilterParams. Shared by
+    /lifecycle and the Overview KPIs / chart."""
+    m: pd.DataFrame   # scoped matched lines + lost_amount / lost_qty columns (may be empty)
+    requested: float
+    shipped: float
+    lost: float
+    lost_units: float
+    fulfil: float     # shipped / requested %
+
+
+def matched_gap_summary(fp: FilterParams) -> GapSummary:
+    m = _dash.load_matched_line_items()
+    m = m.copy() if m is not None else pd.DataFrame()
+    if not m.empty:
+        m["effective_date"] = pd.to_datetime(m["effective_date"], errors="coerce")
+        if fp.start:
+            m = m[m["effective_date"] >= pd.Timestamp(fp.start)]
+        if fp.end:
+            m = m[m["effective_date"] < pd.Timestamp(fp.end) + pd.Timedelta(days=1)]
+        if fp.customers:
+            m = m[m["customer_name"].fillna("").map(
+                lambda c: any(customers_match(c, s) for s in fp.customers)
+            )]
+    if m.empty:
+        return GapSummary(m, 0.0, 0.0, 0.0, 0.0, 0.0)
+    for c in ("requested_qty", "requested_amount", "delivered_qty", "delivered_amount"):
+        m[c] = pd.to_numeric(m[c], errors="coerce").fillna(0.0)
+    m["lost_amount"] = (m["requested_amount"] - m["delivered_amount"]).clip(lower=0)
+    m["lost_qty"] = (m["requested_qty"] - m["delivered_qty"]).clip(lower=0)
+    requested = finite(m["requested_amount"].sum())
+    shipped = finite(m["delivered_amount"].sum())
+    return GapSummary(
+        m, requested, shipped, finite(m["lost_amount"].sum()), finite(m["lost_qty"].sum()),
+        round(shipped / requested * 100, 1) if requested else 0.0,
+    )
+
+
 def order_lifecycle(fp: FilterParams) -> PageResponse:
     po_df, items_df, _matched_df = _dash.load_data()
     if "status" in po_df.columns:  # admin-CRUD soft delete / cancel — out of scope
@@ -61,35 +102,14 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
             notes=["No orders in this scope."],
         )
 
-    matched = _dash.load_matched_line_items()
-    lc = _dash.order_lifecycle(valid_po, keep_keys, matched)
+    lc = _dash.order_lifecycle(valid_po, keep_keys, _dash.load_matched_line_items())
 
     # ---- line-level gap (the trending / by-customer / by-product view) ----------
-    m = matched.copy() if matched is not None else pd.DataFrame()
-    if not m.empty:
-        m["effective_date"] = pd.to_datetime(m["effective_date"], errors="coerce")
-        if fp.start:
-            m = m[m["effective_date"] >= pd.Timestamp(fp.start)]
-        if fp.end:
-            m = m[m["effective_date"] < pd.Timestamp(fp.end) + pd.Timedelta(days=1)]
-        if fp.customers:
-            m = m[m["customer_name"].fillna("").map(
-                lambda c: any(customers_match(c, s) for s in fp.customers)
-            )]
-
-    if m.empty:
-        requested = shipped = lost = lost_units = 0.0
-        fulfil = 0.0
-    else:
-        for c in ("requested_qty", "requested_amount", "delivered_qty", "delivered_amount"):
-            m[c] = pd.to_numeric(m[c], errors="coerce").fillna(0.0)
-        m["lost_amount"] = (m["requested_amount"] - m["delivered_amount"]).clip(lower=0)
-        m["lost_qty"] = (m["requested_qty"] - m["delivered_qty"]).clip(lower=0)
-        requested = finite(m["requested_amount"].sum())
-        shipped = finite(m["delivered_amount"].sum())
-        lost = finite(m["lost_amount"].sum())
-        lost_units = finite(m["lost_qty"].sum())
-        fulfil = round(shipped / requested * 100, 1) if requested else 0.0
+    gs = matched_gap_summary(fp)
+    m = gs.m
+    requested, shipped, lost, lost_units, fulfil = (
+        gs.requested, gs.shipped, gs.lost, gs.lost_units, gs.fulfil
+    )
 
     # per-order waterfall totals
     o_req = pd.to_numeric(lc["requested_amount"], errors="coerce")
