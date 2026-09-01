@@ -17,6 +17,7 @@ import pandas as pd
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope
 from ._util import finite as _finite
+from . import breakdown as _bd
 from .context import prepared_frames, slice_by_date
 from .lifecycle import matched_gap_summary, month_breakdowns
 
@@ -170,11 +171,21 @@ def overview_page(fp: FilterParams) -> PageResponse:
         Chart(id="rev_month", title="Product revenue by month", kind="line", x=month_ix,
               series=[ChartSeries(name="Revenue",
                                   data=_series_on(month_ix, f_prod, value_col="line_total", agg="sum"))],
-              y_format="currency"),
+              y_format="currency",
+              breakdowns=[
+                  _bd.by_month(f_prod, month_ix, group="product_name", value="line_total",
+                               label="Top products"),
+                  _bd.by_month(f_prod, month_ix, group="customer_name", value="line_total",
+                               label="Top customers"),
+              ]),
         Chart(id="inv_month", title="Invoices by month", kind="bar", x=month_ix,
               series=[ChartSeries(name="Invoices",
                                   data=_series_on(month_ix, f_inv, value_col="id", agg="nunique"))],
-              y_format="int"),
+              y_format="int",
+              breakdowns=[
+                  _bd.by_month(f_inv, month_ix, group="customer_name", value="id", agg="nunique",
+                               label="Top customers", fmt="int"),
+              ]),
         Chart(id="rev_yoy", title="Revenue by month, year over year", kind="line", x=list(_MONTHS),
               series=_yoy(prod_all, value_col="line_total", agg="sum"), y_format="currency"),
         Chart(id="inv_yoy", title="Invoices by month, year over year", kind="line", x=list(_MONTHS),

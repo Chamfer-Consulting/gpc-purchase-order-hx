@@ -8,6 +8,7 @@ import pandas as pd
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope, Table, TableColumn
 import data as _dash  # shared/data.py, via app.reuse
+from . import breakdown as _bd
 from .context import build_context, monthly_revenue, prepared_frames, slice_by_date
 from ._util import records
 
@@ -193,15 +194,30 @@ def explore(fp: FilterParams) -> PageResponse:
         prod.groupby("product_name")["line_total"].sum().sort_values(ascending=False).head(_TOP_N)
     )
 
+    cust_names, prod_names = list(by_cust.index), list(by_prod.index)
     charts = [
         Chart(id="rev_month", title="Product revenue by month", kind="line", x=months,
-              series=[ChartSeries(name="Revenue", data=rev_series)], y_format="currency"),
+              series=[ChartSeries(name="Revenue", data=rev_series)], y_format="currency",
+              breakdowns=[
+                  _bd.by_month(prod, months, group="product_name", value="line_total",
+                               label="Top products"),
+                  _bd.by_month(prod, months, group="customer_name", value="line_total",
+                               label="Top customers"),
+              ]),
         Chart(id="rev_customer", title=f"Revenue by customer (top {_TOP_N})", kind="hbar",
-              x=list(by_cust.index), series=[ChartSeries(name="Revenue", data=[float(v) for v in by_cust.values])],
-              y_format="currency"),
+              x=cust_names, series=[ChartSeries(name="Revenue", data=[float(v) for v in by_cust.values])],
+              y_format="currency",
+              breakdowns=[
+                  _bd.by_category(prod, cust_names, key="customer_name", group="product_name",
+                                  value="line_total", label="Top products"),
+              ]),
         Chart(id="rev_product", title=f"Revenue by product (top {_TOP_N})", kind="hbar",
-              x=list(by_prod.index), series=[ChartSeries(name="Revenue", data=[float(v) for v in by_prod.values])],
-              y_format="currency"),
+              x=prod_names, series=[ChartSeries(name="Revenue", data=[float(v) for v in by_prod.values])],
+              y_format="currency",
+              breakdowns=[
+                  _bd.by_category(prod, prod_names, key="product_name", group="customer_name",
+                                  value="line_total", label="Top customers"),
+              ]),
     ]
 
     tables: dict[str, Table] = {}

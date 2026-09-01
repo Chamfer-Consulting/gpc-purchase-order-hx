@@ -40,7 +40,7 @@ function chartOption(c: ChartSpec, palette: Palette) {
   const fmt = c.y_format;
   switch (c.kind) {
     case "bar":
-      return barOption(c.x, c.series, { fmt });
+      return barOption(c.x, c.series, { fmt, breakdowns: c.breakdowns });
     case "stacked_bar":
       return stackedBarOption(c.x, c.series, { fmt });
     case "hbar":
@@ -48,7 +48,7 @@ function chartOption(c: ChartSpec, palette: Palette) {
         c.x.map(String),
         (c.series[0]?.data ?? []).map((v) => v ?? 0),
         c.series[0]?.name,
-        { fmt },
+        { fmt, breakdowns: c.breakdowns },
       );
     case "area":
       return lineOption(c.x, c.series, {

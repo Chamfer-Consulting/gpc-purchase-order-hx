@@ -16,6 +16,8 @@ import pandas as pd
 import data as _dash  # shared/data.py, via app.reuse
 from qbo_matcher import customers_match  # shared/, via app.reuse
 
+from . import breakdown as _bd
+
 from ..deps import FilterParams
 from ..schemas import (
     BreakdownPoint,
@@ -192,7 +194,13 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
               breakdowns=month_breakdowns(m, months) if not m.empty else None),
         Chart(id="lost_by_month", title="Under-shipped by month (requested − shipped)", kind="bar", x=months,
               series=[ChartSeries(name="Under-shipped", data=_series(months, m, "lost_amount") if not m.empty else [])],
-              y_format="currency"),
+              y_format="currency",
+              breakdowns=[
+                  _bd.by_month(m, months, group="product_name", value="lost_amount",
+                               label="Top under-shipped products"),
+                  _bd.by_month(m, months, group="customer_name", value="lost_amount",
+                               label="Top under-shipped customers"),
+              ] if not m.empty else None),
     ]
     tables = {}
 
@@ -205,11 +213,16 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
         )
         cust["fulfil_pct"] = (cust["shipped"] / cust["requested"].where(cust["requested"] > 0) * 100).round(1)
         cust = cust.sort_values("lost", ascending=False)
+        _lc_names = list(cust.head(_TOP_N)["customer_name"])
         charts.append(Chart(
             id="lost_by_customer", title=f"Under-shipped by customer (top {_TOP_N})", kind="hbar",
-            x=list(cust.head(_TOP_N)["customer_name"]),
+            x=_lc_names,
             series=[ChartSeries(name="Under-shipped", data=[finite(v) for v in cust.head(_TOP_N)["lost"]])],
-            y_format="currency"))
+            y_format="currency",
+            breakdowns=[
+                _bd.by_category(m, _lc_names, key="customer_name", group="product_name",
+                                value="lost_amount", label="Top under-shipped products"),
+            ]))
         tables["by_customer"] = Table(
             title=f"By customer ({cust.shape[0]})",
             columns=[

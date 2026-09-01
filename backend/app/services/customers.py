@@ -12,6 +12,7 @@ from qbo_matcher import normalize_customer  # shared/, via app.reuse
 
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope, Table, TableColumn
+from . import breakdown as _bd
 from ._util import finite, records
 from .context import build_context, monthly_revenue
 from .lifecycle import matched_gap_summary
@@ -185,6 +186,10 @@ def customers_page(fp: FilterParams) -> PageResponse:
                 x=list(top["customer_name"]),
                 series=[ChartSeries(name="Revenue", data=[finite(v) for v in top["revenue"]])],
                 y_format="currency",
+                breakdowns=[
+                    _bd.by_category(prod, list(top["customer_name"]), key="customer_name",
+                                    group="product_name", value="line_total", label="Top products"),
+                ],
             ),
             Chart(
                 id="rev_by_month",
@@ -193,6 +198,12 @@ def customers_page(fp: FilterParams) -> PageResponse:
                 x=months,
                 series=[ChartSeries(name="Revenue", data=series)],
                 y_format="currency",
+                breakdowns=[
+                    _bd.by_month(prod, months, group="product_name", value="line_total",
+                                 label="Top products"),
+                    _bd.by_month(prod, months, group="customer_name", value="line_total",
+                                 label="Top customers"),
+                ],
             ),
         ],
         tables={
@@ -301,17 +312,36 @@ def customer_detail(fp: FilterParams, name: str) -> PageResponse:
         ],
         charts=[
             Chart(id="rev_month", title="Product revenue by month", kind="line",
-                  x=rev_m, series=[ChartSeries(name="Revenue", data=rev_v)], y_format="currency"),
+                  x=rev_m, series=[ChartSeries(name="Revenue", data=rev_v)], y_format="currency",
+                  breakdowns=[
+                      _bd.by_month(c_prod, rev_m, group="product_name", value="line_total",
+                                   label="Top products"),
+                      _bd.by_month(c_prod, rev_m, group="container_size", value="line_total",
+                                   label="By size"),
+                  ]),
             Chart(id="orders_month", title="Orders by month", kind="bar",
-                  x=ord_m, series=[ChartSeries(name="Orders", data=ord_v)], y_format="int"),
+                  x=ord_m, series=[ChartSeries(name="Orders", data=ord_v)], y_format="int",
+                  breakdowns=[
+                      _bd.by_month(c_prod, ord_m, group="product_name", value="invoice_id",
+                                   agg="nunique", label="Products ordered", fmt="int"),
+                  ]),
             Chart(id="rev_by_product", title=f"Revenue by product (top {_TOP_N})", kind="hbar",
                   x=list(by_product.index),
                   series=[ChartSeries(name="Revenue", data=[finite(v) for v in by_product.values])],
-                  y_format="currency"),
+                  y_format="currency",
+                  breakdowns=[
+                      _bd.by_category(c_prod, list(by_product.index), key="product_name",
+                                      group="container_size", value="line_total", label="By size"),
+                  ]),
             Chart(id="qty_by_size", title="Quantity by container size", kind="bar",
                   x=list(by_size.index),
                   series=[ChartSeries(name="Units", data=[finite(v) for v in by_size.values])],
-                  y_format="int"),
+                  y_format="int",
+                  breakdowns=[
+                      _bd.by_category(c_prod, list(by_size.index), key="container_size",
+                                      group="product_name", value="quantity", label="Top products",
+                                      fmt="int"),
+                  ]),
         ],
         tables={
             "products": Table(

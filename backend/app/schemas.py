@@ -28,8 +28,9 @@ class ChartSeries(BaseModel):
 
 class BreakdownRow(BaseModel):
     name: str
-    requested: float
-    shipped: float
+    value: float | None = None  # generic magnitude (revenue, count, units, …)
+    requested: float | None = None  # requested-vs-shipped charts only
+    shipped: float | None = None
 
 
 class BreakdownPoint(BaseModel):
@@ -39,9 +40,10 @@ class BreakdownPoint(BaseModel):
 
 class ChartBreakdown(BaseModel):
     """A per-x-point constituent breakdown surfaced in the chart tooltip
-    (e.g. the top products / customers behind each month's requested-vs-shipped)."""
-    by: str  # "product" | "customer"
+    (e.g. the top products / customers behind each month or each bar)."""
+    by: str  # "product" | "customer" | "size" | …
     label: str  # tooltip sub-heading, e.g. "Top products"
+    value_format: NumFormat = "currency"  # how to render row `value`
     points: list[BreakdownPoint] = Field(default_factory=list)
 
 

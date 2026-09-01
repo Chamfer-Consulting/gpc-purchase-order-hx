@@ -20,13 +20,15 @@ export interface ChartSeries {
 
 export interface BreakdownRow {
   name: string;
-  requested: number;
-  shipped: number;
+  value?: number | null;
+  requested?: number | null;
+  shipped?: number | null;
 }
 
 export interface ChartBreakdown {
   by: string;
   label: string;
+  value_format?: NumFormat;
   points: { x: string | number; rows: BreakdownRow[] }[];
 }
 

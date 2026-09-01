@@ -84,8 +84,8 @@ function trendUp(data: (number | null)[]): boolean {
 const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
 
-/** axis-trigger tooltip formatter that appends the top products / customers
- *  (requested → shipped) behind the hovered x. */
+/** axis-trigger tooltip formatter that appends each breakdown's top rows
+ *  (requested → shipped, or a single formatted value) behind the hovered x. */
 function breakdownFormatter(fmt: NumFormat, breakdowns: ChartBreakdown[]) {
   const label = valueFormatter(fmt);
   type P = { axisValueLabel?: string; axisValue?: string | number; seriesName?: string; value?: unknown; marker?: unknown };
@@ -94,6 +94,7 @@ function breakdownFormatter(fmt: NumFormat, breakdowns: ChartBreakdown[]) {
     const x = arr[0]?.axisValueLabel ?? arr[0]?.axisValue ?? "";
     const head = `<div style="font-weight:600;margin-bottom:2px">${esc(String(x))}</div>`;
     const series = arr
+      .filter((p) => p.value != null)
       .map(
         (p) =>
           `${typeof p.marker === "string" ? p.marker : ""}${esc(p.seriesName ?? "")}: <b>${label(p.value as number)}</b>`,
@@ -103,14 +104,20 @@ function breakdownFormatter(fmt: NumFormat, breakdowns: ChartBreakdown[]) {
       .map((b) => {
         const pt = b.points.find((q) => String(q.x) === String(x));
         if (!pt || !pt.rows.length) return "";
+        const rowFmt = valueFormatter(b.value_format ?? "currency");
         const rows = pt.rows
-          .map(
-            (r) =>
+          .map((r) => {
+            const right =
+              r.requested != null && r.shipped != null
+                ? `${label(r.requested)} &rarr; ${label(r.shipped)}`
+                : rowFmt(r.value ?? 0);
+            return (
               `<div style="display:flex;gap:14px;justify-content:space-between">` +
               `<span>${esc(r.name)}</span>` +
-              `<span style="opacity:.7;white-space:nowrap">${label(r.requested)} &rarr; ${label(r.shipped)}</span>` +
-              `</div>`,
-          )
+              `<span style="opacity:.7;white-space:nowrap">${right}</span>` +
+              `</div>`
+            );
+          })
           .join("");
         return `<div style="margin-top:6px;font-weight:600;opacity:.65;font-size:11px">${esc(b.label)}</div>${rows}`;
       })
@@ -211,18 +218,28 @@ export function timeLineOption(
   };
 }
 
+interface BarOpts {
+  fmt?: NumFormat;
+  breakdowns?: ChartBreakdown[] | null;
+}
+
+/** shared axis-trigger tooltip for the bar builders. */
+function barTooltip(fmt: NumFormat, breakdowns?: ChartBreakdown[] | null) {
+  const label = valueFormatter(fmt);
+  const base = { trigger: "axis" as const, axisPointer: { type: "shadow" as const } };
+  return breakdowns?.length
+    ? { ...base, confine: true, formatter: breakdownFormatter(fmt, breakdowns) }
+    : { ...base, valueFormatter: (v: unknown) => label(v as number) };
+}
+
 /** Grouped or single vertical bars over x categories. */
-export function barOption(x: (string | number)[], series: Series[], opts?: { fmt?: NumFormat }): EChartsOption {
-  const label = valueFormatter(opts?.fmt ?? "int");
+export function barOption(x: (string | number)[], series: Series[], opts?: BarOpts): EChartsOption {
+  const fmt = opts?.fmt ?? "int";
   return {
-    tooltip: {
-      trigger: "axis",
-      axisPointer: { type: "shadow" },
-      valueFormatter: (v: unknown) => label(v as number),
-    },
+    tooltip: barTooltip(fmt, opts?.breakdowns),
     legend: series.length > 1 ? {} : { show: false },
     xAxis: { type: "category", data: x },
-    yAxis: { type: "value", axisLabel: { formatter: axisFormatter(opts?.fmt ?? "int") } },
+    yAxis: { type: "value", axisLabel: { formatter: axisFormatter(fmt) } },
     series: series.map((s) => ({ type: "bar", name: s.name, data: s.data })),
   };
 }
@@ -244,17 +261,13 @@ export function stackedBarOption(x: (string | number)[], series: Series[], opts?
 }
 
 /** Horizontal bars, sorted, for "top N by …". */
-export function horizontalBarOption(labels: string[], values: number[], name = "", opts?: { fmt?: NumFormat }): EChartsOption {
-  const label = valueFormatter(opts?.fmt ?? "int");
+export function horizontalBarOption(labels: string[], values: number[], name = "", opts?: BarOpts): EChartsOption {
+  const fmt = opts?.fmt ?? "int";
   return {
-    tooltip: {
-      trigger: "axis",
-      axisPointer: { type: "shadow" },
-      valueFormatter: (v: unknown) => label(v as number),
-    },
+    tooltip: barTooltip(fmt, opts?.breakdowns),
     legend: { show: false },
     grid: { left: 8, right: 24, top: 12, bottom: 8, containLabel: true },
-    xAxis: { type: "value", axisLabel: { formatter: axisFormatter(opts?.fmt ?? "int") } },
+    xAxis: { type: "value", axisLabel: { formatter: axisFormatter(fmt) } },
     yAxis: { type: "category", data: labels, inverse: true },
     series: [{ type: "bar", name, data: values }],
   };

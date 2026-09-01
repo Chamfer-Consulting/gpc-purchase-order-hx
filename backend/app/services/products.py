@@ -5,6 +5,7 @@ import pandas as pd
 
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope, Table, TableColumn
+from . import breakdown as _bd
 from .context import build_context
 from ._util import records
 
@@ -65,6 +66,10 @@ def products_and_sizes(fp: FilterParams) -> PageResponse:
                 x=list(by_product["product_name"]),
                 series=[ChartSeries(name="Revenue", data=[float(v) for v in by_product["revenue"]])],
                 y_format="currency",
+                breakdowns=[
+                    _bd.by_category(prod, list(by_product["product_name"]), key="product_name",
+                                    group="customer_name", value="line_total", label="Top customers"),
+                ],
             ),
             Chart(
                 id="rev_by_size",
@@ -73,6 +78,10 @@ def products_and_sizes(fp: FilterParams) -> PageResponse:
                 x=list(by_size["size_label"]),
                 series=[ChartSeries(name="Revenue", data=[float(v) for v in by_size["revenue"]])],
                 y_format="currency",
+                breakdowns=[
+                    _bd.by_category(prod, list(by_size["size_label"]), key="size_label",
+                                    group="product_name", value="line_total", label="Top products"),
+                ],
             ),
             Chart(
                 id="product_mix",
