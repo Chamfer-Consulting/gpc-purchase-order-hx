@@ -19,6 +19,8 @@ class Kpi(BaseModel):
     delta_label: str | None = None  # caption under the delta, e.g. "vs. prior 30 days"
     spark: list[float] | None = None
     help: str | None = None
+    north_star: bool = False  # the page's headline metric (accent underline). None
+    #                           set => the SPA accents the first KPI, as before.
 
 
 class ChartSeries(BaseModel):

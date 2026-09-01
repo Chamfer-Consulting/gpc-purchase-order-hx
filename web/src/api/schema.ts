@@ -11,6 +11,7 @@ export interface Kpi {
   delta_label?: string | null;
   spark?: number[] | null;
   help?: string | null;
+  north_star?: boolean;
 }
 
 export interface ChartSeries {

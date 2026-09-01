@@ -196,23 +196,30 @@ export function PageRenderer({
         </Text>
       ))}
 
-      {data.kpis.length > 0 && (
-        <SimpleGrid cols={{ base: 1, sm: 2, md: Math.min(4, data.kpis.length) }}>
-          {data.kpis.map((k, i) => (
-            <KpiCard
-              key={k.label}
-              label={k.label}
-              value={kpiValue(k)}
-              delta={k.delta ?? null}
-              deltaDirection={k.delta_direction ?? undefined}
-              deltaLabel={k.delta_label ?? undefined}
-              help={k.help ?? undefined}
-              spark={k.spark ?? undefined}
-              northStar={i === 0}
-            />
-          ))}
-        </SimpleGrid>
-      )}
+      {data.kpis.length > 0 &&
+        (() => {
+          // the accent goes on the KPI the backend marks north_star; if none is
+          // marked, fall back to the first (every page had one hero before).
+          const marked = data.kpis.findIndex((k) => k.north_star);
+          const heroIdx = marked >= 0 ? marked : 0;
+          return (
+            <SimpleGrid cols={{ base: 1, sm: 2, md: Math.min(4, data.kpis.length) }}>
+              {data.kpis.map((k, i) => (
+                <KpiCard
+                  key={k.label}
+                  label={k.label}
+                  value={kpiValue(k)}
+                  delta={k.delta ?? null}
+                  deltaDirection={k.delta_direction ?? undefined}
+                  deltaLabel={k.delta_label ?? undefined}
+                  help={k.help ?? undefined}
+                  spark={k.spark ?? undefined}
+                  northStar={i === heroIdx}
+                />
+              ))}
+            </SimpleGrid>
+          );
+        })()}
 
       {data.charts.length > 0 && (
         <SimpleGrid cols={{ base: 1, lg: data.charts.length > 1 ? 2 : 1 }} spacing="lg">

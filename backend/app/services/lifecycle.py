@@ -336,7 +336,7 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
             Kpi(label="Over-shipped", value=round(over, 2), format="currency",
                 help="Σ (shipped − requested) on lines invoiced for MORE than the PO asked. "
                      "Under-shipped − Over-shipped = Requested − Shipped."),
-            Kpi(label="Fulfilment rate", value=fulfil, format="percent",
+            Kpi(label="Fulfilment rate", value=fulfil, format="percent", north_star=True,
                 help="Σ shipped ÷ Σ requested across matched order lines (over-ships mask "
                      "under-ships here — see Under-shipped for the per-order view)."),
             Kpi(label="Requested", value=round(requested, 2), format="currency"),
