@@ -120,10 +120,17 @@ export function usePo(poId: number) {
 function useInvalidatePo(poId: number) {
   const qc = useQueryClient();
   return () => {
-    qc.invalidateQueries({ queryKey: ["po", poId] });
-    qc.invalidateQueries({ queryKey: ["data-quality"] });
-    qc.invalidateQueries({ queryKey: ["overview"] });
-    qc.invalidateQueries({ queryKey: ["matching"] });
+    for (const key of [
+      ["po", poId],
+      ["data-quality"],
+      ["overview"],
+      ["matching"],
+      // the /reconcile screen: a status change resolves / re-ranks a queue item
+      ["reconcile-queue"],
+      ["reconcile-po", poId],
+    ]) {
+      qc.invalidateQueries({ queryKey: key });
+    }
   };
 }
 

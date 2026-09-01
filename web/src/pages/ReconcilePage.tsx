@@ -51,12 +51,16 @@ export function ReconcilePage() {
   const items = queue.data?.items ?? [];
   const idx = useMemo(() => items.findIndex((i) => i.po_id === poId), [items, poId]);
 
-  // auto-select the first item once the queue loads
+  // Auto-select the first item once the queue loads, and — after a decision /
+  // status change drops the current PO out of the queue — advance to the next
+  // thing to deal with (top of the queue = highest priority).
   useEffect(() => {
-    if (poId == null && items.length > 0) {
+    if (queue.isLoading || items.length === 0) return;
+    const stillQueued = poId != null && items.some((i) => i.po_id === poId);
+    if (!stillQueued) {
       nav(`/reconcile/${items[0].po_id}`, { replace: true });
     }
-  }, [poId, items, nav]);
+  }, [poId, items, queue.isLoading, nav]);
 
   const go = (delta: number) => {
     if (!items.length) return;
@@ -150,7 +154,11 @@ export function ReconcilePage() {
         </Paper>
 
         <div style={{ minWidth: 0 }}>
-          {poId == null ? (
+          {!queue.isLoading && items.length === 0 ? (
+            <Text c="dimmed" p="xl" ta="center">
+              Nothing needs reconciling. 🎉
+            </Text>
+          ) : poId == null ? (
             <Text c="dimmed" p="xl" ta="center">
               Select an order from the queue.
             </Text>

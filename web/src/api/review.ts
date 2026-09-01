@@ -65,9 +65,15 @@ export const useDecisions = () =>
   useQuery({ queryKey: ["review-decisions"], queryFn: () => apiGet<{ items: DecisionRow[] }>("/api/review/decisions") });
 
 function invalidateAll(qc: ReturnType<typeof useQueryClient>) {
-  ["review-queue", "review-candidates", "review-decisions", "data-quality"].forEach((k) =>
-    qc.invalidateQueries({ queryKey: [k] }),
-  );
+  [
+    "review-queue",
+    "review-candidates",
+    "review-decisions",
+    "data-quality",
+    // the /reconcile screen reads these — a decision resolves a queue item
+    "reconcile-queue",
+    "reconcile-po",
+  ].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
 }
 
 export function useUpsertDecision() {
