@@ -436,6 +436,64 @@ _MODIFICATION_HINT = re.compile(
     re.IGNORECASE,
 )
 
+# A subject line explicitly marking the email as a revised order — a strong,
+# high-precision revision signal on its own (see _resolve_revision_target).
+_SUBJECT_REVISED = re.compile(
+    r"\b(revis(ed|ion)?|amend(ed|ment)?|corrected|re-?issued?|\brev\.?\b|\b[rv]\s?\d\b)\b",
+    re.IGNORECASE,
+)
+# PO number in a subject: "PO 583741", "P.O.# 00583741", "#583741", or a bare
+# 5-12 digit run (only trusted because we already know the subject says "revised").
+_SUBJECT_PO_NUM = re.compile(
+    r"(?:\bp\.?\s*o\.?\s*(?:number|no|#)?\s*[:#-]?\s*|#)\s*(\d{4,12})|\b(\d{5,12})\b",
+    re.IGNORECASE,
+)
+
+
+def _norm_num(value) -> str:
+    """Digits only, leading zeros stripped — matches qbo_matcher.normalize_po_number
+    without importing it into the pipeline."""
+    return re.sub(r"\D", "", str(value or "")).lstrip("0")
+
+
+def _subject_po_numbers(subject: str) -> list[str]:
+    out = []
+    for m in _SUBJECT_PO_NUM.finditer(subject or ""):
+        n = m.group(1) or m.group(2)
+        if n and n not in out:
+            out.append(n)
+    return out
+
+
+def _resolve_revision_target(pg_conn, result: dict, subject: str, source_label: str) -> dict | None:
+    """The order this thread revises, or None. Two signals:
+      1. the extracted po_number matches an existing clean PO (the original
+         Case-B check), OR
+      2. the SUBJECT line says "revised" AND a PO number (from the subject, or
+         the body) resolves to an existing clean PO.
+    Match is tried exact first, then digits-only / leading-zeros-stripped."""
+    def _lookup(num: str) -> dict | None:
+        if not num:
+            return None
+        return (postgres_store.clean_po_by_number(pg_conn, num, exclude_source_file=source_label)
+                or postgres_store.find_po_by_normalized_number(pg_conn, _norm_num(num),
+                                                               exclude_source_file=source_label))
+
+    body_num = (result.get("po_number") or "").strip()
+    hit = _lookup(body_num)
+    if hit is not None:
+        return hit
+
+    if _SUBJECT_REVISED.search(subject or ""):
+        for num in ([body_num] if body_num else []) + _subject_po_numbers(subject):
+            hit = _lookup(num)
+            if hit is not None:
+                logger.info(
+                    f"{source_label}: subject marks a revision of PO {num} — auto-grouped"
+                )
+                return hit
+    return None
+
 
 def _render_prior_order(prior: dict) -> str:
     """A stored PO result dict rendered as compact readable text, to seed a
@@ -731,6 +789,7 @@ def _process_thread(
     source_label = f"gmail-thread:{thread_id}"
     file_hash = hashlib.sha256(combined_text.encode("utf-8")).hexdigest()
     message_count = len(messages)
+    subject = (gmail_client.message_headers(messages[0]).get("subject") or "").strip()
 
     # Keep the review queue / eval able to see what the model saw.
     postgres_store.upsert_snapshot(pg_conn, "thread", thread_id, combined_text, file_hash)
@@ -829,11 +888,10 @@ def _process_thread(
         extra_guidance=fewshot_block,
     )
     if result is not None and "error" not in result:
-        # Case B: this text thread names a PO that was captured elsewhere (a PDF, or
-        # another thread) — it's a modification of that order, not a new one.
-        other = postgres_store.clean_po_by_number(
-            pg_conn, result.get("po_number"), exclude_source_file=source_label
-        ) if result.get("po_number") else None
+        # Case B: this text thread is a modification of an order captured elsewhere
+        # (a PDF, another thread) — because its extracted po_number matches one, OR
+        # its subject line explicitly says "revised" and names a resolvable PO.
+        other = _resolve_revision_target(pg_conn, result, subject, source_label)
         if other is not None:
             group_key = other.get("po_number") or other.get("_source_file")
             if len(_line_multiset(result.get("line_items"))) < len(_line_multiset(other.get("line_items"))):
@@ -846,7 +904,7 @@ def _process_thread(
                     result = seeded
                     result["_extraction_method"] = "text-mod"
             result["_group_override"] = group_key
-            logger.info(f"{source_label}: references PO {result.get('po_number')} captured elsewhere — grouped as its revision")
+            logger.info(f"{source_label}: grouped as a revision of PO {group_key}")
         elif not result.get("po_number") and _MODIFICATION_HINT.search(combined_text or ""):
             # Talks like a change to an existing order but names no PO we can
             # resolve — don't write a guessy fragment. Surface it for a human to
