@@ -109,10 +109,17 @@ async def _api_problem(request: Request, exc: ApiProblem) -> JSONResponse:
 async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
     """Turn an unhandled error into a logged 500 that still carries the CORS
     header. Starlette's default 500 path sits *outside* CORSMiddleware, so without
-    this the browser only ever sees an opaque "Failed to fetch"."""
+    this the browser only ever sees an opaque "Failed to fetch". This is a
+    single-owner internal tool behind deny-all RLS, so the response includes the
+    exception text (truncated) — an opaque type name made every 500 a guessing
+    game."""
     _log.exception("unhandled error: %s %s", request.method, request.url.path)
+    msg = str(exc).strip().replace("\n", " ")
+    detail = f"internal server error at {request.url.path}: {type(exc).__name__}"
+    if msg:
+        detail += f" — {msg[:400]}"
     return JSONResponse(
-        {"detail": f"internal server error: {type(exc).__name__}"},
+        {"detail": detail},
         status_code=500,
         headers=_cors_headers(request),
     )

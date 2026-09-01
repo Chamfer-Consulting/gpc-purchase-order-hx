@@ -114,14 +114,18 @@ def _run_subprocess(thread_id: str) -> dict:
     fd, out_path = tempfile.mkstemp(prefix="retry_ext_", suffix=".out")
     proc = None
     try:
-        with os.fdopen(fd, "w") as sink:
-            proc = subprocess.Popen(
-                [sys.executable, _SCRIPT, "--thread", thread_id,
-                 "--log-file", "/tmp/retry_extraction.log"],
-                stdout=sink, stderr=subprocess.STDOUT, text=True,
-                env={**os.environ},
-                start_new_session=True,  # detach from the request's process group
-            )
+        try:
+            with os.fdopen(fd, "w") as sink:
+                proc = subprocess.Popen(
+                    [sys.executable, _SCRIPT, "--thread", thread_id,
+                     "--log-file", "/tmp/retry_extraction.log"],
+                    stdout=sink, stderr=subprocess.STDOUT,
+                    env={**os.environ},
+                    start_new_session=True,  # detach from the request's process group
+                )
+        except OSError as exc:
+            raise ApiProblem(f"Couldn't start the extraction subprocess: {exc}",
+                             code="retry_failed") from exc
 
         deadline = time.monotonic() + _SOFT_WAIT_S
         while time.monotonic() < deadline:
