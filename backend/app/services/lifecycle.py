@@ -43,11 +43,13 @@ def _series(index: list[str], df: pd.DataFrame, col: str) -> list[float | None]:
 class GapSummary:
     """Line-level requested-vs-shipped rollup, scoped to a FilterParams. Shared by
     /lifecycle and the Overview KPIs / chart."""
-    m: pd.DataFrame   # scoped matched lines + lost_amount / lost_qty columns (may be empty)
-    requested: float
-    shipped: float
-    lost: float
+    m: pd.DataFrame   # scoped matched lines + lost_/over_ amount & qty columns (may be empty)
+    requested: float  # Σ requested_amount (all rows)
+    shipped: float    # Σ delivered_amount (all rows)
+    lost: float       # Σ max(requested-delivered,0), $ over rows the PO priced
+    over: float       # Σ max(delivered-requested,0), $ over rows the PO priced
     lost_units: float
+    over_units: float
     fulfil: float     # shipped / requested %
 
 
@@ -65,17 +67,26 @@ def matched_gap_summary(fp: FilterParams) -> GapSummary:
                 lambda c: any(customers_match(c, s) for s in fp.customers)
             )]
     if m.empty:
-        return GapSummary(m, 0.0, 0.0, 0.0, 0.0, 0.0)
+        return GapSummary(m, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     for c in ("requested_qty", "requested_amount", "delivered_qty", "delivered_amount"):
         m[c] = pd.to_numeric(m[c], errors="coerce").fillna(0.0)
     m["lost_amount"] = (m["requested_amount"] - m["delivered_amount"]).clip(lower=0)
     m["lost_qty"] = (m["requested_qty"] - m["delivered_qty"]).clip(lower=0)
     m["over_amount"] = (m["delivered_amount"] - m["requested_amount"]).clip(lower=0)
     m["over_qty"] = (m["delivered_qty"] - m["requested_qty"]).clip(lower=0)
+    # $ shortfall/overage only where the PO actually priced the line — a delivered
+    # line with no priced PO counterpart (extraction gap, or an unrequested extra)
+    # would otherwise dump its whole invoice value into "over".
+    priced = m["requested_amount"] > 0
+    req_qty = m["requested_qty"] > 0
     requested = finite(m["requested_amount"].sum())
     shipped = finite(m["delivered_amount"].sum())
     return GapSummary(
-        m, requested, shipped, finite(m["lost_amount"].sum()), finite(m["lost_qty"].sum()),
+        m, requested, shipped,
+        finite(m.loc[priced, "lost_amount"].sum()),
+        finite(m.loc[priced, "over_amount"].sum()),
+        finite(m.loc[req_qty, "lost_qty"].sum()),
+        finite(m.loc[req_qty, "over_qty"].sum()),
         round(shipped / requested * 100, 1) if requested else 0.0,
     )
 
@@ -109,8 +120,8 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
     # ---- line-level gap (the trending / by-customer / by-product view) ----------
     gs = matched_gap_summary(fp)
     m = gs.m
-    requested, shipped, lost, lost_units, fulfil = (
-        gs.requested, gs.shipped, gs.lost, gs.lost_units, gs.fulfil
+    requested, shipped, lost, over, lost_units, fulfil = (
+        gs.requested, gs.shipped, gs.lost, gs.over, gs.lost_units, gs.fulfil
     )
 
     # per-order waterfall totals
@@ -218,20 +229,25 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
                     note=f"{int(have_ship.sum())} of {len(lc)} orders have a confirmed invoice match"),
         kpis=[
             Kpi(label="Lost sales", value=round(lost, 2), format="currency",
-                help="Σ (requested − shipped) over matched order lines, shortfalls only. "
-                     "The revenue asked for but not invoiced."),
+                help="Σ (requested − shipped) on the order lines that came up short. An "
+                     "over-ship on a different order doesn't refund a shorted one, so this "
+                     "exceeds the net (Requested − Shipped)."),
+            Kpi(label="Over-shipped", value=round(over, 2), format="currency",
+                help="Σ (shipped − requested) on lines that over-delivered. "
+                     "Lost sales − Over-shipped = Requested − Shipped."),
             Kpi(label="Fulfilment rate", value=fulfil, format="percent",
-                help="Shipped ÷ requested across matched order lines."),
-            Kpi(label="Lost units", value=round(lost_units), format="int",
-                help="Σ (requested qty − delivered qty), shortfalls only."),
+                help="Σ shipped ÷ Σ requested across matched order lines (over-ships mask "
+                     "shortfalls here — see Lost sales for the per-order view)."),
             Kpi(label="Requested", value=round(requested, 2), format="currency"),
             Kpi(label="Shipped", value=round(shipped, 2), format="currency"),
         ],
         charts=charts,
         tables=tables,
         notes=[
-            "“Short” counts only order lines that shipped less than the customer’s final "
-            "request; an over-ship on a different order doesn’t offset it. Per row: "
+            "Matched PO ⇄ invoice lines are aligned by product name (sizes and the two "
+            "sides' spellings vary). $ shortfall / overage cover only lines the PO priced.",
+            "“Short” counts only order lines that shipped less than the customer's final "
+            "request; an over-ship elsewhere doesn't offset it. Per row: "
             "Requested − Delivered = Short − Over.",
             *([f"Separately, ${withdrawn:,.0f} of requested value was negotiated down or "
                "withdrawn before shipping (a PO revision) — not counted as lost sales."]

@@ -10,6 +10,7 @@ kept for reference / possible reuse; the live charts are built in the React app.
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -602,14 +603,27 @@ _MATCHED_ITEMS_COLUMNS = [
 ]
 
 
+def _norm_product(name) -> str:
+    """Punctuation- and case-insensitive product key. The two sides normalise names
+    differently (extraction vs product_catalog.classify_qbo_item), so "Bull's Blood
+    Beets" / "Bulls Blood Beets" must still align."""
+    return re.sub(r"[^a-z0-9]+", " ", str(name or "").lower()).strip()
+
+
 @st.cache_data(ttl=300, show_spinner="Loading requested vs. delivered detail...")
 def load_matched_line_items() -> pd.DataFrame:
     """Line-item-level requested-vs-delivered detail for every CONFIRMED PO<->invoice
-    match — one row per (po_id, invoice_id, product, size). PO and invoice line items
-    aren't linked 1:1 (only the PO<->invoice pair is), so this reconstructs the
-    comparison: group each side's items by (id, product, size), then outer-merge the two
-    groupings so a product requested-but-not-delivered (or vice versa) gets its own row
-    with a zero on the missing side, instead of only surfacing the overlap."""
+    match — one row per (po_id, invoice_id, product). PO and invoice line items aren't
+    linked 1:1 (only the PO<->invoice pair is), so this reconstructs the comparison:
+    group each side's items by (id, normalised product), then outer-merge so a product
+    requested-but-not-delivered (or vice versa) gets its own row with a zero on the
+    missing side.
+
+    Matched on product NAME only, not name+size: ~9% of PO lines (customer emails
+    that just say "120 Rainbow Mix") carry no container_size, and the two sides
+    spell sizes differently ("4 oz" vs "4oz") — keeping size in the join key split
+    one product into a phantom requested-only + delivered-only pair, inflating both
+    the shortfall and the overage. Size is kept for display (from the invoice)."""
     conn = psycopg2.connect(get_database_url())
     try:
         links = pd.read_sql_query(
@@ -645,11 +659,20 @@ def load_matched_line_items() -> pd.DataFrame:
     )
     links = links[["po_id", "invoice_id", "customer_name", "effective_date"]]
 
-    po_grouped = po_items.groupby(["po_id", "product_name", "container_size"], as_index=False).agg(
+    po_items["_pk"] = po_items["product_name"].map(_norm_product)
+    inv_items["_pk"] = inv_items["product_name"].map(_norm_product)
+
+    def _first_real(s):
+        return next((x for x in s if x is not None and str(x).strip()), None)
+
+    po_grouped = po_items.groupby(["po_id", "_pk"], as_index=False).agg(
+        po_product=("product_name", _first_real),
         requested_qty=("quantity", "sum"), requested_amount=("line_total", "sum"),
         po_math_note=("math_mismatch", lambda s: next((x for x in s if x), None)),
     )
-    inv_grouped = inv_items.groupby(["invoice_id", "product_name", "container_size"], as_index=False).agg(
+    inv_grouped = inv_items.groupby(["invoice_id", "_pk"], as_index=False).agg(
+        inv_product=("product_name", _first_real),
+        container_size=("container_size", _first_real),
         delivered_qty=("quantity", "sum"), delivered_amount=("line_total", "sum"),
     )
 
@@ -658,20 +681,21 @@ def load_matched_line_items() -> pd.DataFrame:
 
     combined = pd.merge(
         po_side, inv_side,
-        on=["po_id", "invoice_id", "customer_name", "effective_date", "product_name", "container_size"],
+        on=["po_id", "invoice_id", "customer_name", "effective_date", "_pk"],
         how="outer",
     )
     for col in ("requested_qty", "requested_amount", "delivered_qty", "delivered_amount"):
         combined[col] = combined[col].fillna(0.0)
+    combined["product_name"] = combined["po_product"].fillna(combined["inv_product"]).fillna(combined["_pk"])
 
     # A PO linked to more than one invoice has its requested-side rows fanned out
     # once per invoice (po_side merged po_grouped on po_id alone). Keep the requested
-    # amounts on the first row per (po_id, product, size) only — so summing this
-    # frame counts each PO's request once, while delivered still sums across every
-    # linked invoice. (No live multi-invoice POs today, but manual_link allows split
+    # amounts on the first row per (po_id, product) only — so summing this frame
+    # counts each PO's request once, while delivered still sums across every linked
+    # invoice. (No live multi-invoice POs today, but manual_link allows split
     # shipments, and every requested-vs-delivered aggregation sums these columns.)
-    combined = combined.sort_values(["po_id", "product_name", "container_size", "invoice_id"])
-    dup = combined.duplicated(subset=["po_id", "product_name", "container_size"], keep="first")
+    combined = combined.sort_values(["po_id", "_pk", "invoice_id"])
+    dup = combined.duplicated(subset=["po_id", "_pk"], keep="first")
     combined.loc[dup, ["requested_qty", "requested_amount"]] = 0.0
     combined.loc[dup, "po_math_note"] = None
     return combined[_MATCHED_ITEMS_COLUMNS].reset_index(drop=True)
