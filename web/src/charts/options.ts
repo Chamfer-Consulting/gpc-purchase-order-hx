@@ -166,6 +166,10 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: Line
   const tooltip = opts?.breakdowns?.length
     ? { ...ch.tooltip, formatter: breakdownFormatter(fmt, opts.breakdowns), confine: true }
     : ch.tooltip;
+  // hide the dots on a dense series (the stock-tracker look); show them when the
+  // series is short enough that a bare line — or a single point — would read as empty.
+  const maxPts = Math.max(...series.map((s) => s.data.filter((v) => v != null).length), 0);
+  const showSymbol = maxPts <= 8;
 
   return {
     ...ch,
@@ -178,7 +182,7 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: Line
       type: "line",
       name: s.name,
       data: s.data,
-      showSymbol: false,
+      showSymbol,
       lineStyle: accent ? { color: accent } : undefined,
       itemStyle: accent ? { color: accent } : undefined,
       areaStyle: wantArea ? (accent ? areaGradient(accent) : { opacity: 0.08 }) : undefined,

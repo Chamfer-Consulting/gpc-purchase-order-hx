@@ -316,3 +316,53 @@ def test_po_recency_prefers_printed_then_received_then_sent():
     assert _po_recency(newer_printed) > _po_recency(older_but_has_sent)
     assert _po_recency(newer_received) > _po_recency(older_but_has_sent)
     assert _po_recency({}).year == 1  # datetime.min -> everything beats an undated row
+
+
+# --- chart tooltip breakdowns (services/breakdown.py) ----------------------
+
+import pandas as pd  # noqa: E402
+
+from app.services import breakdown as _bd  # noqa: E402
+
+
+def _mini_frame():
+    return pd.DataFrame(
+        {
+            "effective_date": pd.to_datetime(
+                ["2026-01-05", "2026-02-03", "2026-02-15", "2026-02-20"]
+            ),
+            "customer_name": ["OnlyCust", "A", "B", "A"],
+            "product_name": ["OnlyProd", "X", "Y", "X"],
+            "line_total": [999.0, 100.0, 50.0, 25.0],
+            "id": [1, 2, 3, 4],
+        }
+    )
+
+
+def test_by_month_handles_a_single_group_bucket():
+    # 2026-01 has exactly one product — the MultiIndex `.loc` used to collapse to a
+    # scalar here and 500 the whole page.
+    b = _bd.by_month(
+        _mini_frame(), ["2026-01", "2026-02", "2026-03"],
+        group="product_name", value="line_total", label="Top products",
+    )
+    rows = {p.x: [(r.name, r.value) for r in p.rows] for p in b.points}
+    assert rows["2026-01"] == [("OnlyProd", 999.0)]
+    assert rows["2026-02"] == [("X", 125.0), ("Y", 50.0)]
+    assert rows["2026-03"] == []
+
+
+def test_by_category_handles_a_single_group_bar():
+    b = _bd.by_category(
+        _mini_frame(), ["X", "OnlyProd"],
+        key="product_name", group="customer_name", value="line_total", label="Top customers",
+    )
+    rows = {p.x: [(r.name, r.value) for r in p.rows] for p in b.points}
+    assert rows["OnlyProd"] == [("OnlyCust", 999.0)]
+    assert rows["X"] == [("A", 125.0)]
+
+
+def test_breakdown_on_empty_frame_is_empty_points():
+    b = _bd.by_month(pd.DataFrame(), ["2026-01"], group="product_name",
+                     value="line_total", label="x")
+    assert [p.rows for p in b.points] == [[]]

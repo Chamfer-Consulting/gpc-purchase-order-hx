@@ -11,6 +11,8 @@ Two shapes:
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 import pandas as pd
 
 from ..schemas import BreakdownPoint, BreakdownRow, ChartBreakdown, NumFormat
@@ -25,9 +27,20 @@ def _by(col: str) -> str:
     return _PRETTY.get(col, col.replace("_name", "").replace("_label", ""))
 
 
-def _rows(series: pd.Series, top_n: int) -> list[BreakdownRow]:
-    s = series[series != 0].sort_values(ascending=False).head(top_n)
-    return [BreakdownRow(name=str(k), value=round(float(v), 2)) for k, v in s.items()]
+def _bucketed(g: pd.Series) -> dict[str, list[tuple[str, float]]]:
+    """A 2-level (bucket, group) Series → {bucket: [(group, value), …]}. Iterating
+    the Series directly sidesteps `.loc[bucket]` collapsing to a scalar when a
+    bucket has a single group."""
+    out: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    for key, val in g.items():
+        bucket, group = key
+        out[str(bucket)].append((str(group), float(val)))
+    return out
+
+
+def _rows(pairs: list[tuple[str, float]], top_n: int) -> list[BreakdownRow]:
+    ranked = sorted((p for p in pairs if p[1] != 0), key=lambda p: p[1], reverse=True)
+    return [BreakdownRow(name=n, value=round(v, 2)) for n, v in ranked[:top_n]]
 
 
 def by_month(
@@ -52,11 +65,8 @@ def by_month(
     )
     grouped = d.groupby(["_m", "_g"])[value]
     g = grouped.nunique() if agg == "nunique" else grouped.sum()
-    lvl0 = set(g.index.get_level_values(0))
-    pts = [
-        BreakdownPoint(x=m, rows=_rows(g.loc[m], top_n) if m in lvl0 else [])
-        for m in months
-    ]
+    buckets = _bucketed(g)
+    pts = [BreakdownPoint(x=m, rows=_rows(buckets.get(m, []), top_n)) for m in months]
     return ChartBreakdown(by=_by(group), label=label, value_format=fmt, points=pts)
 
 
@@ -74,18 +84,16 @@ def by_category(
 ) -> ChartBreakdown:
     """Per bar label in `categories` (a value of `key`), the top `group` values —
     the cross-dimension for an hbar."""
-    empty = [BreakdownPoint(x=str(c), rows=[]) for c in categories]
+    cats = [str(c) for c in categories]
+    empty = [BreakdownPoint(x=c, rows=[]) for c in cats]
     if df.empty or key not in df.columns or group not in df.columns or value not in df.columns:
         return ChartBreakdown(by=_by(group), label=label, value_format=fmt, points=empty)
     d = df.assign(
-        _k=df[key].fillna("—").replace("", "—"),
+        _k=df[key].fillna("—").replace("", "—").astype(str),
         _g=df[group].fillna("—").replace("", "—"),
     )
     grouped = d.groupby(["_k", "_g"])[value]
     g = grouped.nunique() if agg == "nunique" else grouped.sum()
-    lvl0 = set(g.index.get_level_values(0))
-    pts = [
-        BreakdownPoint(x=str(c), rows=_rows(g.loc[str(c)], top_n) if str(c) in lvl0 else [])
-        for c in categories
-    ]
+    buckets = _bucketed(g)
+    pts = [BreakdownPoint(x=c, rows=_rows(buckets.get(c, []), top_n)) for c in cats]
     return ChartBreakdown(by=_by(group), label=label, value_format=fmt, points=pts)
