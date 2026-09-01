@@ -8,6 +8,7 @@ export interface Kpi {
   format: NumFormat;
   delta?: string | null;
   delta_direction?: "up" | "down" | "flat" | null;
+  delta_label?: string | null;
   spark?: number[] | null;
   help?: string | null;
 }

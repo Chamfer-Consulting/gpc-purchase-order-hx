@@ -16,6 +16,7 @@ class Kpi(BaseModel):
     format: NumFormat = "int"
     delta: str | None = None
     delta_direction: Literal["up", "down", "flat"] | None = None
+    delta_label: str | None = None  # caption under the delta, e.g. "vs. prior 30 days"
     spark: list[float] | None = None
     help: str | None = None
 

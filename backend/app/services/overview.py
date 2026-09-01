@@ -10,14 +10,27 @@ full years."""
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope
-from .context import monthly_revenue, prepared_frames, slice_by_date
+from .context import prepared_frames, slice_by_date
 
 _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 _SPARK_MONTHS = 6
+
+
+def _finite(x, default: float = 0.0) -> float:
+    """A JSON-safe float — NaN/inf (e.g. .mean() of an all-null column) serialise as
+    the bare token `NaN`, which the browser's response.json() then rejects, blanking
+    the whole page."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return default
+    return v if math.isfinite(v) else default
 
 
 def _prev_window(start: str, end: str) -> tuple[pd.Timestamp, pd.Timestamp]:
@@ -29,9 +42,9 @@ def _prev_window(start: str, end: str) -> tuple[pd.Timestamp, pd.Timestamp]:
 
 
 def _delta(curr: float, prev: float | None, *, prefix: str = "", decimals: int = 0) -> tuple[str | None, str | None]:
-    if prev is None or pd.isna(prev):
+    if prev is None or pd.isna(prev) or not math.isfinite(_finite(curr, float("nan"))):
         return None, None
-    diff = curr - prev
+    diff = _finite(curr) - float(prev)
     direction = "up" if diff > 0 else "down" if diff < 0 else "flat"
     return f"{prefix}{diff:+,.{decimals}f}", direction
 
@@ -45,14 +58,6 @@ def _trailing(df: pd.DataFrame, *, value_col: str, agg: str) -> list[float]:
     series = m.groupby("_m")["id"].nunique() if agg == "nunique" else m.groupby("_m")[value_col].sum()
     series = series.sort_index().tail(_SPARK_MONTHS)
     return [float(v) for v in series] if len(series) >= 2 else []
-
-
-def _monthly_invoice_counts(inv: pd.DataFrame) -> tuple[list[str], list[float]]:
-    d = inv.dropna(subset=["effective_date"])
-    if d.empty:
-        return [], []
-    g = d.assign(_m=d["effective_date"].dt.to_period("M").astype(str)).groupby("_m")["id"].nunique().sort_index()
-    return list(g.index), [float(v) for v in g.values]
 
 
 def _yoy(df: pd.DataFrame, *, value_col: str, agg: str) -> list[ChartSeries]:
@@ -76,54 +81,92 @@ def _yoy(df: pd.DataFrame, *, value_col: str, agg: str) -> list[ChartSeries]:
     return out
 
 
+def _month_index(*frames: pd.DataFrame) -> list[str]:
+    """The union of YYYY-MM buckets present across the given frames, ascending —
+    so the two 'by month' charts share one x-axis."""
+    months: set[str] = set()
+    for df in frames:
+        d = df.dropna(subset=["effective_date"])
+        if not d.empty:
+            months |= set(d["effective_date"].dt.to_period("M").astype(str))
+    return sorted(months)
+
+
+def _series_on(index: list[str], df: pd.DataFrame, *, value_col: str, agg: str) -> list[float | None]:
+    d = df.dropna(subset=["effective_date"])
+    if d.empty:
+        return [None] * len(index)
+    by = d.assign(_m=d["effective_date"].dt.to_period("M").astype(str))
+    g = by.groupby("_m")["id"].nunique() if agg == "nunique" else by.groupby("_m")[value_col].sum()
+    return [float(g[m]) if m in g.index else None for m in index]
+
+
 def overview_page(fp: FilterParams) -> PageResponse:
     inv_all, prod_all, _hidden = prepared_frames(fp)
     f_inv, f_prod = slice_by_date(inv_all, prod_all, fp.start, fp.end)
 
     if f_inv.empty:
-        return PageResponse(scope=Scope(count=0, noun="invoices", start=fp.start, end=fp.end))
+        return PageResponse(
+            scope=Scope(count=0, noun="invoices", start=fp.start, end=fp.end),
+            notes=["No invoice data for the current scope — widen the date range or clear a filter."],
+        )
 
-    revenue = float(f_prod["line_total"].sum())
+    revenue = _finite(f_prod["line_total"].sum())
+    gross = _finite(f_inv["total_amt"].sum())
+    other = round(gross - revenue, 2)
     n_invoices = int(f_inv["id"].nunique())
     n_customers = int(f_inv["customer_name"].nunique())
     n_products = int(f_prod["product_name"].nunique())
-    aiv = float(f_inv["total_amt"].mean()) if n_invoices else 0.0
+    aiv = _finite(f_inv["total_amt"].mean()) if n_invoices else 0.0
 
     rev_delta = inv_delta = aiv_delta = None
     rev_dir = inv_dir = aiv_dir = None
-    note = None
+    delta_label = None
     if fp.start and fp.end:
         p_start, p_end = _prev_window(fp.start, fp.end)
         p_inv, p_prod = slice_by_date(inv_all, prod_all, p_start, p_end)
         if not p_inv.empty:
-            rev_delta, rev_dir = _delta(revenue, float(p_prod["line_total"].sum()), prefix="$")
+            rev_delta, rev_dir = _delta(revenue, _finite(p_prod["line_total"].sum()), prefix="$")
             inv_delta, inv_dir = _delta(n_invoices, float(p_inv["id"].nunique()))
-            aiv_delta, aiv_dir = _delta(aiv, float(p_inv["total_amt"].mean()), prefix="$", decimals=2)
-            note = (
-                f"Deltas vs. {p_start.date()} – {p_end.date()} (the preceding "
-                f"{(p_end - p_start).days + 1} days)."
-            )
+            aiv_delta, aiv_dir = _delta(aiv, _finite(p_inv["total_amt"].mean()), prefix="$", decimals=2)
+            delta_label = f"vs. {p_start.date()} – {p_end.date()}"
+
+    span_note = (
+        f"Showing {fp.start} – {fp.end}." if fp.start and fp.end
+        else "Showing all time — pick a date range above for period-over-period deltas."
+    )
+    breakdown = (
+        f"Gross invoiced ${gross:,.0f} — product revenue ${revenue:,.0f}, "
+        f"other (shipping, services, samples, rounding) ${other:,.0f}."
+    )
 
     kpis = [
         Kpi(label="Product revenue", value=round(revenue, 2), format="currency",
-            delta=rev_delta, delta_direction=rev_dir,
+            delta=rev_delta, delta_direction=rev_dir, delta_label=delta_label,
+            help="Sum of product line items (category='product') on invoices in scope. "
+                 "Shipping / services / samples are not counted — see the note below.",
             spark=_trailing(f_prod, value_col="line_total", agg="sum") or None),
         Kpi(label="Invoices", value=n_invoices, format="int",
-            delta=inv_delta, delta_direction=inv_dir,
+            delta=inv_delta, delta_direction=inv_dir, delta_label=delta_label,
             spark=_trailing(f_inv, value_col="id", agg="nunique") or None),
         Kpi(label="Customers", value=n_customers, format="int"),
         Kpi(label="Products", value=n_products, format="int"),
         Kpi(label="Avg invoice value", value=round(aiv, 2), format="currency2",
-            delta=aiv_delta, delta_direction=aiv_dir),
+            delta=aiv_delta, delta_direction=aiv_dir, delta_label=delta_label,
+            help="Mean of the invoice header total (gross — includes shipping / tax), "
+                 "not the product-revenue basis."),
     ]
 
-    months, rev_series = monthly_revenue(f_prod)
-    inv_months, inv_counts = _monthly_invoice_counts(f_inv)
+    month_ix = _month_index(f_prod, f_inv)
     charts = [
-        Chart(id="rev_month", title="Product revenue by month", kind="line", x=months,
-              series=[ChartSeries(name="Revenue", data=rev_series)], y_format="currency"),
-        Chart(id="inv_month", title="Invoices by month", kind="bar", x=inv_months,
-              series=[ChartSeries(name="Invoices", data=inv_counts)], y_format="int"),
+        Chart(id="rev_month", title="Product revenue by month", kind="line", x=month_ix,
+              series=[ChartSeries(name="Revenue",
+                                  data=_series_on(month_ix, f_prod, value_col="line_total", agg="sum"))],
+              y_format="currency"),
+        Chart(id="inv_month", title="Invoices by month", kind="bar", x=month_ix,
+              series=[ChartSeries(name="Invoices",
+                                  data=_series_on(month_ix, f_inv, value_col="id", agg="nunique"))],
+              y_format="int"),
         Chart(id="rev_yoy", title="Revenue by month, year over year", kind="line", x=list(_MONTHS),
               series=_yoy(prod_all, value_col="line_total", agg="sum"), y_format="currency"),
         Chart(id="inv_yoy", title="Invoices by month, year over year", kind="line", x=list(_MONTHS),
@@ -131,7 +174,8 @@ def overview_page(fp: FilterParams) -> PageResponse:
     ]
 
     return PageResponse(
-        scope=Scope(count=n_invoices, noun="invoices", start=fp.start, end=fp.end, note=note),
+        scope=Scope(count=n_invoices, noun="invoices", start=fp.start, end=fp.end, note=span_note),
         kpis=kpis,
         charts=charts,
+        notes=[breakdown],
     )

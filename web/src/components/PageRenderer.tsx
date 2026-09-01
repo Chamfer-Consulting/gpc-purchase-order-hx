@@ -171,6 +171,8 @@ export function PageRenderer({ data, showScope = true }: { data: PageResponse; s
               value={kpiValue(k)}
               delta={k.delta ?? null}
               deltaDirection={k.delta_direction ?? undefined}
+              deltaLabel={k.delta_label ?? undefined}
+              help={k.help ?? undefined}
               spark={k.spark ?? undefined}
               northStar={i === 0}
             />

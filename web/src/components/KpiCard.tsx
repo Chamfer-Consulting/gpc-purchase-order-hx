@@ -1,6 +1,11 @@
 import ReactEChartsCore from "echarts-for-react/lib/core";
-import { Box, Group, Paper, Text, useComputedColorScheme } from "@mantine/core";
-import { IconArrowDownRight, IconArrowRight, IconArrowUpRight } from "@tabler/icons-react";
+import { Box, Group, Paper, Text, Tooltip, useComputedColorScheme } from "@mantine/core";
+import {
+  IconArrowDownRight,
+  IconArrowRight,
+  IconArrowUpRight,
+  IconInfoCircle,
+} from "@tabler/icons-react";
 import { echarts } from "@/charts/echartsCore";
 import { sparklineOption } from "@/charts/options";
 import { paletteFor } from "@/charts/theme";
@@ -14,6 +19,8 @@ interface KpiCardProps {
   deltaDirection?: "up" | "down" | "flat";
   /** caption under the delta, e.g. "vs. prior 30 days" */
   deltaLabel?: string;
+  /** hover explanation, shown via an info icon next to the label */
+  help?: string;
   spark?: number[];
   /** the page's primary metric — gets the harvest-gold accent underline */
   northStar?: boolean;
@@ -25,6 +32,7 @@ export function KpiCard({
   delta,
   deltaDirection,
   deltaLabel,
+  help,
   spark,
   northStar = false,
 }: KpiCardProps) {
@@ -52,9 +60,20 @@ export function KpiCard({
           }}
         />
       )}
-      <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: "0.06em" }}>
-        {label}
-      </Text>
+      <Group gap={4} wrap="nowrap">
+        <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: "0.06em" }}>
+          {label}
+        </Text>
+        {help && (
+          <Tooltip label={help} multiline w={260} withArrow events={{ hover: true, focus: true, touch: true }}>
+            <IconInfoCircle
+              size={13}
+              style={{ color: "var(--mantine-color-dimmed)", flex: "none", cursor: "help" }}
+              aria-label={`About ${label}`}
+            />
+          </Tooltip>
+        )}
+      </Group>
       <Group justify="space-between" align="flex-end" wrap="nowrap" mt={6} gap="sm">
         <div style={{ minWidth: 0 }}>
           <Text fw={700} fz={26} lh={1.1} style={NUMERIC_STYLE}>
