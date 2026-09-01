@@ -107,14 +107,16 @@ def overview_page(fp: FilterParams) -> PageResponse:
     gross = _finite(f_inv["total_amt"].sum())
     other = round(gross - revenue, 2)
     n_invoices = int(f_inv["id"].nunique())
-    n_customers = int(f_inv["customer_name"].nunique())
+    # product-bearing customers — the /customers list; a service/donation-only
+    # account (e.g. a food bank) isn't counted, so the two pages agree.
+    n_customers = int(f_prod["customer_name"].nunique())
     aiv = _finite(f_inv["total_amt"].mean()) if n_invoices else 0.0
 
     # requested (PO) vs shipped (invoice) — the app's core metric
     gap = matched_gap_summary(fp)
 
-    rev_delta = inv_delta = aiv_delta = None
-    rev_dir = inv_dir = aiv_dir = None
+    rev_delta = inv_delta = cust_delta = aiv_delta = None
+    rev_dir = inv_dir = cust_dir = aiv_dir = None
     delta_label = None
     if fp.start and fp.end:
         p_start, p_end = _prev_window(fp.start, fp.end)
@@ -122,6 +124,7 @@ def overview_page(fp: FilterParams) -> PageResponse:
         if not p_inv.empty:
             rev_delta, rev_dir = _delta(revenue, _finite(p_prod["line_total"].sum()), prefix="$")
             inv_delta, inv_dir = _delta(n_invoices, float(p_inv["id"].nunique()))
+            cust_delta, cust_dir = _delta(n_customers, float(p_prod["customer_name"].nunique()))
             aiv_delta, aiv_dir = _delta(aiv, _finite(p_inv["total_amt"].mean()), prefix="$", decimals=2)
             delta_label = f"vs. {p_start.date()} – {p_end.date()}"
 
@@ -130,8 +133,9 @@ def overview_page(fp: FilterParams) -> PageResponse:
         else "Showing all time — pick a date range above for period-over-period deltas."
     )
     breakdown = (
-        f"Gross invoiced ${gross:,.0f} — product revenue ${revenue:,.0f}, "
-        f"other (shipping, services, samples, rounding) ${other:,.0f}."
+        f"Gross invoiced ${gross:,.0f} — product revenue ${revenue:,.0f} (the basis for this "
+        f"page) plus ${other:,.0f} of non-product lines: service, delivery, credits / "
+        f"donations, and hidden / sample items."
     )
 
     kpis = [
@@ -140,15 +144,17 @@ def overview_page(fp: FilterParams) -> PageResponse:
             help="Sum of product line items (category='product') on invoices in scope. "
                  "Shipping / services / samples are not counted — see the note below.",
             spark=_trailing(f_prod, value_col="line_total", agg="sum") or None),
-        Kpi(label="Lost sales", value=round(gap.lost, 2), format="currency",
-            help="Under-shipped revenue: Σ (requested − shipped) over matched order lines "
-                 "invoiced for less than the PO asked. Full breakdown on Order Lifecycle."),
+        Kpi(label="Under-shipped", value=round(gap.lost, 2), format="currency",
+            help="The lost sales: Σ (requested − shipped) over matched order lines invoiced "
+                 "for less than the PO asked. Same figure as Order Lifecycle; full breakdown there."),
         Kpi(label="Fulfilment rate", value=gap.fulfil, format="percent",
-            help="Shipped ÷ requested across matched order lines."),
+            help="Σ shipped ÷ Σ requested across matched order lines — matches Order Lifecycle."),
         Kpi(label="Invoices", value=n_invoices, format="int",
             delta=inv_delta, delta_direction=inv_dir, delta_label=delta_label,
             spark=_trailing(f_inv, value_col="id", agg="nunique") or None),
-        Kpi(label="Customers", value=n_customers, format="int"),
+        Kpi(label="Customers", value=n_customers, format="int",
+            delta=cust_delta, delta_direction=cust_dir, delta_label=delta_label,
+            help="Distinct customers with product revenue in scope — the Customers list."),
         Kpi(label="Avg invoice value", value=round(aiv, 2), format="currency2",
             delta=aiv_delta, delta_direction=aiv_dir, delta_label=delta_label,
             help="Mean of the invoice header total (gross — includes shipping / tax), "
