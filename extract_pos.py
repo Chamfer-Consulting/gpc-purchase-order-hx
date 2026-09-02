@@ -123,6 +123,20 @@ Rules:
   the customer requested or confirmed, set is_po to false. Never return is_po true
   with an empty line_items list, and never return is_po true with only header
   fields (customer, date, PO number) and no line items.
+- The following are NOT purchase orders even though they come from a customer and
+  mention products — set is_po to false for them:
+  * a question or inquiry ("do you have arugula this week?", "what's your price on
+    the 4oz?", "can you deliver Thursday?") with no committed quantity
+  * an order confirmation / acknowledgement / packing slip / delivery notice /
+    "your order shipped" that WE (Garfield Produce) sent — we don't order from
+    ourselves; only the customer's ask counts
+  * an invoice, statement, receipt, or payment/remittance notice
+  * a sample or trial request, a complaint, a credit/return, or a price-list /
+    availability / catalog message
+  * general scheduling, logistics, or relationship correspondence
+  A firm quantity the customer commits to ("send 20 cases", "we'll take 15") is
+  what makes it an order — availability we offered, or a number the customer only
+  floated as a question, is not.
 - Set is_po to false if the document is not a purchase order, and leave the other fields empty
 """
 
@@ -192,6 +206,15 @@ MAX_TEXT_CHARS = 28000   # extracted PDF/thread text longer than this is truncat
                          # NON_PO_TEXT_CEILING (30k) — anything that passes the not-a-PO
                          # size gate is now sent in full. Keep
                          # postgres_store.SNAPSHOT_MAX_CHARS >= this.
+
+# Send the PDF itself to the model (Claude reads the real table layout) instead of
+# only pdfplumber's flattened text, which runs adjacent columns together and was a
+# leading cause of wrong quantities / unit prices. The extracted text still rides
+# along as a transcript hint; the PDF is authoritative. Set
+# EXTRACTION_PDF_DOC_BLOCK=0 to fall back to text-only (e.g. to cut token cost)
+# with no code change.
+PDF_DOC_BLOCK = os.environ.get("EXTRACTION_PDF_DOC_BLOCK", "1") != "0"
+MAX_PDF_DOC_B64 = 9_000_000   # ~6.5 MB of PDF; bigger -> text-only, to bound cost
 
 
 # ── Revision Detection & Diff Engine ──────────────────────────────────────────
@@ -558,28 +581,42 @@ def _extract_from_source(
             return None
         try:
             guidance_prefix = f"{extra_guidance}\n\n---\n\n" if extra_guidance else ""
-            if text:
-                messages = [
-                    {
-                        "role": "user",
-                        "content": f"{guidance_prefix}Document text:\n{text[:MAX_TEXT_CHARS]}"
-                    }
-                ]
-            else:
+            transcript = text[:MAX_TEXT_CHARS] if text else None
+            if pdf_b64:
+                # PDF-authoritative: the model sees the real layout; the text (when
+                # we have it) is included only as a fallible transcript.
                 doc_blocks = [
                     {
                         "type": "document",
                         "source": {
                             "type": "base64",
                             "media_type": "application/pdf",
-                            "data": pdf_b64
-                        }
+                            "data": pdf_b64,
+                        },
                     },
                 ]
+                if transcript:
+                    doc_blocks.append({
+                        "type": "text",
+                        "text": (
+                            "Plain-text transcript of the same document (from PDF text "
+                            "extraction — column alignment and spacing are often wrong; the "
+                            "document above is authoritative for every number):\n" + transcript
+                        ),
+                    })
                 if extra_guidance:
                     doc_blocks.append({"type": "text", "text": extra_guidance})
                 doc_blocks.append({"type": "text", "text": "Extract the purchase order data from this document."})
                 messages = [{"role": "user", "content": doc_blocks}]
+            elif transcript is not None:
+                messages = [
+                    {
+                        "role": "user",
+                        "content": f"{guidance_prefix}Document text:\n{transcript}",
+                    }
+                ]
+            else:
+                raise ValueError("_extract_from_source: neither text nor pdf_b64 given")
 
             response = client.messages.create(
                 model=model,
@@ -740,10 +777,17 @@ def extract_po_data(
     """
     filename = os.path.basename(pdf_path)
     text = extract_pdf_text(pdf_path)
-    pdf_b64 = None if text else pdf_to_base64(pdf_path)
+    pdf_b64 = pdf_to_base64(pdf_path)
+    if not PDF_DOC_BLOCK and text:
+        pdf_b64 = None
+    elif pdf_b64 and len(pdf_b64) > MAX_PDF_DOC_B64 and text:
+        logger.warning("%s: PDF too large for the doc block (%d b64 chars) — text only",
+                       filename, len(pdf_b64))
+        pdf_b64 = None
+    method = "pdf+text" if (pdf_b64 and text) else "pdf" if pdf_b64 else "text"
     return _extract_from_source(
         client, filename, stop_event, reference_prices,
-        text=text, pdf_b64=pdf_b64, extraction_method="text" if text else "vision",
+        text=text, pdf_b64=pdf_b64, extraction_method=method,
     )
 
 

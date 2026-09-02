@@ -60,6 +60,7 @@ import extraction_reviews
 import gmail_client
 import pipeline_summary
 import postgres_store
+import extract_pos
 from extract_pos import _extract_from_source, annotate_revisions, extract_pdf_text, pdf_to_base64
 from sync_dashboard import _publish_to_postgres  # noqa — same cross-module private-import
 # pattern sync_dashboard.py itself already uses for extract_pos.annotate_revisions.
@@ -747,10 +748,20 @@ def _process_thread(
                 continue
             if text:
                 postgres_store.upsert_snapshot(pg_conn, "file", source_label, text, file_hash)
-            pdf_b64 = None if text else pdf_to_base64(pdf_bytes)
+            # Send the PDF itself (real table layout) — Claude's PDF understanding
+            # gets numbers right where flattened text runs columns together. Text
+            # (when present) tags along as a fallible transcript. Env-toggle:
+            # EXTRACTION_PDF_DOC_BLOCK=0.
+            pdf_b64 = pdf_to_base64(pdf_bytes)
+            if not extract_pos.PDF_DOC_BLOCK and text:
+                pdf_b64 = None
+            elif len(pdf_b64) > extract_pos.MAX_PDF_DOC_B64 and text:
+                logger.info(f"{source_label}: PDF too large for the doc block — text only")
+                pdf_b64 = None
+            method = "pdf+text" if (pdf_b64 and text) else "pdf" if pdf_b64 else "text"
             result = _extract_from_source(
                 client, source_label, stop_event, reference_prices,
-                text=text, pdf_b64=pdf_b64, extraction_method="text" if text else "vision",
+                text=text, pdf_b64=pdf_b64, extraction_method=method,
                 extra_guidance=fewshot_block,
             )
             if result is not None:
