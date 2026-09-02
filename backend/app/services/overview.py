@@ -52,6 +52,24 @@ def _trailing(df: pd.DataFrame, *, value_col: str, agg: str) -> list[float]:
     return [float(v) for v in series] if len(series) >= 2 else []
 
 
+def _trailing_ratio(df: pd.DataFrame, *, num_col: str, den_col: str, scale: float = 100.0) -> list[float]:
+    """Last _SPARK_MONTHS months of Σnum / Σden (× scale) per month, oldest first —
+    for a KPI that's a rate, not a sum. Months with a zero denominator drop out;
+    [] if < 2 points remain."""
+    d = df.dropna(subset=["effective_date"])
+    if d.empty:
+        return []
+    g = (
+        d.assign(_m=d["effective_date"].dt.to_period("M"))
+        .groupby("_m")
+        .agg(_n=(num_col, "sum"), _d=(den_col, "sum"))
+        .sort_index()
+        .tail(_SPARK_MONTHS)
+    )
+    g = g[g["_d"] > 0]
+    return [float(v) for v in (g["_n"] / g["_d"] * scale)] if len(g) >= 2 else []
+
+
 def _yoy(df: pd.DataFrame, *, value_col: str, agg: str) -> list[ChartSeries]:
     """One series per calendar year, 12 points (Jan..Dec), None where a month has
     no data. Years ascending so the current year draws last."""
@@ -114,6 +132,17 @@ def overview_page(fp: FilterParams) -> PageResponse:
 
     # requested (PO) vs shipped (invoice) — the app's core metric
     gap = matched_gap_summary(fp)
+    # trailing-6-month sparks for the two gap KPIs (same monthly basis as the
+    # "Requested vs shipped by month" chart below)
+    if not gap.m.empty:
+        lost_spark = _trailing(
+            gap.m[gap.m["requested_amount"] > 0], value_col="lost_amount", agg="sum"
+        )
+        fulfil_spark = _trailing_ratio(
+            gap.m, num_col="delivered_amount", den_col="requested_amount"
+        )
+    else:
+        lost_spark = fulfil_spark = []
 
     rev_delta = inv_delta = cust_delta = aiv_delta = None
     rev_dir = inv_dir = cust_dir = aiv_dir = None
@@ -146,9 +175,11 @@ def overview_page(fp: FilterParams) -> PageResponse:
             spark=_trailing(f_prod, value_col="line_total", agg="sum") or None),
         Kpi(label="Under-shipped", value=round(gap.lost, 2), format="currency",
             help="The lost sales: Σ (requested − shipped) over matched order lines invoiced "
-                 "for less than the PO asked. Same figure as Order Lifecycle; full breakdown there."),
+                 "for less than the PO asked. Same figure as Order Lifecycle; full breakdown there.",
+            spark=lost_spark or None),
         Kpi(label="Fulfilment rate", value=gap.fulfil, format="percent",
-            help="Σ shipped ÷ Σ requested across matched order lines — matches Order Lifecycle."),
+            help="Σ shipped ÷ Σ requested across matched order lines — matches Order Lifecycle.",
+            spark=fulfil_spark or None),
         Kpi(label="Invoices", value=n_invoices, format="int",
             delta=inv_delta, delta_direction=inv_dir, delta_label=delta_label,
             spark=_trailing(f_inv, value_col="id", agg="nunique") or None),
