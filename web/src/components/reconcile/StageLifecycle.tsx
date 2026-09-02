@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
-import { Alert, Badge, Button, Group, Select, Stack, Text, TextInput } from "@mantine/core";
+import { Alert, Button, Group, Select, Stack, Text, TextInput } from "@mantine/core";
 import type { ReconcilePoView } from "@/api/reconcile";
 import { useSetStatus, type PoStatus } from "@/api/poEdit";
 import { useMe } from "@/api/me";
 import { STATUS_COLOR } from "@/theme/tokens";
 import { transitionOptions } from "@/lib/poStatus";
 import { notifySuccess } from "@/lib/notify";
-import { SectionCard } from "@/components/SectionCard";
 
-export function StageLifecycle({ view }: { view: ReconcilePoView }) {
+/** Should this order count — or is it cancelled / withdrawn / a duplicate?
+ *  Never a queue blocker; reached from the tracker when a person wants to change
+ *  the status. */
+export function LifecycleBody({ view }: { view: ReconcilePoView }) {
   const { canAdmin, roleKnown } = useMe();
   const poId = view.header.id;
   const current = (view.header.status ?? "active") as PoStatus;
@@ -40,15 +42,7 @@ export function StageLifecycle({ view }: { view: ReconcilePoView }) {
   }
 
   return (
-    <SectionCard
-      title="2 · Lifecycle"
-      subtitle="Should this order count — or is it cancelled / withdrawn / a duplicate?"
-      actions={
-        <Badge color={STATUS_COLOR[current]} variant={current === "active" ? "light" : "filled"}>
-          {current}
-        </Badge>
-      }
-    >
+    <Stack gap="sm">
       {current !== "active" && (
         <Alert color={STATUS_COLOR[current]} variant="light">
           This order is <b>{current}</b>
@@ -111,6 +105,6 @@ export function StageLifecycle({ view }: { view: ReconcilePoView }) {
           Changing lifecycle status needs the admin role.
         </Text>
       )}
-    </SectionCard>
+    </Stack>
   );
 }

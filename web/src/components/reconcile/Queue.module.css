@@ -1,6 +1,7 @@
 .row {
-  padding: 0.5rem 0.625rem;
+  padding: 0.4rem 0.55rem;
   border: 1px solid var(--mantine-color-default-border);
+  border-left: 3px solid transparent;
   border-radius: var(--mantine-radius-sm);
   cursor: pointer;
   background: var(--gp-surface);
@@ -18,6 +19,7 @@
 
 .active,
 .active:hover {
-  border-color: var(--mantine-color-gpGreen-6);
+  border-color: var(--mantine-color-default-border);
+  border-left-color: var(--mantine-color-gpGreen-6);
   background: var(--mantine-color-gpGreen-light);
 }

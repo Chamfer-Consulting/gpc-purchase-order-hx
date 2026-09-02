@@ -16,6 +16,7 @@ WITH li AS (
 )
 SELECT po.id AS po_id,
        po.gmail_thread_id, po.source_file, po.error, po.customer_name, po.po_date,
+       po.total,
        COALESCE(li.n_items, 0) AS n_items,
        COALESCE(li.n_math, 0)  AS n_math,
        po.math_check_failed,
@@ -84,6 +85,7 @@ def review_queue(conn, limit: int = 300) -> list[dict]:
             "priority": prio,
             "customer_name": r["customer_name"],
             "po_date": r["po_date"].isoformat() if r["po_date"] else None,
+            "total": float(r["total"]) if r["total"] is not None else None,
             "n_items": r["n_items"],
             "error": r["error"],
             "subject": r["subject"],

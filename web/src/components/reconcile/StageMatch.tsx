@@ -13,18 +13,17 @@ import {
 } from "@mantine/core";
 import { IconCheck, IconExternalLink, IconX } from "@tabler/icons-react";
 import type { ReconcileCandidate, ReconcilePoView } from "@/api/reconcile";
-import { useConfirmBatch, useReconcileConfirm, useReconcileReject } from "@/api/reconcile";
+import { useReconcileConfirm, useReconcileReject } from "@/api/reconcile";
 import { useInvoiceSearch } from "@/api/poEdit";
 import { useManualLink } from "@/api/matching";
 import { useMe } from "@/api/me";
 import { fmtCurrency } from "@/lib/format";
 import { notifySuccess } from "@/lib/notify";
 import { NUMERIC_STYLE } from "@/theme/tokens";
-import { SectionCard } from "@/components/SectionCard";
 import { EmptyState } from "@/components/EmptyState";
 import { LineDiffTable, DiffSummary } from "./LineDiff";
 
-function confColor(c: string): string {
+export function confColor(c: string): string {
   if (c.startsWith("Certain") || c === "High") return "gpGreen";
   if (c === "Medium") return "gpGold";
   return "orange";
@@ -42,7 +41,6 @@ function QboLink({ url }: { url: string | null | undefined }) {
   );
 }
 
-/** The PO number carried on the QBO invoice itself, flagged against this order's. */
 function InvoicePoNumber({
   invPoNumber,
   match,
@@ -81,6 +79,7 @@ function CandidateCard({
   onConfirm,
   onReject,
   busy,
+  top,
 }: {
   c: ReconcileCandidate;
   orderPo: string | null;
@@ -88,12 +87,24 @@ function CandidateCard({
   onConfirm: () => void;
   onReject: () => void;
   busy: boolean;
+  top?: boolean;
 }) {
   return (
-    <Paper withBorder radius="md" p="md" bg="var(--gp-surface)">
+    <Paper
+      withBorder
+      radius="md"
+      p="md"
+      bg="var(--gp-surface)"
+      style={top ? { borderColor: "var(--mantine-color-gpGreen-5)" } : undefined}
+    >
       <Group justify="space-between" wrap="nowrap" mb={6} align="flex-start">
         <div>
           <Group gap={8} wrap="nowrap">
+            {top && (
+              <Badge size="xs" color="gpGreen">
+                top
+              </Badge>
+            )}
             <Text size="sm" fw={600}>
               Invoice {c.doc_number ?? c.invoice_id}
             </Text>
@@ -103,11 +114,7 @@ function CandidateCard({
             {c.inv_customer ?? "—"} · {c.txn_date?.slice(0, 10) ?? "—"} ·{" "}
             <span style={NUMERIC_STYLE}>{fmtCurrency(c.total_amt)}</span>
           </Text>
-          <InvoicePoNumber
-            invPoNumber={c.inv_po_number}
-            match={c.po_number_match}
-            orderPo={orderPo}
-          />
+          <InvoicePoNumber invPoNumber={c.inv_po_number} match={c.po_number_match} orderPo={orderPo} />
         </div>
         <Badge color={confColor(c.confidence)} variant="light">
           {c.confidence}
@@ -143,50 +150,28 @@ function CandidateCard({
   );
 }
 
-export function StageMatch({ view }: { view: ReconcilePoView }) {
+/** Which QuickBooks invoice backs this order — candidates + confirmed links +
+ *  a manual search. The DecisionBar drives the fast path on the top candidate. */
+export function MatchBody({ view }: { view: ReconcilePoView }) {
   const { canEdit, roleKnown } = useMe();
   const poId = view.header.id;
   const confirm = useReconcileConfirm();
   const reject = useReconcileReject();
-  const batch = useConfirmBatch();
   const manual = useManualLink();
   const [search, setSearch] = useState("");
   const hits = useInvoiceSearch(search);
 
   const cands = view.candidates;
   const links = view.links.filter((l) => l.confirmed);
-  const quick = cands.filter((c) => c.quick);
   const orderPo = view.header.po_number;
+  const busy = confirm.isPending || reject.isPending;
 
   const doConfirm = (invoice_id: number) =>
     confirm.mutate({ po_id: poId, invoice_id }, { onSuccess: () => notifySuccess("Match confirmed.") });
   const doReject = (invoice_id: number) => reject.mutate({ po_id: poId, invoice_id });
 
-  const busy = confirm.isPending || reject.isPending || batch.isPending;
-
   return (
-    <SectionCard
-      title="3 · Match"
-      subtitle="Which QuickBooks invoice backs this order?"
-      actions={
-        quick.length >= 2 && (
-          <Button
-            size="xs"
-            variant="light"
-            disabled={!canEdit}
-            loading={batch.isPending}
-            onClick={() =>
-              batch.mutate(
-                quick.map((c) => ({ po_id: poId, invoice_id: c.invoice_id })),
-                { onSuccess: () => notifySuccess(`Confirmed ${quick.length} high-confidence matches.`) },
-              )
-            }
-          >
-            Confirm {quick.length} high-confidence
-          </Button>
-        )
-      }
-    >
+    <Stack gap="md">
       {links.length > 0 && (
         <Stack gap={6}>
           <Text size="xs" fw={700} tt="uppercase" c="dimmed">
@@ -203,11 +188,7 @@ export function StageMatch({ view }: { view: ReconcilePoView }) {
                     </Text>
                     <QboLink url={l.qbo_url} />
                   </Group>
-                  <InvoicePoNumber
-                    invPoNumber={l.inv_po_number}
-                    match={l.po_number_match}
-                    orderPo={orderPo}
-                  />
+                  <InvoicePoNumber invPoNumber={l.inv_po_number} match={l.po_number_match} orderPo={orderPo} />
                 </div>
                 {l.diff && <DiffSummary diff={l.diff} />}
               </Group>
@@ -224,10 +205,11 @@ export function StageMatch({ view }: { view: ReconcilePoView }) {
       )}
 
       <Stack gap="md">
-        {cands.map((c) => (
+        {cands.map((c, i) => (
           <CandidateCard
             key={c.invoice_id}
             c={c}
+            top={i === 0 && cands.length > 1}
             orderPo={orderPo}
             canEdit={canEdit}
             busy={busy}
@@ -287,6 +269,6 @@ export function StageMatch({ view }: { view: ReconcilePoView }) {
           Confirming, rejecting or linking needs the editor role.
         </Text>
       )}
-    </SectionCard>
+    </Stack>
   );
 }

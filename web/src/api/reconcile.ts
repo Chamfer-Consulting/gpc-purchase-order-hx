@@ -95,6 +95,7 @@ export interface QueueItem {
   po_number?: string | null;
   po_date?: string | null;
   subject?: string | null;
+  total?: number | null;
   n_candidates?: number;
 }
 

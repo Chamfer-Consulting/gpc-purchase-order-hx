@@ -182,6 +182,7 @@ def queue(conn) -> dict:
     for r in review_queue.review_queue(conn):
         add(r["po_id"], r["reason"], "extraction", r["priority"] + 10.0,
             customer_name=r["customer_name"], po_date=r["po_date"], subject=r["subject"],
+            total=r.get("total"),
             target_kind=r["target_kind"], target_key=r["target_key"])
 
     by_po: dict[int, list[dict]] = {}
@@ -194,6 +195,7 @@ def queue(conn) -> dict:
             customer_name=cands[0].get("po_customer"),
             po_number=cands[0].get("po_number"),
             po_date=cands[0]["po_date"].isoformat() if cands[0].get("po_date") else None,
+            total=_num(cands[0].get("po_total")),
             n_candidates=len(cands))
 
     unlinked_no_candidate = 0
