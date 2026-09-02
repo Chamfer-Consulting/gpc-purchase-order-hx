@@ -14,6 +14,7 @@ import { ReconcilePage } from "@/pages/ReconcilePage";
 import { EditPoPage } from "@/pages/EditPoPage";
 import { NewPoPage } from "@/pages/NewPoPage";
 import { ArchivePage } from "@/pages/ArchivePage";
+import { AuditPage } from "@/pages/AuditPage";
 import { PricingPage } from "@/pages/PricingPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { KitchenSink } from "@/pages/KitchenSink";
@@ -47,6 +48,7 @@ export default function App() {
                     <Route path="/po/new" element={<NewPoPage />} />
                     <Route path="/po/:id" element={<EditPoPage />} />
                     <Route path="/archive" element={<ArchivePage />} />
+                    <Route path="/audit" element={<AuditPage />} />
                     <Route path="/settings" element={<SettingsPage />} />
                     <Route path="/_kitchen-sink" element={<KitchenSink />} />
                     <Route path="*" element={<Navigate to="/" replace />} />

@@ -13,19 +13,27 @@ from .config import get_settings
 _TTL = 600  # 10 minutes to complete the consent screen
 
 
-def issue(purpose: str) -> str:
+def issue(purpose: str, actor: str | None = None) -> str:
     s = get_settings()
-    return jwt.encode(
-        {"purpose": purpose, "nonce": secrets.token_urlsafe(8), "exp": int(time.time()) + _TTL},
-        s.state_secret,
-        algorithm="HS256",
-    )
+    claims = {
+        "purpose": purpose,
+        "nonce": secrets.token_urlsafe(8),
+        "exp": int(time.time()) + _TTL,
+    }
+    if actor:
+        claims["actor"] = actor  # who started the connect — read back in the callback
+    return jwt.encode(claims, s.state_secret, algorithm="HS256")
 
 
-def verify(token: str, purpose: str) -> bool:
+def read(token: str, purpose: str) -> dict | None:
+    """Verified claims for a state token, or None if it's bad / for another purpose."""
     s = get_settings()
     try:
         claims = jwt.decode(token, s.state_secret, algorithms=["HS256"])
     except jwt.PyJWTError:
-        return False
-    return claims.get("purpose") == purpose
+        return None
+    return claims if claims.get("purpose") == purpose else None
+
+
+def verify(token: str, purpose: str) -> bool:
+    return read(token, purpose) is not None

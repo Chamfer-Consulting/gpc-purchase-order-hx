@@ -21,12 +21,16 @@ import { ThemeToggle } from "./ThemeToggle";
 import styles from "./AppShell.module.css";
 
 function NavList({ onNavigate }: { onNavigate?: () => void }) {
+  const { canAdmin } = useMe();
   return (
     <MantineAppShell.Section grow component="nav" aria-label="Primary">
-      {NAV_SECTIONS.map((section) => (
+      {NAV_SECTIONS.map((section) => {
+        const items = section.items.filter((i) => !i.adminOnly || canAdmin);
+        if (items.length === 0) return null;
+        return (
         <Box key={section.label} mb={4}>
           <div className={styles.sectionLabel}>{section.label}</div>
-          {section.items.map((item) => {
+          {items.map((item) => {
             const Icon = item.icon;
             return (
               <RouterNavLink
@@ -44,7 +48,8 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
             );
           })}
         </Box>
-      ))}
+        );
+      })}
     </MantineAppShell.Section>
   );
 }

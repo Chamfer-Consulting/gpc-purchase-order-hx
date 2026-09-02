@@ -1,6 +1,7 @@
 import {
   IconArchive,
   IconArrowsShuffle,
+  IconHistory,
   IconLayoutDashboard,
   IconLeaf,
   IconRoute,
@@ -19,6 +20,8 @@ export interface NavItem {
   icon: ComponentType<IconProps>;
   /** one-line page description, reused as the PageLayout subtitle */
   description: string;
+  /** only render the sidebar link for admins (the route/API guard themselves too) */
+  adminOnly?: boolean;
 }
 
 export interface NavSection {
@@ -94,6 +97,13 @@ export const NAV_SECTIONS: NavSection[] = [
         to: "/archive",
         icon: IconArchive,
         description: "Cancelled, withdrawn, voided and deleted orders — hidden from reports.",
+      },
+      {
+        label: "Audit history",
+        to: "/audit",
+        icon: IconHistory,
+        description: "Every change on record — who, what, when, where and why.",
+        adminOnly: true,
       },
       {
         label: "Settings",

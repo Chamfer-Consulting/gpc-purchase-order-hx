@@ -11,6 +11,11 @@ from ..auth import AuthedUser, current_user, require_admin, require_editor
 from ..cache import clear as clear_cache
 from ..config import get_settings
 from ..reused_db import reused_conn
+from ..services import audit
+
+
+def _actor(user: AuthedUser) -> str | None:
+    return user.email or user.id
 
 router = APIRouter(prefix="/api/connections", tags=["connections"])
 
@@ -47,17 +52,17 @@ def status(_: AuthedUser = Depends(current_user)) -> dict:
 
 
 @router.get("/gmail/authorize")
-def gmail_authorize(_: AuthedUser = Depends(require_admin)) -> dict:
+def gmail_authorize(user: AuthedUser = Depends(require_admin)) -> dict:
     s = get_settings()
     if not (s.gmail_client_id and s.gmail_redirect_uri):
         raise HTTPException(503, "Gmail OAuth is not configured (GMAIL_CLIENT_ID / GMAIL_REDIRECT_URI).")
-    st = oauth_state.issue("gmail")
+    st = oauth_state.issue("gmail", actor=_actor(user))
     return {"url": gmail_client.build_authorize_url(s.gmail_client_id, s.gmail_redirect_uri, st)}
 
 
 @router.get("/qbo/authorize")
-def qbo_authorize(_: AuthedUser = Depends(require_admin)) -> dict:
-    st = oauth_state.issue("qbo")
+def qbo_authorize(user: AuthedUser = Depends(require_admin)) -> dict:
+    st = oauth_state.issue("qbo", actor=_actor(user))
     try:
         return {"url": qbo_client.build_authorize_url(st)}
     except RuntimeError as e:
@@ -65,21 +70,27 @@ def qbo_authorize(_: AuthedUser = Depends(require_admin)) -> dict:
 
 
 @router.post("/gmail/disconnect")
-def gmail_disconnect(_: AuthedUser = Depends(require_admin)) -> dict:
+def gmail_disconnect(user: AuthedUser = Depends(require_admin)) -> dict:
     with reused_conn() as conn:
         gmail_client.disconnect(conn)
+        audit.log(conn, actor=_actor(user), action="disconnect",
+                  entity="connection", entity_id="gmail")
+        conn.commit()
     return {"ok": True}
 
 
 @router.post("/qbo/disconnect")
-def qbo_disconnect(_: AuthedUser = Depends(require_admin)) -> dict:
+def qbo_disconnect(user: AuthedUser = Depends(require_admin)) -> dict:
     with reused_conn() as conn:
         qbo_client.disconnect(conn)
+        audit.log(conn, actor=_actor(user), action="disconnect",
+                  entity="connection", entity_id="qbo")
+        conn.commit()
     return {"ok": True}
 
 
 @router.post("/qbo/sync")
-def qbo_sync(full_resync: bool = False, _: AuthedUser = Depends(require_editor)) -> dict:
+def qbo_sync(full_resync: bool = False, user: AuthedUser = Depends(require_editor)) -> dict:
     """On-demand QuickBooks sync. The daily job (run_qbo_sync.py) is the norm; this
     is the 'sync now' button."""
     with reused_conn() as conn:
@@ -88,6 +99,10 @@ def qbo_sync(full_resync: bool = False, _: AuthedUser = Depends(require_editor))
             result = qbo_client.sync_invoices(conn, full_resync=full_resync)
         except qbo_client.QBOReauthRequired as e:
             raise HTTPException(409, f"reconnect required: {e}")
+        audit.log(conn, actor=_actor(user), action="sync", entity="connection",
+                  entity_id="qbo",
+                  after={"items": items, "full_resync": full_resync, **result})
+        conn.commit()
     # the analytics pages (@cached by filter params) are all invoice-derived —
     # rebuild them so a "sync now" is visible immediately, not after the 5-min TTL.
     clear_cache()

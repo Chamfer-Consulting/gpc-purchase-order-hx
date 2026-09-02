@@ -15,6 +15,7 @@ from .errors import ApiProblem
 from .db import close_pool, init_pool
 from .routers import (
     analytics,
+    audit as audit_router,
     connections,
     explore,
     filters,
@@ -79,6 +80,7 @@ app.include_router(pricing.router)
 app.include_router(settings_router.router)
 app.include_router(connections.router)
 app.include_router(oauth.router)
+app.include_router(audit_router.router)
 
 _log = logging.getLogger("po-api")
 

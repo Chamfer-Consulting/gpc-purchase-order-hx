@@ -10,6 +10,7 @@ from fastapi.responses import RedirectResponse
 from .. import oauth_state
 from ..config import get_settings
 from ..reused_db import reused_conn
+from ..services import audit
 
 router = APIRouter(prefix="/auth", tags=["oauth"])
 
@@ -25,11 +26,15 @@ def qbo_callback(request: Request) -> RedirectResponse:
     code, realm_id, state = qp.get("code"), qp.get("realmId"), qp.get("state", "")
     if not code or not realm_id:
         return _back("qbo_error")
-    if not oauth_state.verify(state, "qbo"):
+    claims = oauth_state.read(state, "qbo")
+    if claims is None:
         return _back("qbo_state_mismatch")
     try:
         with reused_conn() as conn:
             qbo_client.exchange_code_for_tokens(conn, code, realm_id)
+            audit.log(conn, actor=claims.get("actor"), action="connect",
+                      entity="connection", entity_id="qbo", after={"realm_id": realm_id})
+            conn.commit()
     except Exception:
         return _back("qbo_error")
     return _back("qbo_ok")
@@ -41,7 +46,8 @@ def gmail_callback(request: Request) -> RedirectResponse:
     code, state = qp.get("code"), qp.get("state", "")
     if not code:
         return _back("gmail_error")
-    if not oauth_state.verify(state, "gmail"):
+    claims = oauth_state.read(state, "gmail")
+    if claims is None:
         return _back("gmail_state_mismatch")
     s = get_settings()
     try:
@@ -49,6 +55,9 @@ def gmail_callback(request: Request) -> RedirectResponse:
             gmail_client.exchange_code_for_tokens(
                 conn, s.gmail_client_id, s.gmail_client_secret, s.gmail_redirect_uri, code
             )
+            audit.log(conn, actor=claims.get("actor"), action="connect",
+                      entity="connection", entity_id="gmail")
+            conn.commit()
     except Exception:
         return _back("gmail_error")
     return _back("gmail_ok")

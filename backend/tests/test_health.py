@@ -136,6 +136,8 @@ def test_oauth_callback_state_guard():
         "/api/settings/hidden-customers",
         "/api/settings/views?kind=customers",
         "/api/settings/team",
+        "/api/audit",
+        "/api/audit/options",
         "/api/overview",
         "/api/filters/options",
         "/api/customers",
