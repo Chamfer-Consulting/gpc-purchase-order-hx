@@ -159,6 +159,7 @@ def test_oauth_callback_state_guard():
         "/api/po/1",
         "/api/po/1/detail",
         "/api/po/1/audit",
+        "/api/po/1/revisions/2/diff",
         "/api/po/1/documents",
         "/api/po/1/documents/1",
         "/api/archive",

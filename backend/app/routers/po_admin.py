@@ -122,6 +122,14 @@ def po_audit(po_id: int, _: AuthedUser = Depends(current_user)) -> list[dict]:
         return audit.history(conn, "purchase_order", po_id)
 
 
+@router.get("/po/{po_id}/revisions/{other_id}/diff")
+def po_revision_diff(po_id: int, other_id: int, _: AuthedUser = Depends(current_user)) -> dict:
+    """Header + line changes from PO `po_id` to sibling `other_id` — feeds the
+    Revision chain's 'Compare' view on the Edit PO page."""
+    with reused_conn() as conn:
+        return _guard(po_admin.revision_diff, conn, po_id, other_id)
+
+
 @router.post("/po/{po_id}/status")
 def set_status(po_id: int, body: StatusIn, user: AuthedUser = Depends(require_admin)) -> dict:
     with reused_conn() as conn:

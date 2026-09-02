@@ -9,6 +9,8 @@ import {
   Code,
   Collapse,
   Group,
+  Loader,
+  Modal,
   Select,
   Stack,
   Table,
@@ -17,13 +19,14 @@ import {
   Textarea,
 } from "@mantine/core";
 import { useHotkeys } from "@mantine/hooks";
-import { IconDeviceFloppy, IconPlus } from "@tabler/icons-react";
+import { IconArrowsDiff, IconDeviceFloppy, IconPlus } from "@tabler/icons-react";
 import {
   PO_STATUSES,
   useInvoiceSearch,
   useLinkInvoice,
   usePo,
   useRegroup,
+  useRevisionDiff,
   useSavePo,
   useSetStatus,
   useSoftDelete,
@@ -37,6 +40,7 @@ import {
   type PoRevision,
   type PoSources,
   type PoStatus,
+  type RevisionDiff,
 } from "@/api/poEdit";
 import {
   openDocument,
@@ -46,6 +50,7 @@ import {
   useUploadDoc,
   type PoDocument,
 } from "@/api/poDocs";
+import { fetchBlobUrl } from "@/lib/api";
 import { fmtCurrency } from "@/lib/format";
 import { promptReason } from "@/lib/modals";
 import { useMe } from "@/api/me";
@@ -497,6 +502,7 @@ export function EditPoPage() {
 
 function RevisionsPanel({ poId, revisions }: { poId: number; revisions: PoRevision[] }) {
   const regroup = useRegroup(poId);
+  const [compareId, setCompareId] = useState<number | null>(null);
   return (
     <SectionCard
       title="Revision chain"
@@ -525,6 +531,7 @@ function RevisionsPanel({ poId, revisions }: { poId: number; revisions: PoRevisi
                 <Table.Th>PO date</Table.Th>
                 <Table.Th>Delivery</Table.Th>
                 <Table.Th ta="right">Total</Table.Th>
+                <Table.Th />
                 <Table.Th />
               </Table.Tr>
             </Table.Thead>
@@ -556,6 +563,16 @@ function RevisionsPanel({ poId, revisions }: { poId: number; revisions: PoRevisi
                     <Button
                       size="xs"
                       variant="subtle"
+                      leftSection={<IconArrowsDiff size={13} />}
+                      onClick={() => setCompareId(r.po_id)}
+                    >
+                      Compare
+                    </Button>
+                  </Table.Td>
+                  <Table.Td>
+                    <Button
+                      size="xs"
+                      variant="subtle"
                       loading={regroup.isPending}
                       onClick={() => regroup.mutate({ revision_of: r.po_number ?? r.source_file })}
                     >
@@ -568,6 +585,8 @@ function RevisionsPanel({ poId, revisions }: { poId: number; revisions: PoRevisi
           </Table>
         </Table.ScrollContainer>
       )}
+      <RevisionDiffModal poId={poId} otherId={compareId} onClose={() => setCompareId(null)} />
+
       {regroup.isSuccess && (
         <Text size="xs" c="dimmed">
           Saved. Grouping is applied on the next extraction run.
@@ -579,6 +598,199 @@ function RevisionsPanel({ poId, revisions }: { poId: number; revisions: PoRevisi
         </Text>
       )}
     </SectionCard>
+  );
+}
+
+const REV_STATUS_META: Record<
+  RevisionDiff["rows"][number]["status"],
+  { label: string; color: string; bg: string }
+> = {
+  same: { label: "", color: "gray", bg: "transparent" },
+  changed: { label: "changed", color: "orange", bg: "var(--mantine-color-orange-light)" },
+  added: { label: "added", color: "gpGreen", bg: "var(--mantine-color-green-light)" },
+  removed: { label: "removed", color: "red", bg: "var(--mantine-color-red-light)" },
+};
+
+function revCell(side: RevisionDiff["rows"][number]["a"]) {
+  if (!side) return <Text size="xs" c="dimmed">—</Text>;
+  return (
+    <Text size="xs" style={NUMERIC_STYLE}>
+      {side.quantity ?? "—"} × {fmtCurrency(side.unit_price, true)} ={" "}
+      {fmtCurrency(side.line_total, true)}
+    </Text>
+  );
+}
+
+function RevisionDiffModal({
+  poId,
+  otherId,
+  onClose,
+}: {
+  poId: number;
+  otherId: number | null;
+  onClose: () => void;
+}) {
+  const { data, isLoading, error } = useRevisionDiff(poId, otherId);
+  const shown = data
+    ? data.rows.filter((r) => r.status !== "same")
+    : [];
+
+  return (
+    <Modal
+      opened={otherId != null}
+      onClose={onClose}
+      size="xl"
+      title={
+        data
+          ? `Compare — PO ${data.a.po_number ?? data.a.po_id} → ${data.b.po_number ?? data.b.po_id}`
+          : "Compare revisions"
+      }
+    >
+      {isLoading && <Loader size="sm" />}
+      {error && <Text size="sm" c="red">{(error as Error).message}</Text>}
+      {data && (
+        <Stack gap="md">
+          <Group gap="lg">
+            <Text size="sm">
+              <b>A</b> PO {data.a.po_number ?? data.a.po_id} · {data.a.po_date ?? "no date"} ·{" "}
+              {data.a.n_items} lines · {fmtCurrency(data.a.total)}
+            </Text>
+            <Text size="sm">
+              <b>B</b> PO {data.b.po_number ?? data.b.po_id} · {data.b.po_date ?? "no date"} ·{" "}
+              {data.b.n_items} lines · {fmtCurrency(data.b.total)}
+            </Text>
+          </Group>
+
+          {data.header.length > 0 && (
+            <div>
+              <Text size="xs" fw={600} c="dimmed" mb={4}>
+                Header changes
+              </Text>
+              <Table fz="xs" withRowBorders>
+                <Table.Tbody>
+                  {data.header.map((h) => (
+                    <Table.Tr key={h.field}>
+                      <Table.Td w={140}>{h.field}</Table.Td>
+                      <Table.Td c="dimmed">{String(h.a ?? "—")}</Table.Td>
+                      <Table.Td>→ {String(h.b ?? "—")}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </div>
+          )}
+
+          <div>
+            <Text size="xs" fw={600} c="dimmed" mb={4}>
+              Line items — {data.n_changed} changed of {data.rows.length}
+            </Text>
+            {shown.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                Every line matches on quantity, unit price and total.
+              </Text>
+            ) : (
+              <Table.ScrollContainer minWidth={560} type="native">
+                <Table fz="xs" withRowBorders verticalSpacing={4}>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Product</Table.Th>
+                      <Table.Th>A</Table.Th>
+                      <Table.Th>B</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {shown.map((r, i) => {
+                      const meta = REV_STATUS_META[r.status];
+                      return (
+                        <Table.Tr key={i} style={{ background: meta.bg }}>
+                          <Table.Td>
+                            <Text size="xs" fw={500}>
+                              {r.product}
+                              {r.size ? ` · ${r.size}` : ""}
+                            </Text>
+                            <Badge size="xs" variant="light" color={meta.color}>
+                              {meta.label}
+                            </Badge>
+                          </Table.Td>
+                          <Table.Td>{revCell(r.a)}</Table.Td>
+                          <Table.Td>{revCell(r.b)}</Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </Table.ScrollContainer>
+            )}
+          </div>
+        </Stack>
+      )}
+    </Modal>
+  );
+}
+
+function PdfModal({
+  poId,
+  doc,
+  onClose,
+}: {
+  poId: number;
+  doc: PoDocument | null;
+  onClose: () => void;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!doc) return;
+    let objUrl: string | null = null;
+    let cancelled = false;
+    setUrl(null);
+    setErr(null);
+    fetchBlobUrl(`/api/po/${poId}/documents/${doc.id}`)
+      .then((u) => {
+        if (cancelled) {
+          URL.revokeObjectURL(u);
+          return;
+        }
+        objUrl = u;
+        setUrl(u);
+      })
+      .catch((e) => !cancelled && setErr((e as Error).message));
+    return () => {
+      cancelled = true;
+      if (objUrl) URL.revokeObjectURL(objUrl);
+    };
+  }, [poId, doc]);
+
+  const isImage = doc?.mime_type?.startsWith("image/");
+
+  return (
+    <Modal
+      opened={doc != null}
+      onClose={onClose}
+      size="90%"
+      title={doc?.filename ?? "Document"}
+      styles={{ body: { height: "80vh", padding: 0 } }}
+    >
+      {err && <Text size="sm" c="red" p="md">{err}</Text>}
+      {!url && !err && (
+        <Group justify="center" p="xl">
+          <Loader size="sm" />
+        </Group>
+      )}
+      {url &&
+        (isImage ? (
+          <Box style={{ overflow: "auto", height: "100%" }} p="md">
+            <img src={url} alt={doc?.filename ?? ""} style={{ maxWidth: "100%" }} />
+          </Box>
+        ) : (
+          <iframe
+            src={url}
+            title={doc?.filename ?? "document"}
+            style={{ width: "100%", height: "100%", border: "none" }}
+          />
+        ))}
+    </Modal>
   );
 }
 
@@ -706,9 +918,11 @@ function DocumentsPanel({ poId, sources }: { poId: number; sources?: PoSources }
   const upload = useUploadDoc(poId);
   const del = useDeleteDoc(poId);
   const result = capture.data;
+  const [viewDoc, setViewDoc] = useState<PoDocument | null>(null);
 
   return (
     <SectionCard title="Documents">
+      <PdfModal poId={poId} doc={viewDoc} onClose={() => setViewDoc(null)} />
       {sources?.gmail_thread_url && (
         <Anchor href={sources.gmail_thread_url} target="_blank" rel="noopener" size="sm">
           Email thread ↗
@@ -780,7 +994,7 @@ function DocumentsPanel({ poId, sources }: { poId: number; sources?: PoSources }
                     </Badge>
                   </Table.Td>
                   <Table.Td>
-                    <Anchor component="button" type="button" onClick={() => openDocument(poId, d.id)}>
+                    <Anchor component="button" type="button" onClick={() => setViewDoc(d)}>
                       {d.filename}
                     </Anchor>
                   </Table.Td>
@@ -791,8 +1005,15 @@ function DocumentsPanel({ poId, sources }: { poId: number; sources?: PoSources }
                   <Table.Td>{d.captured_at?.slice(0, 16).replace("T", " ") ?? "—"}</Table.Td>
                   <Table.Td>
                     <Group gap={4} wrap="nowrap">
-                      <Button size="xs" variant="subtle" onClick={() => openDocument(poId, d.id)}>
+                      <Button size="xs" variant="subtle" onClick={() => setViewDoc(d)}>
                         View
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        onClick={() => openDocument(poId, d.id)}
+                      >
+                        New tab
                       </Button>
                       <Button
                         size="xs"

@@ -176,6 +176,90 @@ def _revision_chain(cur, hdr: dict) -> list[dict]:
     return [_jsonify(dict(r)) for r in cur.fetchall()]
 
 
+def _diff_num(v):
+    try:
+        return round(float(v), 4)
+    except (TypeError, ValueError):
+        return None
+
+
+_DIFF_HEADER_FIELDS = (
+    "po_number", "po_date", "delivery_date", "customer_name",
+    "subtotal", "tax", "total", "notes",
+)
+_DIFF_LINE_FIELDS = ("quantity", "unit_price", "line_total")
+
+
+def _rev_side(it: dict | None) -> dict | None:
+    if it is None:
+        return None
+    return {
+        "product_raw": it.get("product_raw"),
+        "quantity": _diff_num(it.get("quantity")),
+        "unit_price": _diff_num(it.get("unit_price")),
+        "line_total": _diff_num(it.get("line_total")),
+    }
+
+
+def diff_versions(a: dict, b: dict, *, a_id: int = 0, b_id: int = 0) -> dict:
+    """Header + line-item changes between two get_po()-shaped dicts, lines matched
+    on (product_name, container_size). Direction is a -> b ("what changed to get
+    from A to B")."""
+    header = [
+        {"field": f, "a": a["header"].get(f), "b": b["header"].get(f)}
+        for f in _DIFF_HEADER_FIELDS
+        if a["header"].get(f) != b["header"].get(f)
+    ]
+
+    def _key(it):
+        return (it.get("product_name") or "?", it.get("container_size") or "")
+
+    amap = {_key(it): it for it in a["items"]}
+    bmap = {_key(it): it for it in b["items"]}
+    rows = []
+    for k in sorted(amap.keys() | bmap.keys()):
+        ia, ib = amap.get(k), bmap.get(k)
+        if ia and not ib:
+            status = "removed"
+        elif ib and not ia:
+            status = "added"
+        elif any(_diff_num(ia.get(f)) != _diff_num(ib.get(f)) for f in _DIFF_LINE_FIELDS):
+            status = "changed"
+        else:
+            status = "same"
+        rows.append(
+            {"product": k[0], "size": k[1], "status": status,
+             "a": _rev_side(ia), "b": _rev_side(ib)}
+        )
+
+    def _hd(po: dict, pid: int) -> dict:
+        return {
+            "po_id": pid,
+            "po_number": po["header"].get("po_number"),
+            "po_date": po["header"].get("po_date"),
+            "total": _diff_num(po["header"].get("total")),
+            "n_items": len(po["items"]),
+        }
+
+    return {
+        "a": _hd(a, a_id),
+        "b": _hd(b, b_id),
+        "header": header,
+        "rows": rows,
+        "n_changed": sum(1 for r in rows if r["status"] != "same"),
+    }
+
+
+def revision_diff(conn, po_id: int, other_id: int) -> dict:
+    """diff_versions() for two live POs. Voided/removed lines are already excluded
+    by get_po."""
+    a = get_po(conn, po_id)
+    b = get_po(conn, other_id)
+    if a is None or b is None:
+        raise AdminError("PO not found")
+    return diff_versions(a, b, a_id=po_id, b_id=other_id)
+
+
 def _links(cur, po_id: int) -> list[dict]:
     cur.execute(
         """

@@ -66,6 +66,39 @@ export interface PoRevision {
   source_file: string;
 }
 
+export type RevisionRowStatus = "same" | "changed" | "added" | "removed";
+
+export interface RevisionSide {
+  product_raw: string | null;
+  quantity: number | null;
+  unit_price: number | null;
+  line_total: number | null;
+}
+
+export interface RevisionDiff {
+  a: { po_id: number; po_number: string | null; po_date: string | null; total: number | null; n_items: number };
+  b: { po_id: number; po_number: string | null; po_date: string | null; total: number | null; n_items: number };
+  header: { field: string; a: unknown; b: unknown }[];
+  rows: {
+    product: string;
+    size: string;
+    status: RevisionRowStatus;
+    a: RevisionSide | null;
+    b: RevisionSide | null;
+  }[];
+  n_changed: number;
+}
+
+/** Header + line changes from `poId` to a sibling `otherId`. */
+export function useRevisionDiff(poId: number, otherId: number | null) {
+  return useQuery({
+    queryKey: ["revision-diff", poId, otherId],
+    queryFn: () => apiGet<RevisionDiff>(`/api/po/${poId}/revisions/${otherId}/diff`),
+    enabled: otherId != null,
+    staleTime: 60_000,
+  });
+}
+
 export interface PoLink {
   invoice_id: number;
   match_method: string;
