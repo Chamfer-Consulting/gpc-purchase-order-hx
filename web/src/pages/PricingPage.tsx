@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ActionIcon,
+  Alert,
   Button,
   Group,
   Loader,
@@ -18,6 +19,7 @@ import { Chart } from "@/charts/Chart";
 import { timeLineOption, type TimeSeries } from "@/charts/options";
 import { fmtCurrency } from "@/lib/format";
 import { notifyError, notifySuccess } from "@/lib/notify";
+import { useMe } from "@/api/me";
 import {
   useReferencePrices,
   usePriceHistory,
@@ -67,6 +69,7 @@ export function PricingPage() {
   const { data, isLoading, error, refetch } = useReferencePrices();
   const save = useSavePrices();
   const meta = pageMeta("/pricing")!;
+  const { canAdmin, roleKnown } = useMe();
 
   const [rows, setRows] = useState<EditRow[]>([]);
   const [seed, setSeed] = useState<Map<string, number>>(new Map());
@@ -120,6 +123,7 @@ export function PricingPage() {
   }
 
   function onSave() {
+    if (!canAdmin) return;
     const present = new Set<string>();
     const changed: RefPriceRow[] = [];
     for (const r of rows) {
@@ -151,7 +155,7 @@ export function PricingPage() {
   return (
     <PageLayout
       title={meta.title}
-      description="Review unit-price history, then set the reference prices that drive the price-anomaly flag on new orders. auto rows refresh from the most recent price actually paid on each extraction sync; editing one makes it a permanent manual override."
+      description="Review unit-price history and the reference prices that drive the price-anomaly flag on new orders. auto rows refresh from the most recent price actually paid on each extraction sync; an admin editing one makes it a permanent manual override."
       breadcrumbs={meta.breadcrumbs}
       width="form"
     >
@@ -190,15 +194,26 @@ export function PricingPage() {
               title="Reference prices"
               actions={
                 <>
-                  <Button size="xs" variant="default" onClick={addRow}>
+                  <Button size="xs" variant="default" onClick={addRow} disabled={!canAdmin}>
                     Add row
                   </Button>
-                  <Button size="xs" onClick={onSave} loading={save.isPending}>
+                  <Button
+                    size="xs"
+                    onClick={onSave}
+                    loading={save.isPending}
+                    disabled={!canAdmin}
+                  >
                     Save changes
                   </Button>
                 </>
               }
             >
+              {roleKnown && !canAdmin && (
+                <Alert color="gray" variant="light" title="View only" mb="sm">
+                  Reference prices are admin-only. You can review the current values and the
+                  price history above, but not change them.
+                </Alert>
+              )}
 
               <Table.ScrollContainer minWidth={720} type="native">
                 <Table striped withTableBorder verticalSpacing={4}>
@@ -219,6 +234,7 @@ export function PricingPage() {
                           <TextInput
                             size="xs"
                             aria-label="Customer"
+                            disabled={!canAdmin}
                             value={r.customer_name}
                             onChange={(e) => patch(r._rk, { customer_name: e.currentTarget.value })}
                           />
@@ -227,6 +243,7 @@ export function PricingPage() {
                           <TextInput
                             size="xs"
                             aria-label="Product"
+                            disabled={!canAdmin}
                             value={r.product_name}
                             onChange={(e) => patch(r._rk, { product_name: e.currentTarget.value })}
                           />
@@ -235,6 +252,7 @@ export function PricingPage() {
                           <TextInput
                             size="xs"
                             aria-label="Size"
+                            disabled={!canAdmin}
                             value={r.container_size}
                             onChange={(e) => patch(r._rk, { container_size: e.currentTarget.value })}
                           />
@@ -243,6 +261,7 @@ export function PricingPage() {
                           <NumberInput
                             size="xs"
                             aria-label="Price"
+                            disabled={!canAdmin}
                             decimalScale={2}
                             value={r.price}
                             onChange={(v) => patch(r._rk, { price: v === "" ? "" : Number(v) })}
@@ -259,6 +278,7 @@ export function PricingPage() {
                             size="sm"
                             variant="subtle"
                             color="red"
+                            disabled={!canAdmin}
                             onClick={() => removeRow(r._rk)}
                             aria-label="Delete row"
                           >

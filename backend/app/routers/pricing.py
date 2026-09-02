@@ -1,10 +1,12 @@
-"""Reference Prices — the editable price table behind the price-anomaly flag, plus
-the unit-price history that informs an edit. See services/pricing.py."""
+"""Reference Prices — the price table behind the price-anomaly flag, plus the
+unit-price history that informs an edit. Reads are open to any signed-in user;
+writing a reference price is admin-only (it changes what every future extraction
+flags as anomalous). See services/pricing.py."""
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user, require_editor
+from ..auth import AuthedUser, current_user, require_admin
 from ..reused_db import reused_conn
 from ..services import pricing
 
@@ -43,7 +45,7 @@ def history(product: str, size: str, _: AuthedUser = Depends(current_user)) -> d
 
 
 @router.post("")
-def save_prices(body: SaveIn, user: AuthedUser = Depends(require_editor)) -> dict:
+def save_prices(body: SaveIn, user: AuthedUser = Depends(require_admin)) -> dict:
     actor = _actor(user)
     with reused_conn() as conn:
         # one transaction: a failed delete must not leave the save committed

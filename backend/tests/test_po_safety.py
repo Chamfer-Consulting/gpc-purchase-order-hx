@@ -154,6 +154,16 @@ def test_connection_disconnect_forbidden_for_editor():
     assert r.status_code == 403 and r.json()["detail"]["need"] == "admin"
 
 
+def test_reference_price_write_forbidden_for_editor():
+    # a reference price changes what every future extraction flags — admin-only
+    r = _client.post(
+        "/api/pricing",
+        json={"rows": [], "delete": []},
+        headers={"Authorization": f"Bearer {_tok()}"},
+    )
+    assert r.status_code == 403 and r.json()["detail"]["need"] == "admin"
+
+
 def test_saved_view_delete_requires_kind():
     r = _client.request(
         "DELETE",

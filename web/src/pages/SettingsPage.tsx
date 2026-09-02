@@ -185,7 +185,7 @@ function TeamCard() {
   return (
     <SectionCard
       title="Team"
-      subtitle="Everyone with a login or a granted role. viewer = read-only · editor = edit POs / matches / prices · admin = + status changes, delete, connections, this list. A signed-in user with no role runs as viewer; “no access” means their email isn't allowed."
+      subtitle="Everyone with a login or a granted role. viewer = read-only · editor = edit POs / invoice matches · admin = + status changes, delete, connections, reference prices, this list. A signed-in user with no role runs as viewer; “no access” means their email isn't allowed."
     >
       <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
         <Stack gap="sm">
