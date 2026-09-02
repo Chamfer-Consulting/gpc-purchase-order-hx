@@ -314,3 +314,58 @@ def backfill(conn, *, sources: list[str], limit: int = 100,
         out["qbo"] = res
 
     return out
+
+
+_INLINE_ROWS = (
+    "SELECT id, po_id FROM po_documents "
+    "WHERE content IS NOT NULL AND storage_path IS NULL"
+)
+
+
+def migrate_inline_to_storage(conn, *, limit: int = 1000) -> dict:
+    """Move documents currently stored inline (po_documents.content) into Supabase
+    Storage: upload the bytes, set storage_path, NULL out content. Idempotent and
+    resumable — commits after each row, only touches rows still inline. No-op
+    (and reported as such) unless doc_storage.is_enabled(). Reads keep working
+    throughout: get_document_blob prefers inline `content` and falls back to
+    Storage, so a half-finished run serves both kinds."""
+    if not doc_storage.is_enabled():
+        return {"enabled": False, "migrated": 0, "failed": 0,
+                "remaining": _count(conn, _INLINE_ROWS)}
+
+    with conn.cursor() as cur:
+        cur.execute(f"{_INLINE_ROWS} ORDER BY id LIMIT %s", (limit,))
+        ids = [r[0] for r in cur.fetchall()]
+
+    migrated = failed = 0
+    errors: list[str] = []
+    for doc_id in ids:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT po_id, kind, content_hash, mime_type, content "
+                    "FROM po_documents WHERE id = %s",
+                    (doc_id,),
+                )
+                po_id, kind, digest, mime_type, content = cur.fetchone()
+            path = f"po/{po_id}/{kind}/{digest}.pdf"  # same scheme as store_document
+            doc_storage.upload(path, bytes(content), mime_type or "application/pdf")
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE po_documents SET storage_path = %s, content = NULL WHERE id = %s",
+                    (path, doc_id),
+                )
+            conn.commit()
+            migrated += 1
+        except Exception as exc:  # noqa: BLE001
+            conn.rollback()
+            failed += 1
+            errors.append(f"doc {doc_id}: {exc}")
+
+    return {
+        "enabled": True,
+        "migrated": migrated,
+        "failed": failed,
+        "remaining": _count(conn, _INLINE_ROWS),
+        "errors": errors,
+    }

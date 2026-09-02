@@ -18,9 +18,13 @@ on:
         options: ["gmail,qbo", "gmail", "qbo"]
         default: "gmail,qbo"
       limit:
-        description: "Max POs per source"
+        description: "Max POs per source (or, with migrate_storage, max docs moved this run)"
         type: string
         default: "200"
+      migrate_storage:
+        description: "Instead of capturing: move inline PDFs into Supabase Storage (resumable — re-run until done)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -62,7 +66,13 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SOURCES: ${{ github.event.inputs.sources || 'gmail,qbo' }}
           LIMIT: ${{ github.event.inputs.limit || '200' }}
-        run: python run_doc_capture.py --sources "$SOURCES" --limit "$LIMIT"
+          MIGRATE_STORAGE: ${{ github.event.inputs.migrate_storage }}
+        run: |
+          if [ "$MIGRATE_STORAGE" = "true" ]; then
+            python run_doc_capture.py --migrate-storage --limit "$LIMIT"
+          else
+            python run_doc_capture.py --sources "$SOURCES" --limit "$LIMIT"
+          fi
 
       # Exit 3 = the QuickBooks connection needs reauthorising.
       - name: Upload log

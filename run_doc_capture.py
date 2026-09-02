@@ -62,7 +62,12 @@ def main() -> None:
     ap.add_argument("--sources", default="gmail,qbo",
                     help="comma-separated: gmail, qbo (default both)")
     ap.add_argument("--limit", type=int, default=200,
-                    help="max POs to process per source per run (default 200)")
+                    help="max POs to process per source per run (default 200); "
+                         "with --migrate-storage, max documents moved this run")
+    ap.add_argument("--migrate-storage", action="store_true",
+                    help="one-off: move documents stored inline in Postgres into "
+                         "Supabase Storage (needs SUPABASE_URL + a secret key). "
+                         "Resumable; re-run until 'remaining' is 0. Skips the capture sweep.")
     ap.add_argument("--log-file", default="run_doc_capture.log")
     args = ap.parse_args()
     _configure_logging(args.log_file)
@@ -73,7 +78,7 @@ def main() -> None:
         sys.exit(2)
 
     sources = [s.strip() for s in args.sources.split(",") if s.strip() in ("gmail", "qbo")]
-    if not sources:
+    if not sources and not args.migrate_storage:
         print("no valid --sources (use gmail and/or qbo)", file=sys.stderr)
         sys.exit(2)
 
@@ -81,14 +86,35 @@ def main() -> None:
     # Accept either env name (both valid until end of 2026).
     supabase_key = os.environ.get("SUPABASE_SECRET_KEY") or os.environ.get("SUPABASE_SERVICE_KEY", "")
     doc_storage.configure(os.environ.get("SUPABASE_URL", ""), supabase_key)
+    storage_on = doc_storage.is_enabled()
     logger.info(
-        "doc capture starting — sources=%s limit=%d storage=%s",
-        sources, args.limit, "supabase" if doc_storage.is_enabled() else "inline",
+        "doc capture starting — sources=%s limit=%d storage=%s%s",
+        sources, args.limit, "supabase" if storage_on else "inline",
+        " (migrate mode)" if args.migrate_storage else "",
     )
 
     conn = psycopg2.connect(database_url)
     try:
         _apply_schema(conn)
+
+        if args.migrate_storage:
+            if not storage_on:
+                logger.error("Supabase Storage is not configured — set SUPABASE_URL and "
+                             "SUPABASE_SECRET_KEY (or SUPABASE_SERVICE_KEY).")
+                sys.exit(2)
+            res = po_doc_capture.migrate_inline_to_storage(conn, limit=args.limit)
+            for err in res.get("errors", [])[:20]:
+                logger.warning("  %s", err)
+            logger.info(
+                "storage migration: %d moved, %d failed, %d still inline",
+                res["migrated"], res["failed"], res["remaining"],
+            )
+            if res["failed"]:
+                sys.exit(1)
+            print("✅ storage migration pass done"
+                  + (f" — {res['remaining']} still to move, re-run to continue"
+                     if res["remaining"] else " — nothing left inline"))
+            return
 
         if "qbo" in sources and qbo_client.get_connection(conn) is None:
             logger.warning("QuickBooks not connected — skipping the qbo source")

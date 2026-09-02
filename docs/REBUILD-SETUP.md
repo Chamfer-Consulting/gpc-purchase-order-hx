@@ -227,9 +227,15 @@ setup needed, it just works. To offload them to Supabase Storage instead:
 2. Set `SUPABASE_URL` + `SUPABASE_SECRET_KEY` (or legacy `SUPABASE_SERVICE_KEY`)
    on Railway **and** as GitHub Actions secrets (so `doc_capture.yml` uploads
    there too).
+3. Move the PDFs already stored inline in Postgres into the bucket (optional but
+   recommended, so the DB stops carrying them): run `doc_capture.yml` from the
+   Actions tab with **migrate_storage** checked — resumable, re-run until it
+   reports `0 still inline` (`--limit` caps docs per pass). Locally:
+   `python run_doc_capture.py --migrate-storage`.
 
-New captures then go to Storage (`content` NULL, `storage_path` set); reads are
-proxied by the API. Existing inline rows stay inline until re-captured.
+New captures then go to Storage (`content` NULL, `storage_path` set); reads
+prefer inline `content` and fall back to Storage, so a half-finished migration
+serves both. Reads are proxied by the API.
 
 ### 3.2 Run notifications (optional)
 
