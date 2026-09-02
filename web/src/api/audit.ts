@@ -1,5 +1,8 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
+
+/** rows fetched per page / per "Load more" */
+export const AUDIT_PAGE = 50;
 
 /** One event in the cross-system activity feed. `source` says where it came from:
  *  "admin" = an admin mutation (audit_log), "review" = an extraction-review decision. */
@@ -26,8 +29,6 @@ export interface AuditFilters {
   /** inclusive YYYY-MM-DD bounds */
   since?: string;
   until?: string;
-  limit?: number;
-  offset?: number;
 }
 
 export interface AuditPage {
@@ -42,10 +43,21 @@ export interface AuditOptions {
   sources: string[];
 }
 
+/** Paginated feed: each page is AUDIT_PAGE rows at a growing offset; `fetchNextPage`
+ *  pulls the next slice while keeping the ones already shown. Changing `filters`
+ *  starts a fresh query at offset 0. */
 export function useAuditLog(filters: AuditFilters) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: ["audit", filters],
-    queryFn: () => apiGet<AuditPage>("/api/audit", filters as Record<string, unknown>),
+    queryFn: ({ pageParam }) =>
+      apiGet<AuditPage>("/api/audit", {
+        ...filters,
+        limit: AUDIT_PAGE,
+        offset: pageParam,
+      } as Record<string, unknown>),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.has_more ? allPages.length * AUDIT_PAGE : undefined,
     placeholderData: keepPreviousData,
     staleTime: 15_000,
   });

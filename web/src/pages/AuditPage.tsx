@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ActionIcon,
@@ -27,7 +27,6 @@ import { SectionCard } from "@/components/SectionCard";
 import { EmptyState } from "@/components/EmptyState";
 import { pageMeta } from "@/nav";
 
-const PAGE = 50;
 const iso = (d: Date | null) => (d ? dayjs(d).format("YYYY-MM-DD") : undefined);
 
 const SOURCE_LABEL: Record<string, string> = { admin: "admin", review: "review" };
@@ -183,12 +182,6 @@ export function AuditPage() {
   const [qInput, setQInput] = useState("");
   const [q] = useDebouncedValue(qInput, 300);
   const [range, setRange] = useState<[Date | null, Date | null]>([null, null]);
-  const [limit, setLimit] = useState(PAGE);
-
-  // any filter change resets the page size back to the first page
-  useEffect(() => {
-    setLimit(PAGE);
-  }, [source, action, entity, q, range]);
 
   const filters: AuditFilters = useMemo(
     () => ({
@@ -198,14 +191,14 @@ export function AuditPage() {
       q: q.trim() || undefined,
       since: iso(range[0]),
       until: iso(range[1]),
-      limit,
     }),
-    [source, action, entity, q, range, limit],
+    [source, action, entity, q, range],
   );
 
-  const { data, isLoading, isFetching, error, refetch } = useAuditLog(filters);
+  const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, error, refetch } =
+    useAuditLog(filters);
   const options = useAuditOptions();
-  const rows = data?.rows ?? [];
+  const rows = data?.pages.flatMap((p) => p.rows) ?? [];
 
   if (roleKnown && !canAdmin) {
     return (
@@ -224,7 +217,7 @@ export function AuditPage() {
         subtitle={
           isLoading
             ? undefined
-            : `${rows.length} event${rows.length === 1 ? "" : "s"}${data?.has_more ? " (more available)" : ""}`
+            : `${rows.length} event${rows.length === 1 ? "" : "s"}${hasNextPage ? "+ (load more below)" : ""}`
         }
       >
         <Stack gap="md">
@@ -280,13 +273,13 @@ export function AuditPage() {
 
           <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
             <AuditTable rows={rows} />
-            {data?.has_more && (
+            {hasNextPage && (
               <Group justify="center">
                 <Button
                   size="xs"
                   variant="default"
-                  loading={isFetching}
-                  onClick={() => setLimit((l) => l + PAGE)}
+                  loading={isFetchingNextPage}
+                  onClick={() => void fetchNextPage()}
                 >
                   Load more
                 </Button>
