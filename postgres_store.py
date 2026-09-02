@@ -12,6 +12,7 @@ Streamlit installed there), since it's used by a plain CLI script / GitHub Actio
 not the dashboard.
 """
 
+import logging
 import os
 import re
 from collections import defaultdict
@@ -190,7 +191,12 @@ def is_known(conn, source_file: str, file_hash: str) -> bool:
     return row[0] is None or row[0] == NOT_A_PO_ERROR
 
 
-SNAPSHOT_MAX_CHARS = 8_000
+# Must stay >= extract_pos.MAX_TEXT_CHARS (the model-input truncation limit) so a
+# snapshot can faithfully reproduce what the model actually saw when eval_extraction
+# replays it. Matches extraction_reviews.SNAPSHOT_MAX_CHARS so the copy a review
+# decision makes isn't re-clipped. Was 8_000 — too short for multi-page POs, which
+# made replays diverge from the original run.
+SNAPSHOT_MAX_CHARS = 30_000
 
 
 def upsert_snapshot(conn, target_kind: str, target_key: str, content: str, content_hash: str | None) -> None:
@@ -199,6 +205,11 @@ def upsert_snapshot(conn, target_kind: str, target_key: str, content: str, conte
     must never break an extraction run)."""
     if not content:
         return
+    if len(content) > SNAPSHOT_MAX_CHARS:
+        logging.getLogger(__name__).info(
+            "snapshot for %s/%s truncated: %d -> %d chars",
+            target_kind, target_key, len(content), SNAPSHOT_MAX_CHARS,
+        )
     try:
         with conn.cursor() as cur:
             cur.execute(

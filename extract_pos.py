@@ -183,10 +183,15 @@ EXTRACTION_TOOL = {
 MODEL = "claude-opus-4-6"
 MAX_RETRIES = 5          # was 3 — more attempts for transient rate limits
 RETRY_DELAY = 10         # seconds base delay (exponential backoff from here)
-MAX_TEXT_CHARS = 15000   # extracted PDF text longer than this is truncated before the API
-                         # call (long multi-page POs); truncation is logged and flagged in
-                         # the result's notes so a dropped trailing line item is visible
-                         # instead of silent.
+MAX_TEXT_CHARS = 28000   # extracted PDF/thread text longer than this is truncated before the
+                         # API call; truncation is logged and flagged in the result's notes so
+                         # a dropped trailing line item is visible instead of silent. Was
+                         # 15000, which truncated legitimate multi-page POs and full email
+                         # threads and lost trailing line items (a cause of "requested"
+                         # totals reading low). Now sits just under run_cloud_extraction's
+                         # NON_PO_TEXT_CEILING (30k) — anything that passes the not-a-PO
+                         # size gate is now sent in full. Keep
+                         # postgres_store.SNAPSHOT_MAX_CHARS >= this.
 
 
 # ── Revision Detection & Diff Engine ──────────────────────────────────────────

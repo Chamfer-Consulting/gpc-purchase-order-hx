@@ -28,8 +28,11 @@ import psycopg2.extras
 VERDICTS = ("is_po", "not_po", "needs_fix")
 
 # content_snapshot is only for the eval replay + few-shot text — cap it so a
-# pathological thread can't bloat the table or a prompt.
-SNAPSHOT_MAX_CHARS = 20_000
+# pathological thread can't bloat the table or a prompt. Kept >= the model-input
+# limit (extract_pos.MAX_TEXT_CHARS) and postgres_store.SNAPSHOT_MAX_CHARS so the
+# copy a review decision takes from extraction_snapshots isn't re-clipped and an
+# eval replay sees exactly what the original run did.
+SNAPSHOT_MAX_CHARS = 30_000
 
 _HEADER_KEYS = (
     "po_number", "po_date", "delivery_date", "sent_date", "customer_name",
