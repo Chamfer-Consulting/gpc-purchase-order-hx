@@ -43,6 +43,8 @@ export interface ChartSpec {
   breakdowns?: ChartBreakdown[] | null;
   /** grid span: "full" = one column, "half" = paired. Omitted => auto by shape. */
   width?: "half" | "full";
+  /** one extra tooltip line per x point, aligned to `x` */
+  point_notes?: (string | null)[] | null;
 }
 
 export interface TableColumnSpec {

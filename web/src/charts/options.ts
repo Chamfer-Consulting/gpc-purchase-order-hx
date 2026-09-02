@@ -262,19 +262,45 @@ interface BarOpts {
   breakdowns?: ChartBreakdown[] | null;
   /** colour each bar green/red by sign — for a month-over-month change series. */
   palette?: Palette;
+  /** one extra tooltip line per x point (e.g. the absolute count behind a delta). */
+  pointNotes?: (string | null)[] | null;
 }
 
+type TipParam = { axisValueLabel?: string; axisValue?: string | number; seriesName?: string; value?: unknown; marker?: unknown; dataIndex?: number };
+
 /** shared axis-trigger tooltip for the bar builders. */
-function barTooltip(fmt: NumFormat, breakdowns?: ChartBreakdown[] | null, signed = false) {
+function barTooltip(
+  fmt: NumFormat,
+  breakdowns?: ChartBreakdown[] | null,
+  signed = false,
+  pointNotes?: (string | null)[] | null,
+) {
   const label = valueFormatter(fmt);
   const show = (v: unknown) => {
     const s = label(v as number);
     return signed && Number(v) > 0 ? `+${s}` : s;
   };
   const base = { trigger: "axis" as const, axisPointer: { type: "shadow" as const }, confine: true };
-  return breakdowns?.length
-    ? { ...base, formatter: breakdownFormatter(fmt, breakdowns) }
-    : { ...base, valueFormatter: (v: unknown) => show(v) };
+  if (breakdowns?.length) return { ...base, formatter: breakdownFormatter(fmt, breakdowns) };
+  if (pointNotes?.length) {
+    return {
+      ...base,
+      formatter: (raw: unknown) => {
+        const arr = (Array.isArray(raw) ? raw : [raw]) as TipParam[];
+        const head = esc(String(arr[0]?.axisValueLabel ?? arr[0]?.axisValue ?? ""));
+        const lines = arr
+          .filter((p) => p.value != null)
+          .map((p) => `${typeof p.marker === "string" ? p.marker : ""}${esc(p.seriesName ?? "")}: <b>${show(p.value)}</b>`);
+        const note = pointNotes[arr[0]?.dataIndex ?? -1];
+        return (
+          `<div style="font-weight:600;margin-bottom:2px">${head}</div>` +
+          lines.join("<br/>") +
+          (note ? `<div style="margin-top:4px;opacity:.7">${esc(note)}</div>` : "")
+        );
+      },
+    };
+  }
+  return { ...base, valueFormatter: (v: unknown) => show(v) };
 }
 
 /** Grouped or single vertical bars over x categories. A single series that dips
@@ -286,7 +312,7 @@ export function barOption(x: (string | number)[], series: Series[], opts?: BarOp
   const up = opts?.palette?.status.good;
   const down = opts?.palette?.status.critical;
   return {
-    tooltip: barTooltip(fmt, opts?.breakdowns, diverging),
+    tooltip: barTooltip(fmt, opts?.breakdowns, diverging, opts?.pointNotes),
     legend: series.length > 1 ? {} : { show: false },
     xAxis: { type: "category", data: x },
     yAxis: { type: "value", scale: diverging, axisLabel: { formatter: axisFormatter(fmt) } },

@@ -58,6 +58,7 @@ class Chart(BaseModel):
     y_format: NumFormat = "int"
     breakdowns: list[ChartBreakdown] | None = None
     width: Literal["half", "full"] | None = None  # None => the SPA auto-picks by shape
+    point_notes: list[str | None] | None = None   # one extra tooltip line per x point
 
 
 class TableColumn(BaseModel):

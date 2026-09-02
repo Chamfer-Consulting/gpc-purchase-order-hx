@@ -42,7 +42,12 @@ function chartOption(c: ChartSpec, palette: Palette) {
   const fmt = c.y_format;
   switch (c.kind) {
     case "bar":
-      return barOption(c.x, c.series, { fmt, breakdowns: c.breakdowns, palette });
+      return barOption(c.x, c.series, {
+        fmt,
+        breakdowns: c.breakdowns,
+        palette,
+        pointNotes: c.point_notes,
+      });
     case "stacked_bar":
       return stackedBarOption(c.x, c.series, { fmt });
     case "hbar":
