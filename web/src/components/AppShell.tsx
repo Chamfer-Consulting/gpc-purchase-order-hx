@@ -114,12 +114,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <MantineAppShell
       header={{ height: 58 }}
-      navbar={{ width: 248, breakpoint: "sm", collapsed: { mobile: !opened } }}
-      padding="lg"
+      navbar={{ width: { base: 264, sm: 248 }, breakpoint: "sm", collapsed: { mobile: !opened } }}
+      padding={{ base: "sm", sm: "lg" }}
     >
       <MantineAppShell.Header className={styles.header} withBorder={false}>
-        <Group h="100%" px="md" justify="space-between" wrap="nowrap">
-          <Group gap="sm" wrap="nowrap">
+        <Group h="100%" px={{ base: "sm", sm: "md" }} justify="space-between" wrap="nowrap">
+          <Group gap="xs" wrap="nowrap">
             <Burger
               opened={opened}
               onClick={toggle}
@@ -128,7 +128,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               color="var(--gp-nav-fg)"
               aria-label="Toggle navigation"
             />
-            <Brand size={30} onDark />
+            <Brand size={28} onDark />
           </Group>
           <Group gap={4} wrap="nowrap">
             <ThemeToggle onDark />

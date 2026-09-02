@@ -108,11 +108,12 @@ export function DataGrid<Row extends Record<string, unknown>>({
           </Button>
         </Group>
       )}
+      <div className={classes.scrollWrap}>
       <Table.ScrollContainer minWidth={minWidth} maxHeight={maxHeight} type="native">
         <Table stickyHeader highlightOnHover verticalSpacing="xs" className={classes.table}>
           <Table.Thead className={classes.thead}>
             <Table.Tr>
-              {columns.map((c) => {
+              {columns.map((c, ci) => {
                 const numeric =
                   c.align === "right" || (c.kind && c.kind !== "text" && c.kind !== "date");
                 const active = sortKey === c.key;
@@ -120,6 +121,7 @@ export function DataGrid<Row extends Record<string, unknown>>({
                 return (
                   <Table.Th
                     key={c.key}
+                    className={ci === 0 ? classes.stickyCol : undefined}
                     style={{ textAlign: numeric ? "right" : "left" }}
                     aria-sort={active ? (asc ? "ascending" : "descending") : "none"}
                   >
@@ -139,12 +141,13 @@ export function DataGrid<Row extends Record<string, unknown>>({
           <Table.Tbody>
             {sorted.map((r, i) => (
               <Table.Tr key={i}>
-                {columns.map((c) => {
+                {columns.map((c, ci) => {
                   const numeric =
                     c.align === "right" || (c.kind && c.kind !== "text" && c.kind !== "date");
                   return (
                     <Table.Td
                       key={c.key}
+                      className={ci === 0 ? classes.stickyCol : undefined}
                       style={{ textAlign: numeric ? "right" : "left", ...(numeric ? NUMERIC_STYLE : null) }}
                     >
                       {c.linkTo && r[c.key] != null ? (
@@ -182,6 +185,7 @@ export function DataGrid<Row extends Record<string, unknown>>({
           </Table.Tbody>
         </Table>
       </Table.ScrollContainer>
+      </div>
     </div>
   );
 }

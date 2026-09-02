@@ -57,6 +57,7 @@ import { useMe } from "@/api/me";
 import { notifySuccess } from "@/lib/notify";
 import { conflictInfo, errorMessage, fieldErrors, isConflict } from "@/lib/errors";
 import { useUnsavedGuard } from "@/hooks/useUnsavedGuard";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
 import { ExtractionFailureCard } from "@/components/po/ExtractionFailureCard";
@@ -631,6 +632,7 @@ function RevisionDiffModal({
   onClose: () => void;
 }) {
   const { data, isLoading, error } = useRevisionDiff(poId, otherId);
+  const isMobile = useIsMobile();
   const shown = data
     ? data.rows.filter((r) => r.status !== "same")
     : [];
@@ -640,6 +642,7 @@ function RevisionDiffModal({
       opened={otherId != null}
       onClose={onClose}
       size="xl"
+      fullScreen={isMobile}
       title={
         data
           ? `Compare — PO ${data.a.po_number ?? data.a.po_id} → ${data.b.po_number ?? data.b.po_id}`
@@ -763,14 +766,16 @@ function PdfModal({
   }, [poId, doc]);
 
   const isImage = doc?.mime_type?.startsWith("image/");
+  const isMobile = useIsMobile();
 
   return (
     <Modal
       opened={doc != null}
       onClose={onClose}
       size="90%"
+      fullScreen={isMobile}
       title={doc?.filename ?? "Document"}
-      styles={{ body: { height: "80vh", padding: 0 } }}
+      styles={{ body: { height: isMobile ? "calc(100vh - 62px)" : "80vh", padding: 0 } }}
     >
       {err && <Text size="sm" c="red" p="md">{err}</Text>}
       {!url && !err && (

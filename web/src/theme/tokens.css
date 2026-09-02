@@ -60,3 +60,17 @@
   --gp-nav-hover-bg: rgba(255, 255, 255, 0.05);
   --gp-nav-active-bg: rgba(255, 255, 255, 0.09);
 }
+
+/* Touch: on a coarse pointer (phone/tablet) grow hit areas without changing the
+   type scale — the app leans heavily on size="xs" / compact controls. */
+@media (pointer: coarse) {
+  .mantine-Button-root,
+  .mantine-ActionIcon-root,
+  .mantine-CloseButton-root {
+    min-height: 34px;
+  }
+  .mantine-Input-input,
+  .mantine-InputBase-input {
+    min-height: 36px;
+  }
+}

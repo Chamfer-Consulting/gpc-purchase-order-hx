@@ -3,6 +3,35 @@
   border-bottom: 1px solid var(--mantine-color-default-border);
 }
 
+/* Phone: the first column can outrun the viewport on a wide table — pin it and
+   fade the right edge so it's obviously scrollable. Desktop is untouched. */
+@media (max-width: 48em) {
+  .stickyCol {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--gp-surface);
+    box-shadow: 6px 0 6px -6px rgba(0, 0, 0, 0.18);
+  }
+  .table :global(thead) .stickyCol {
+    background: var(--gp-surface-sunken);
+    z-index: 3;
+  }
+  .scrollWrap {
+    position: relative;
+  }
+  .scrollWrap::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 22px;
+    pointer-events: none;
+    background: linear-gradient(to right, transparent, var(--gp-surface));
+  }
+}
+
 .sortBtn {
   display: inline-flex;
   align-items: center;

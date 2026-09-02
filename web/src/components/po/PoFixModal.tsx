@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Group, Loader, Modal, Stack, Text } from "@mantine/core";
 import { usePo, useSavePo, type PoHeader, type PoLineItem } from "@/api/poEdit";
 import { useMe } from "@/api/me";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { notifySuccess } from "@/lib/notify";
 import { EMPTY_LINE, PoLineItemsEditor, type EditableLine } from "./PoLineItemsEditor";
 
@@ -10,11 +11,13 @@ import { EMPTY_LINE, PoLineItemsEditor, type EditableLine } from "./PoLineItemsE
  *  line without leaving the queue. Saves through the same POST /api/po/:id the
  *  Edit PO page uses, so math / price flags recompute and the row drops off. */
 export function PoFixModal({ poId, onClose }: { poId: number | null; onClose: () => void }) {
+  const isMobile = useIsMobile();
   return (
     <Modal
       opened={poId != null}
       onClose={onClose}
       size="xl"
+      fullScreen={isMobile}
       title={poId != null ? `Fix PO ${poId}` : "Fix"}
     >
       {poId != null && <Body poId={poId} onClose={onClose} />}

@@ -28,6 +28,7 @@ import { ErrorState } from "@/components/ErrorState";
 import { pageMeta } from "@/nav";
 import { ExtractionFailureCard } from "@/components/po/ExtractionFailureCard";
 import { Queue } from "@/components/reconcile/Queue";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { StageExtraction } from "@/components/reconcile/StageExtraction";
 import { StageLifecycle } from "@/components/reconcile/StageLifecycle";
 import { StageMatch } from "@/components/reconcile/StageMatch";
@@ -40,6 +41,7 @@ export function ReconcilePage() {
   const { canEdit } = useMe();
 
   const queue = useReconcileQueue();
+  const isMobile = useIsMobile();
   const view = useReconcilePo(poId);
   const upsert = useUpsertDecision();
   const confirm = useReconcileConfirm();
@@ -131,12 +133,18 @@ export function ReconcilePage() {
       <Box
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(260px, 340px) 1fr",
+          gridTemplateColumns: isMobile ? "1fr" : "minmax(260px, 340px) 1fr",
           gap: "var(--mantine-spacing-lg)",
           alignItems: "start",
         }}
       >
-        <Paper withBorder radius="md" p="xs" bg="var(--gp-surface)" style={{ position: "sticky", top: 8 }}>
+        <Paper
+          withBorder
+          radius="md"
+          p="xs"
+          bg="var(--gp-surface)"
+          style={isMobile ? undefined : { position: "sticky", top: 8 }}
+        >
           <Group justify="space-between" px={6} pb={4}>
             <Text size="xs" fw={700} tt="uppercase" c="dimmed">
               Queue

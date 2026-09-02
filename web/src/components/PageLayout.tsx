@@ -78,9 +78,9 @@ export function PageLayout({
           </Breadcrumbs>
         )}
 
-        <Group justify="space-between" align="flex-start" wrap="nowrap" gap="md">
-          <div>
-            <Title order={1} fz={{ base: 24, sm: 26 }}>
+        <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
+          <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+            <Title order={1} fz={{ base: 22, sm: 26 }}>
               {title}
             </Title>
             {description && (
@@ -90,7 +90,7 @@ export function PageLayout({
             )}
           </div>
           {actions && (
-            <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+            <Group gap="xs" wrap="wrap" style={{ flexShrink: 0 }}>
               {actions}
             </Group>
           )}
@@ -98,6 +98,7 @@ export function PageLayout({
 
         {filterBar && (
           <Box
+            p={{ base: "6px 8px", sm: "8px 12px" }}
             style={{
               position: "sticky",
               top: 8,
@@ -105,7 +106,6 @@ export function PageLayout({
               background: "var(--gp-surface-sunken)",
               border: "1px solid var(--mantine-color-default-border)",
               borderRadius: "var(--mantine-radius-md)",
-              padding: "8px 12px",
             }}
           >
             {filterBar}
