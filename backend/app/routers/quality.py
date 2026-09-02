@@ -178,6 +178,73 @@ def data_quality(
         )
         price_rows = _jsonify(_rows(dcur))
 
+        # -- line items with no container size (biggest dollar lines first) ---
+        # Their revenue lands in the "(no size)" reconciling row on Products &
+        # Sizes. PO lines are fixable here (link jumps to the editor); invoice
+        # lines are a QuickBooks-side mirror, listed for reference.
+        ns_scope, ns_p = _scope(fp, "po.po_date", "po.customer_name")
+        _NO_SIZE_PO = (
+            "(li.container_size IS NULL OR btrim(li.container_size) = '') "
+            "AND po.status = 'active' AND NOT COALESCE(li.is_sample, FALSE) "
+            "AND li.product_name IS NOT NULL AND li.product_name NOT IN ('', 'UNKNOWN') "
+            f"AND {_ACTIONABLE_LINE}"
+        )
+        dcur.execute(
+            f"""
+            SELECT po.id AS po_id, po.po_number, po.customer_name, po.po_date,
+                   li.product_name, li.product_raw, li.quantity, li.unit_price, li.line_total
+            FROM line_items li JOIN purchase_orders po ON po.id = li.po_id
+            WHERE {_NO_SIZE_PO}{ns_scope}
+            ORDER BY abs(coalesce(li.line_total, 0)) DESC, po.po_date DESC NULLS LAST
+            LIMIT %s
+            """,
+            [*ns_p, _ROW_CAP],
+        )
+        nosize_po_rows = _jsonify(_rows(dcur))
+        cur.execute(
+            f"""
+            SELECT count(DISTINCT li.po_id), count(*), COALESCE(SUM(abs(li.line_total)), 0)
+            FROM line_items li JOIN purchase_orders po ON po.id = li.po_id
+            WHERE {_NO_SIZE_PO}{ns_scope}
+            """,
+            ns_p,
+        )
+        nosize_po_pos, nosize_po_lines, nosize_po_money = cur.fetchone()
+        nosize_po_money = float(nosize_po_money or 0)
+
+        inv_ns_scope, inv_ns_p = _scope(fp, "inv.txn_date", "inv.customer_name")
+        _NO_SIZE_INV = (
+            "ii.category = 'product' "
+            "AND (ii.container_size IS NULL OR btrim(ii.container_size) = '') "
+            "AND NOT COALESCE(ii.is_sample, FALSE) "
+            "AND ii.product_name IS NOT NULL AND ii.product_name NOT IN ('', 'UNKNOWN') "
+            "AND (inv.private_note IS NULL OR inv.private_note NOT ILIKE '%%void%%') "
+            "AND ii.product_name NOT IN "
+            "  (SELECT product_name FROM hidden_products WHERE product_name IS NOT NULL)"
+        )
+        dcur.execute(
+            f"""
+            SELECT inv.doc_number, inv.customer_name, inv.txn_date,
+                   ii.product_name, ii.quantity, ii.line_total
+            FROM qbo_invoice_items ii JOIN qbo_invoices inv ON inv.id = ii.invoice_id
+            WHERE {_NO_SIZE_INV}{inv_ns_scope}
+            ORDER BY abs(coalesce(ii.line_total, 0)) DESC, inv.txn_date DESC NULLS LAST
+            LIMIT %s
+            """,
+            [*inv_ns_p, _ROW_CAP],
+        )
+        nosize_inv_rows = _jsonify(_rows(dcur))
+        cur.execute(
+            f"""
+            SELECT count(*), COALESCE(SUM(abs(ii.line_total)), 0)
+            FROM qbo_invoice_items ii JOIN qbo_invoices inv ON inv.id = ii.invoice_id
+            WHERE {_NO_SIZE_INV}{inv_ns_scope}
+            """,
+            inv_ns_p,
+        )
+        nosize_inv_lines, nosize_inv_money = cur.fetchone()
+        nosize_inv_money = float(nosize_inv_money or 0)
+
         # -- questionable confirmed matches ---------------------------
         qm_scope, qm_p = _scope(fp, "inv.txn_date", "inv.customer_name")
         dcur.execute(
@@ -278,6 +345,15 @@ def data_quality(
             delta=(f"+{not_po} classified 'not a PO'" if not_po else None)),
         Kpi(label="Math-check failures", value=math_pos),
         Kpi(label="Price anomalies", value=price_pos),
+        Kpi(label="PO revenue · no size", value=nosize_po_money, format="currency",
+            delta=(f"{nosize_po_lines} line(s) · {nosize_po_pos} PO(s)" if nosize_po_lines else None),
+            help="Active PO line items with no container size — set it in the PO editor "
+                 "(rows link through). Their revenue sits in the '(no size)' row on "
+                 "Products & Sizes."),
+        Kpi(label="Invoiced · no size", value=nosize_inv_money, format="currency",
+            delta=(f"{nosize_inv_lines} line(s)" if nosize_inv_lines else None),
+            help="QuickBooks invoice product lines with no size — reference only, fix in "
+                 "QuickBooks. Approximate: excludes voided invoices and hidden products."),
         Kpi(label="Voided invoices", value=void_all_time,
             help="Invoices voided in QuickBooks (all time). They stay listed below "
                  "but never count toward revenue, matching or line-item totals."),
@@ -332,6 +408,40 @@ def data_quality(
             ],
             rows=price_rows,
             export_name="price_anomalies",
+        ),
+        "no_size_po": Table(
+            title=_title(
+                f"PO lines with no size ({nosize_po_pos} PO(s), {nosize_po_lines} line(s)) · "
+                f"${nosize_po_money:,.0f}",
+                len(nosize_po_rows), nosize_po_lines),
+            columns=[
+                TableColumn(key="po_id", label="PO id"),
+                TableColumn(key="po_number", label="PO #"),
+                TableColumn(key="customer_name", label="Customer"),
+                TableColumn(key="po_date", label="PO date", kind="date"),
+                TableColumn(key="product_name", label="Product"),
+                TableColumn(key="product_raw", label="Raw text"),
+                TableColumn(key="quantity", label="Qty", kind="int"),
+                TableColumn(key="unit_price", label="Unit price", kind="currency2"),
+                TableColumn(key="line_total", label="Line total", kind="currency2"),
+            ],
+            rows=nosize_po_rows,
+            export_name="no_size_po_lines",
+        ),
+        "no_size_invoice": Table(
+            title=_title(
+                f"Invoice lines with no size ({nosize_inv_lines}) · ${nosize_inv_money:,.0f}",
+                len(nosize_inv_rows), nosize_inv_lines),
+            columns=[
+                TableColumn(key="doc_number", label="Invoice #"),
+                TableColumn(key="customer_name", label="Customer"),
+                TableColumn(key="txn_date", label="Date", kind="date"),
+                TableColumn(key="product_name", label="Product"),
+                TableColumn(key="quantity", label="Qty", kind="int"),
+                TableColumn(key="line_total", label="Line total", kind="currency2"),
+            ],
+            rows=nosize_inv_rows,
+            export_name="no_size_invoice_lines",
         ),
         "questionable_matches": Table(
             title=_title(f"Questionable confirmed matches ({qm_total})", len(qm_rows), qm_total),
@@ -388,9 +498,16 @@ def data_quality(
         "Invoice ≠ line items is QuickBooks-side and reference-only — it stops the "
         "line-item revenue views reconciling to gross invoiced."
     )
+    if nosize_po_lines or nosize_inv_lines:
+        notes.append(
+            "“No size” lines carry revenue but no container size, so it lands in the "
+            "“(no size)” row on Products & Sizes. Fix PO lines in the editor; invoice "
+            "lines are a QuickBooks mirror and are fixed there."
+        )
 
     return PageResponse(
-        scope=Scope(count=real_errors + math_pos + price_pos + qm_total, noun="issues"),
+        scope=Scope(count=real_errors + math_pos + price_pos + qm_total + nosize_po_lines,
+                    noun="issues"),
         kpis=kpis,
         tables=tables,
         notes=notes,
