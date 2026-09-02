@@ -103,6 +103,42 @@ def test_filter_params_parsing():
     )
 
 
+def test_filter_options_does_not_500_with_a_valid_token(monkeypatch):
+    """Regression: the @cached key_fn was `lambda user:` but FastAPI calls the
+    endpoint with keyword args only, so every /api/filters/options request raised
+    TypeError -> 500 and left the customer/product/size MultiSelects empty."""
+    import contextlib
+
+    from app.cache import clear as _clear_cache
+
+    class _Cur:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, *_a, **_k):
+            pass
+
+        def fetchall(self):
+            return []
+
+    class _Conn:
+        def cursor(self):
+            return _Cur()
+
+    @contextlib.contextmanager
+    def _fake_conn():
+        yield _Conn()
+
+    monkeypatch.setattr("app.routers.filters.reused_conn", _fake_conn)
+    _clear_cache()
+    r = client.get("/api/filters/options", headers={"Authorization": f"Bearer {_token()}"})
+    assert r.status_code == 200
+    assert r.json() == {"customers": [], "products": [], "sizes": []}
+
+
 def test_oauth_callback_state_guard():
     # no valid signed state -> bounced back to the SPA, not a 500
     r = client.get("/auth/qbo/callback?code=x&realmId=1&state=bad", follow_redirects=False)

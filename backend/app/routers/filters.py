@@ -11,7 +11,10 @@ router = APIRouter(prefix="/api/filters", tags=["filters"])
 
 
 @router.get("/options")
-@cached(lambda user: "options")
+# FastAPI calls the endpoint with keyword args only (`_=<AuthedUser>`), so the
+# key_fn must accept **kwargs — a fixed `lambda user:` raised TypeError on every
+# call and turned this endpoint into a 500 (empty MultiSelects on every page).
+@cached(lambda *_a, **_k: "options")
 def options(_: AuthedUser = Depends(current_user)) -> dict:
     with reused_conn() as conn, conn.cursor() as cur:
         # exclude the Settings → Visibility hidden sets — a filter can't usefully
