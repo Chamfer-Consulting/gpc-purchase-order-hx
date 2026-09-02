@@ -5,20 +5,25 @@ import {
   Group,
   Loader,
   NumberInput,
+  SegmentedControl,
   Select,
+  Stack,
+  Switch,
   Table,
   Text,
   TextInput,
 } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
 import { Chart } from "@/charts/Chart";
-import { timeLineOption } from "@/charts/options";
+import { timeLineOption, type TimeSeries } from "@/charts/options";
 import { fmtCurrency } from "@/lib/format";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import {
   useReferencePrices,
   usePriceHistory,
   useSavePrices,
+  type PriceHistory,
+  type PricePoint,
   type ReferencePrice,
   type RefPriceRow,
 } from "@/api/pricing";
@@ -273,27 +278,74 @@ export function PricingPage() {
   );
 }
 
+function buildOption(
+  data: PriceHistory,
+  delivery: "adj" | "raw",
+  preEra: "faded" | "hidden",
+  showTrend: boolean,
+) {
+  if (!data.points.length) return null;
+  const band = data.standardization_band;
+  const val = (p: PricePoint) => (delivery === "adj" ? p.unit_price_adj : p.unit_price);
+
+  const byCust = new Map<string, PricePoint[]>();
+  for (const p of data.points) {
+    if (!p.date) continue;
+    const c = p.customer_name ?? "—";
+    if (!byCust.has(c)) byCust.set(c, []);
+    byCust.get(c)!.push(p);
+  }
+
+  const series: TimeSeries[] = [];
+  for (const [name, pts] of byCust) {
+    const post = pts.filter((p) => p.era === "post");
+    const pre = pts.filter((p) => p.era === "pre");
+    if (post.length) series.push({ name, points: post.map((p) => [p.date!, val(p)]) });
+    if (pre.length && preEra === "faded") {
+      // bridge the dashed pre-segment to the first solid point so they meet
+      const bridged = post.length ? [...pre, post[0]] : pre;
+      series.push({ name, variant: "ghost", points: bridged.map((p) => [p.date!, val(p)]) });
+    }
+  }
+
+  // current reference price(s) — a flat guide line across the standardized era only
+  const lastDate = data.points[data.points.length - 1]?.date ?? band.end;
+  for (const r of data.reference_prices) {
+    series.push({
+      name: `${r.customer_name} · ref`,
+      variant: "reference",
+      points: [
+        [band.end, r.price],
+        [lastDate, r.price],
+      ],
+    });
+  }
+
+  if (showTrend && data.standardized_trend.length > 1) {
+    series.push({
+      name: "Standardized-era median",
+      variant: "trend",
+      points: data.standardized_trend.map((t) => [t.date, t.price]),
+    });
+  }
+
+  return timeLineOption(series, {
+    fmt: "currency2",
+    bandX: [band.start, band.end],
+    bandLabel: "Pricing standardized",
+  });
+}
+
 function HistoryChart({ product, size }: { product: string | null; size: string | null }) {
   const { data, isLoading } = usePriceHistory(product, size);
+  const [delivery, setDelivery] = useState<"adj" | "raw">("adj");
+  const [preEra, setPreEra] = useState<"faded" | "hidden">("faded");
+  const [showTrend, setShowTrend] = useState(false);
 
-  const option = useMemo(() => {
-    if (!data || !data.points.length) return null;
-    const byCust = new Map<string, [string, number][]>();
-    for (const p of data.points) {
-      if (!p.date) continue;
-      const c = p.customer_name ?? "—";
-      if (!byCust.has(c)) byCust.set(c, []);
-      byCust.get(c)!.push([p.date, p.unit_price]);
-    }
-    return timeLineOption(
-      [...byCust.entries()].map(([name, points]) => ({ name, points })),
-      {
-        fmt: "currency2",
-        markX: data.standardized_on || undefined,
-        markLabel: "Standardized",
-      },
-    );
-  }, [data]);
+  const option = useMemo(
+    () => (data ? buildOption(data, delivery, preEra, showTrend) : null),
+    [data, delivery, preEra, showTrend],
+  );
 
   if (!product || !size)
     return (
@@ -305,16 +357,47 @@ function HistoryChart({ product, size }: { product: string | null; size: string 
   if (!option) return <EmptyState label="No priced history for this selection" compact />;
 
   return (
-    <>
+    <Stack gap="xs">
+      <Group gap="lg" wrap="wrap">
+        <SegmentedControl
+          size="xs"
+          value={delivery}
+          onChange={(v) => setDelivery(v as "adj" | "raw")}
+          data={[
+            { label: "Delivery-adjusted", value: "adj" },
+            { label: "Raw", value: "raw" },
+          ]}
+        />
+        <SegmentedControl
+          size="xs"
+          value={preEra}
+          onChange={(v) => setPreEra(v as "faded" | "hidden")}
+          data={[
+            { label: "Pre-2024 faded", value: "faded" },
+            { label: "Pre-2024 hidden", value: "hidden" },
+          ]}
+        />
+        <Switch
+          size="xs"
+          label="Standardized-era trend"
+          checked={showTrend}
+          onChange={(e) => setShowTrend(e.currentTarget.checked)}
+        />
+      </Group>
       <Chart option={option} height={320} />
+      <Text size="xs" c="dimmed">
+        {delivery === "adj"
+          ? "Prices before delivery was itemised in QuickBooks have an estimated per-item delivery fee removed so the trend is comparable end to end."
+          : "Unit prices exactly as recorded — a step down where the delivery charge moved to its own QuickBooks line."}
+      </Text>
       {data && data.reference_prices.length > 0 && (
-        <Text size="xs" c="dimmed" mt="xs">
+        <Text size="xs" c="dimmed">
           Current reference:{" "}
           {data.reference_prices
             .map((r) => `${r.customer_name} ${fmtCurrency(r.price, true)} (${r.source})`)
             .join(" · ")}
         </Text>
       )}
-    </>
+    </Stack>
   );
 }

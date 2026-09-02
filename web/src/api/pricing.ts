@@ -26,15 +26,25 @@ interface PricesResponse {
 export interface PricePoint {
   date: string | null;
   customer_name: string | null;
+  /** unit price exactly as recorded on the PO line */
   unit_price: number;
+  /** unit price with the baked-in per-item delivery fee removed (== unit_price when
+   *  the order already itemised delivery) */
+  unit_price_adj: number;
+  /** before / after the pricing-standardization band */
+  era: "pre" | "post";
+  delivery_itemised: boolean;
 }
 
 export interface PriceHistory {
   product_name: string;
   container_size: string;
-  standardized_on: string;
+  /** shaded transition to standardized pricing (inclusive YYYY-MM-DD bounds) */
+  standardization_band: { start: string; end: string };
   points: PricePoint[];
   reference_prices: { customer_name: string; price: number; source: string }[];
+  /** monthly median of the delivery-adjusted price from the band end onward */
+  standardized_trend: { date: string; price: number }[];
 }
 
 export interface RefPriceRow {

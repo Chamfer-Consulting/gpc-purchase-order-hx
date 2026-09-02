@@ -199,16 +199,38 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: Line
   };
 }
 
+/** How a time series is drawn:
+ *  solid (default) · ghost (faded/dashed context, e.g. a pre-standardization era)
+ *  · trend (thick overlay) · reference (thin flat guide line). */
+export type TimeSeriesVariant = "solid" | "ghost" | "trend" | "reference";
+
+export interface TimeSeries {
+  name: string;
+  points: [string, number][];
+  variant?: TimeSeriesVariant;
+}
+
 /** Multi-series line on a real time axis (irregular dates, e.g. price history). */
 export function timeLineOption(
-  series: { name: string; points: [string, number][] }[],
-  opts?: { yName?: string; fmt?: NumFormat; palette?: Palette; markX?: string; markLabel?: string },
+  series: TimeSeries[],
+  opts?: {
+    yName?: string;
+    fmt?: NumFormat;
+    palette?: Palette;
+    markX?: string;
+    markLabel?: string;
+    /** shaded x-range (e.g. a transition period), drawn behind every series */
+    bandX?: [string, string];
+    bandLabel?: string;
+  },
 ): EChartsOption {
   const fmt = opts?.fmt ?? "currency2";
-  const single = series.length === 1;
+  const drawn = series.filter((s) => (s.points?.length ?? 0) > 0);
+  const solids = drawn.filter((s) => !s.variant || s.variant === "solid");
+  const single = drawn.length === 1 && solids.length === 1;
   const accent =
     single && opts?.palette
-      ? trendUp(series[0].points.map((p) => p[1]))
+      ? trendUp(drawn[0].points.map((p) => p[1]))
         ? opts.palette.status.good
         : opts.palette.status.critical
       : undefined;
@@ -227,10 +249,34 @@ export function timeLineOption(
         data: [{ xAxis: opts.markX }],
       }
     : undefined;
+  const markArea = opts?.bandX
+    ? {
+        silent: true,
+        itemStyle: { color: "var(--mantine-color-default-border)", opacity: 0.35 },
+        label: {
+          show: !!opts.bandLabel,
+          formatter: opts.bandLabel ?? "",
+          position: "insideTop" as const,
+          color: "var(--mantine-color-dimmed)",
+          fontSize: 11,
+          textBorderWidth: 0,
+          textShadowBlur: 0,
+        },
+        data: [[{ xAxis: opts.bandX[0] }, { xAxis: opts.bandX[1] }]] as [
+          [{ xAxis: string }, { xAxis: string }],
+        ],
+      }
+    : undefined;
+
+  // legend: only the solid/trend series carry a distinct entry — a ghost shares
+  // its solid partner's name, so ECharts folds the two onto one toggle.
+  const legendNames = Array.from(
+    new Set(drawn.filter((s) => s.variant !== "reference").map((s) => s.name)),
+  );
 
   return {
     ...ch,
-    legend: series.length > 1 ? {} : { show: false },
+    legend: legendNames.length > 1 ? { data: legendNames } : { show: false },
     xAxis: { type: "time", ...ch.xAxis },
     // don't force a zero baseline — unit prices move in a narrow band. A y-axis
     // `name` defaults to sitting above the axis, right where the legend also
@@ -244,16 +290,38 @@ export function timeLineOption(
       axisLabel: { formatter: axisFormatter(fmt) },
       ...ch.yAxis,
     },
-    series: series.map((s, i) => ({
-      type: "line",
-      name: s.name,
-      data: s.points,
-      showSymbol: s.points.length <= 24,
-      lineStyle: accent ? { color: accent } : undefined,
-      itemStyle: accent ? { color: accent } : undefined,
-      areaStyle: single ? (accent ? areaGradient(accent) : { opacity: 0.08 }) : undefined,
-      markLine: i === 0 ? markLine : undefined,
-    })),
+    // one uniform object shape per series (some fields undefined) so the array
+    // stays homogeneous for ECharts' SeriesOption typing
+    series: drawn.map((s, i) => {
+      const v = s.variant ?? "solid";
+      const solid = v === "solid";
+      const dashed =
+        v === "ghost"
+          ? { type: "dashed" as const, opacity: 0.3, width: 1 }
+          : v === "reference"
+            ? { type: "dashed" as const, width: 1, opacity: 0.5 }
+            : v === "trend"
+              ? { width: 3 }
+              : accent
+                ? { color: accent }
+                : undefined;
+      return {
+        type: "line" as const,
+        name: s.name,
+        data: s.points,
+        markLine: i === 0 ? markLine : undefined,
+        markArea: i === 0 ? markArea : undefined,
+        smooth: v === "trend",
+        silent: v === "reference",
+        z: v === "ghost" ? 1 : v === "reference" ? 2 : v === "trend" ? 6 : undefined,
+        emphasis: v === "trend" ? { disabled: true } : undefined,
+        showSymbol: solid ? s.points.length <= 24 : false,
+        lineStyle: dashed,
+        itemStyle: v === "ghost" ? { opacity: 0.3 } : accent && solid ? { color: accent } : undefined,
+        areaStyle:
+          single && solid ? (accent ? areaGradient(accent) : { opacity: 0.08 }) : undefined,
+      };
+    }),
   };
 }
 
