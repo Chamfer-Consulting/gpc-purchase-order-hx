@@ -23,7 +23,13 @@ import {
   type ConnectionsStatus,
 } from "@/api/connections";
 import { useBackfillDocs } from "@/api/poDocs";
-import { useSetVisible, useVisibility, type VisibilityDim } from "@/api/settings";
+import {
+  useHiddenInvoices,
+  useSetInvoiceHidden,
+  useSetVisible,
+  useVisibility,
+  type VisibilityDim,
+} from "@/api/settings";
 import { useMe, type Role } from "@/api/me";
 import { useRemoveTeamMember, useSetTeamMember, useTeam } from "@/api/team";
 import { confirmAction } from "@/lib/modals";
@@ -309,26 +315,100 @@ function TeamCard() {
   );
 }
 
+type VisTab = VisibilityDim | "invoices";
+
 function VisibilityCard() {
-  const [dim, setDim] = useState<VisibilityDim>("products");
+  const [dim, setDim] = useState<VisTab>("products");
   return (
     <SectionCard
       title="Visibility"
-      subtitle="Hidden products and customers are dropped from every analytics page (and hidden products from the reference-price table)."
+      subtitle="Hidden products, customers and invoices are dropped from every analytics page (and hidden products from the reference-price table). Invoices are excluded from the Data Quality → Unsent invoices queue."
       actions={
         <SegmentedControl
           size="xs"
           value={dim}
-          onChange={(v) => setDim(v as VisibilityDim)}
+          onChange={(v) => setDim(v as VisTab)}
           data={[
             { value: "products", label: "Products" },
             { value: "customers", label: "Customers" },
+            { value: "invoices", label: "Invoices" },
           ]}
         />
       }
     >
-      <VisibilityList key={dim} dim={dim} />
+      {dim === "invoices" ? (
+        <HiddenInvoicesList />
+      ) : (
+        <VisibilityList key={dim} dim={dim} />
+      )}
     </SectionCard>
+  );
+}
+
+function HiddenInvoicesList() {
+  const { data, isLoading, error, refetch } = useHiddenInvoices();
+  const { canEdit } = useMe();
+  const restore = useSetInvoiceHidden();
+  const rows = data ?? [];
+
+  return (
+    <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
+      {rows.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          No invoices excluded. Exclude one from Data Quality → “Unsent / auto-generated invoices”.
+        </Text>
+      ) : (
+        <Table.ScrollContainer minWidth={560} type="native">
+          <Table verticalSpacing="xs" fz="sm">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Invoice</Table.Th>
+                <Table.Th>Customer</Table.Th>
+                <Table.Th>Date</Table.Th>
+                <Table.Th ta="right">Total</Table.Th>
+                <Table.Th>Reason</Table.Th>
+                <Table.Th w={80} />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {rows.map((r) => (
+                <Table.Tr key={r.qbo_invoice_id}>
+                  <Table.Td>{r.doc_number ?? r.qbo_invoice_id}</Table.Td>
+                  <Table.Td>{r.customer_name ?? "—"}</Table.Td>
+                  <Table.Td>{r.txn_date?.slice(0, 10) ?? "—"}</Table.Td>
+                  <Table.Td ta="right">
+                    {r.total_amt != null ? `$${r.total_amt.toLocaleString()}` : "—"}
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" c="dimmed">
+                      {r.reason ?? "—"}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Button
+                      size="compact-xs"
+                      variant="subtle"
+                      disabled={!canEdit || restore.isPending}
+                      onClick={() =>
+                        restore.mutate(
+                          { qbo_invoice_id: r.qbo_invoice_id, hidden: false },
+                          {
+                            onSuccess: () => notifySuccess(`Restored ${r.doc_number ?? r.qbo_invoice_id}.`),
+                            onError: (e) => notifyError(e),
+                          },
+                        )
+                      }
+                    >
+                      Restore
+                    </Button>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      )}
+    </QueryBoundary>
   );
 }
 

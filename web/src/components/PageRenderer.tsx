@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Alert, SimpleGrid, Stack, Text, useComputedColorScheme } from "@mantine/core";
 import { Chart } from "@/charts/Chart";
 import {
@@ -19,6 +20,8 @@ import { formatCell } from "@/lib/format";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { promptReason } from "@/lib/modals";
 import { useAckLineMathAny, useRetryExtractionAny } from "@/api/poEdit";
+import { useSetInvoiceHidden } from "@/api/settings";
+import { PoFixModal } from "./po/PoFixModal";
 import type { ChartSpec, Kpi, PageResponse, TableSpec } from "@/api/schema";
 
 type AnyRow = Record<string, unknown>;
@@ -129,12 +132,49 @@ export function PageRenderer({
   const palette = paletteFor(useComputedColorScheme("light"));
   const retry = useRetryExtractionAny();
   const ackMath = useAckLineMathAny();
+  const setInvHidden = useSetInvoiceHidden();
+  const [fixPoId, setFixPoId] = useState<number | null>(null);
+
+  const fixAction: RowAction<AnyRow> = {
+    label: "Fix",
+    onClick: (r) => setFixPoId(Number(r.po_id)),
+  };
 
   /** Inline row actions for the Data Quality tables:
    *  - "Retry" when a row carries po_id + error  (extraction-failures)
-   *  - "Acknowledge" when a row carries po_id + line_id + math_mismatch (math checks) */
+   *  - "Fix" when a row carries po_id + line_id  (math / price / no-size) — opens
+   *    an editor modal for that PO's line items
+   *  - "Acknowledge" additionally when the row is a math mismatch
+   *  - "Exclude" when a row carries qbo_invoice_id + confidence (unsent invoices) */
   function rowActionsFor(rows: AnyRow[]): RowAction<AnyRow>[] | undefined {
-    if (rows.some((r) => "po_id" in r && "error" in r)) {
+    if (rows.some((r) => "qbo_invoice_id" in r && "confidence" in r)) {
+      return [
+        {
+          label: "Exclude",
+          loading: () => setInvHidden.isPending,
+          disabled: () => setInvHidden.isPending,
+          onClick: (r) =>
+            promptReason({
+              title: `Exclude invoice ${r.doc_number ?? r.qbo_invoice_id}?`,
+              description:
+                "It drops from every analytics page (revenue, customers, shipped, fulfilment). " +
+                "Restore it any time under Settings → Visibility → Invoices.",
+              label: "Reason (optional)",
+              confirmLabel: "Exclude",
+              onSubmit: (reason) =>
+                setInvHidden.mutate(
+                  { qbo_invoice_id: String(r.qbo_invoice_id), hidden: true, reason: reason ?? undefined },
+                  {
+                    onSuccess: () => notifySuccess("Excluded from analytics."),
+                    onError: (e) => notifyError(e),
+                  },
+                ),
+            }),
+        },
+      ];
+    }
+
+    if (rows.some((r) => "po_id" in r && "line_id" in r && "math_mismatch" in r)) {
       return [
         {
           label: "Retry",
@@ -163,6 +203,7 @@ export function PageRenderer({
 
     if (rows.some((r) => "po_id" in r && "line_id" in r && "math_mismatch" in r)) {
       return [
+        fixAction,
         {
           label: "Acknowledge",
           loading: () => ackMath.isPending,
@@ -186,6 +227,11 @@ export function PageRenderer({
             }),
         },
       ];
+    }
+
+    // price anomalies / no-size lines — just the editor
+    if (rows.some((r) => "po_id" in r && "line_id" in r)) {
+      return [fixAction];
     }
 
     return undefined;
@@ -286,6 +332,8 @@ export function PageRenderer({
           />
         </SectionCard>
       ))}
+
+      <PoFixModal poId={fixPoId} onClose={() => setFixPoId(null)} />
     </Stack>
   );
 }

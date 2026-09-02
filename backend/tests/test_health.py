@@ -173,6 +173,7 @@ def test_oauth_callback_state_guard():
         "/api/settings/hidden-customers",
         "/api/settings/views?kind=customers",
         "/api/settings/team",
+        "/api/settings/hidden-invoices",
         "/api/audit",
         "/api/audit/options",
         "/api/overview",
@@ -214,6 +215,7 @@ def test_all_data_routes_require_auth(path):
         ("post", "/api/settings/views", {"kind": "customers", "name": "x", "config": {}}),
         ("delete", "/api/settings/views", {"kind": "customers", "name": "x"}),
         ("post", "/api/settings/team", {"email": "x@garfieldproduce.com", "role": "viewer"}),
+        ("post", "/api/settings/hidden-invoices", {"qbo_invoice_id": "1", "hidden": True}),
         ("delete", "/api/settings/team/x@garfieldproduce.com", None),
     ],
 )

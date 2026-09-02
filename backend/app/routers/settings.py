@@ -67,6 +67,29 @@ def set_customer_hidden(body: HideIn, _: AuthedUser = Depends(require_editor)) -
     return {"ok": True}
 
 
+class HideInvoiceIn(BaseModel):
+    qbo_invoice_id: str
+    hidden: bool
+    reason: str | None = None
+
+
+@router.get("/hidden-invoices")
+def hidden_invoices(_: AuthedUser = Depends(current_user)) -> list[dict]:
+    with reused_conn() as conn:
+        return svc.list_hidden_invoices(conn)
+
+
+@router.post("/hidden-invoices")
+def set_invoice_hidden(body: HideInvoiceIn, _: AuthedUser = Depends(require_editor)) -> dict:
+    if not body.qbo_invoice_id.strip():
+        raise HTTPException(422, "qbo_invoice_id is required")
+    with reused_conn() as conn:
+        svc.set_invoice_hidden(conn, body.qbo_invoice_id.strip(), body.hidden,
+                               (body.reason or "").strip() or None)
+    clear_cache()  # excludes/restores the invoice from every analytics page
+    return {"ok": True}
+
+
 # --- team / access control (admin only) --------------------------------
 
 

@@ -165,7 +165,7 @@ def data_quality(
         # -- price anomalies (biggest dollar lines first) --------------
         dcur.execute(
             f"""
-            SELECT po.id AS po_id, po.po_number, po.customer_name, po.po_date,
+            SELECT po.id AS po_id, li.id AS line_id, po.po_number, po.customer_name, po.po_date,
                    li.product_name, li.container_size, li.unit_price, li.line_total,
                    li.price_anomaly
             FROM line_items li JOIN purchase_orders po ON po.id = li.po_id
@@ -191,7 +191,7 @@ def data_quality(
         )
         dcur.execute(
             f"""
-            SELECT po.id AS po_id, po.po_number, po.customer_name, po.po_date,
+            SELECT po.id AS po_id, li.id AS line_id, po.po_number, po.customer_name, po.po_date,
                    li.product_name, li.product_raw, li.quantity, li.unit_price, li.line_total
             FROM line_items li JOIN purchase_orders po ON po.id = li.po_id
             WHERE {_NO_SIZE_PO}{ns_scope}
@@ -244,6 +244,43 @@ def data_quality(
         )
         nosize_inv_lines, nosize_inv_money = cur.fetchone()
         nosize_inv_money = float(nosize_inv_money or 0)
+
+        # -- unsent / auto-generated invoices ------------------------
+        # QBO recurring templates auto-create invoices; the ones that were never
+        # paid and never matched to a PO are likely phantom (not actually shipped)
+        # and inflate revenue / shipped analytics. A human excludes one via the
+        # "Exclude" row action (-> hidden_invoices, dropped everywhere).
+        ui_scope, ui_p = _scope(fp, "i.txn_date", "i.customer_name")
+        _UNSENT_INV = (
+            "i.recur_ref IS NOT NULL "
+            "AND COALESCE(i.balance, i.total_amt) >= i.total_amt "        # fully unpaid
+            "AND i.total_amt IS NOT NULL AND i.total_amt <> 0 "
+            "AND (i.private_note IS NULL OR i.private_note NOT ILIKE '%%void%%') "
+            "AND NOT EXISTS (SELECT 1 FROM po_invoice_links l "
+            "                WHERE l.invoice_id = i.id AND l.confirmed) "
+            "AND i.qbo_invoice_id NOT IN (SELECT qbo_invoice_id FROM hidden_invoices)"
+        )
+        dcur.execute(
+            f"""
+            SELECT i.id AS invoice_id, i.qbo_invoice_id, i.doc_number, i.customer_name,
+                   i.txn_date, i.total_amt, i.email_status, i.delivered_at,
+                   CASE WHEN i.email_status = 'NotSet' AND i.delivered_at IS NULL
+                        THEN 'likely phantom' ELSE 'review' END AS confidence
+            FROM qbo_invoices i
+            WHERE {_UNSENT_INV}{ui_scope}
+            ORDER BY i.total_amt DESC
+            LIMIT %s
+            """,
+            [*ui_p, _ROW_CAP],
+        )
+        unsent_rows = _jsonify(_rows(dcur))
+        cur.execute(
+            f"SELECT count(*), COALESCE(SUM(i.total_amt), 0) FROM qbo_invoices i "
+            f"WHERE {_UNSENT_INV}{ui_scope}",
+            ui_p,
+        )
+        unsent_count, unsent_money = cur.fetchone()
+        unsent_money = float(unsent_money or 0)
 
         # -- questionable confirmed matches ---------------------------
         qm_scope, qm_p = _scope(fp, "inv.txn_date", "inv.customer_name")
@@ -354,6 +391,11 @@ def data_quality(
             delta=(f"{nosize_inv_lines} line(s)" if nosize_inv_lines else None),
             help="QuickBooks invoice product lines with no size — reference only, fix in "
                  "QuickBooks. Approximate: excludes voided invoices and hidden products."),
+        Kpi(label="Auto-invoices to review", value=unsent_count, format="int",
+            delta=(f"${unsent_money:,.0f} unpaid" if unsent_count else None),
+            help="QuickBooks invoices from a recurring template that are fully unpaid "
+                 "and never matched to a PO — likely auto-generated, not actually "
+                 "shipped. Use “Exclude” to drop one from every analytics page."),
         Kpi(label="Voided invoices", value=void_all_time,
             help="Invoices voided in QuickBooks (all time). They stay listed below "
                  "but never count toward revenue, matching or line-item totals."),
@@ -472,6 +514,22 @@ def data_quality(
             ],
             rows=rec_rows,
             export_name="invoice_reconciliation",
+        ),
+        "unsent_invoices": Table(
+            title=_title(
+                f"Unsent / auto-generated invoices ({unsent_count}) · ${unsent_money:,.0f} unpaid",
+                len(unsent_rows), unsent_count),
+            columns=[
+                TableColumn(key="doc_number", label="Invoice #"),
+                TableColumn(key="customer_name", label="Customer"),
+                TableColumn(key="txn_date", label="Date", kind="date"),
+                TableColumn(key="total_amt", label="Total", kind="currency2"),
+                TableColumn(key="email_status", label="Email"),
+                TableColumn(key="delivered_at", label="Delivered", kind="date"),
+                TableColumn(key="confidence", label="Assessment"),
+            ],
+            rows=unsent_rows,
+            export_name="unsent_invoices",
         ),
         "voided": Table(
             title=_title(f"Voided invoices ({void_total})", len(void_rows), void_total),

@@ -67,16 +67,52 @@ def set_customer_hidden(conn, customer_name: str, hidden: bool) -> None:
     _set_hidden(conn, "hidden_customers", "customer_name", customer_name, hidden)
 
 
-def _set_hidden(conn, table: str, col: str, value: str, hidden: bool) -> None:
+def _set_hidden(conn, table: str, col: str, value: str, hidden: bool,
+                *, reason: str | None = None) -> None:
     with conn.cursor() as cur:
         if hidden:
-            cur.execute(
-                f"INSERT INTO {table} ({col}) VALUES (%s) ON CONFLICT ({col}) DO NOTHING",
-                (value,),
-            )
+            if reason is not None:
+                cur.execute(
+                    f"INSERT INTO {table} ({col}, reason) VALUES (%s, %s) "
+                    f"ON CONFLICT ({col}) DO UPDATE SET reason = EXCLUDED.reason",
+                    (value, reason),
+                )
+            else:
+                cur.execute(
+                    f"INSERT INTO {table} ({col}) VALUES (%s) ON CONFLICT ({col}) DO NOTHING",
+                    (value,),
+                )
         else:
             cur.execute(f"DELETE FROM {table} WHERE {col} = %s", (value,))
     conn.commit()
+
+
+def list_hidden_invoices(conn) -> list[dict]:
+    """Every QBO invoice with a hidden_invoices row, plus enough to identify it.
+    Kept small — this is a review/restore list, not the whole invoice history."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT h.qbo_invoice_id, h.reason, h.hidden_at,
+                   i.doc_number, i.customer_name, i.txn_date, i.total_amt
+            FROM hidden_invoices h
+            LEFT JOIN qbo_invoices i ON i.qbo_invoice_id = h.qbo_invoice_id
+            ORDER BY h.hidden_at DESC
+            """
+        )
+        return [
+            {**dict(r),
+             "hidden_at": r["hidden_at"].isoformat() if r["hidden_at"] else None,
+             "txn_date": r["txn_date"].isoformat() if r["txn_date"] else None,
+             "total_amt": float(r["total_amt"]) if r["total_amt"] is not None else None}
+            for r in cur.fetchall()
+        ]
+
+
+def set_invoice_hidden(conn, qbo_invoice_id: str, hidden: bool,
+                       reason: str | None = None) -> None:
+    _set_hidden(conn, "hidden_invoices", "qbo_invoice_id", qbo_invoice_id, hidden,
+                reason=reason if hidden else None)
 
 
 # --- team / access control (app_users) -----------------------------------

@@ -388,6 +388,11 @@ def sync_invoices(conn, full_resync: bool = False) -> dict:
                 inv.get("Id"), inv.get("DocNumber"), (inv.get("CustomerRef") or {}).get("name"),
                 inv.get("TxnDate") or None, inv.get("ShipDate") or None, inv.get("DueDate") or None,
                 inv.get("TotalAmt"), inv.get("PrivateNote"), Json(inv),
+                # materialised for the Data Quality "unsent / auto-generated invoice" review
+                inv.get("EmailStatus"),
+                (inv.get("DeliveryInfo") or {}).get("DeliveryTime") or None,
+                inv.get("Balance"),
+                (inv.get("RecurDataRef") or {}).get("value"),
             )
             for inv in invoices
         ]
@@ -397,7 +402,8 @@ def sync_invoices(conn, full_resync: bool = False) -> dict:
                 """
                 INSERT INTO qbo_invoices (
                     qbo_invoice_id, doc_number, customer_name, txn_date, ship_date,
-                    due_date, total_amt, private_note, raw_json, synced_at
+                    due_date, total_amt, private_note, raw_json,
+                    email_status, delivered_at, balance, recur_ref, synced_at
                 ) VALUES %s
                 ON CONFLICT (qbo_invoice_id) DO UPDATE SET
                     doc_number    = EXCLUDED.doc_number,
@@ -408,11 +414,15 @@ def sync_invoices(conn, full_resync: bool = False) -> dict:
                     total_amt     = EXCLUDED.total_amt,
                     private_note  = EXCLUDED.private_note,
                     raw_json      = EXCLUDED.raw_json,
+                    email_status  = EXCLUDED.email_status,
+                    delivered_at  = EXCLUDED.delivered_at,
+                    balance       = EXCLUDED.balance,
+                    recur_ref     = EXCLUDED.recur_ref,
                     synced_at     = now()
                 RETURNING qbo_invoice_id, id
                 """,
                 rows,
-                template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,now())",
+                template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())",
                 page_size=200,
                 fetch=True,
             )

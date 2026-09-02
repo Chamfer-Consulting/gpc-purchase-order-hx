@@ -93,6 +93,24 @@ CREATE TABLE IF NOT EXISTS hidden_customers (
     customer_name TEXT PRIMARY KEY,
     hidden_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- QBO invoice status (materialised from raw_json at sync) + invoice visibility
+-- list — the Data Quality "unsent / auto-generated invoice" review (migration 0012).
+-- qbo_invoices is created by schema.sql (the pipeline); skip quietly if it's not
+-- here yet on a bare DB.
+DO $$
+BEGIN
+    ALTER TABLE qbo_invoices ADD COLUMN IF NOT EXISTS email_status TEXT;
+    ALTER TABLE qbo_invoices ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+    ALTER TABLE qbo_invoices ADD COLUMN IF NOT EXISTS balance      NUMERIC;
+    ALTER TABLE qbo_invoices ADD COLUMN IF NOT EXISTS recur_ref    TEXT;
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
+CREATE TABLE IF NOT EXISTS hidden_invoices (
+    qbo_invoice_id TEXT PRIMARY KEY,
+    reason         TEXT,
+    hidden_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
 
 

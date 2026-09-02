@@ -187,6 +187,20 @@ CREATE TABLE IF NOT EXISTS qbo_invoices (
     raw_json       JSONB NOT NULL,
     synced_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Materialised from raw_json at sync time (qbo_client.sync_invoices) — used by the
+-- Data Quality "unsent / auto-generated invoice" review.
+ALTER TABLE qbo_invoices ADD COLUMN IF NOT EXISTS email_status TEXT;
+ALTER TABLE qbo_invoices ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+ALTER TABLE qbo_invoices ADD COLUMN IF NOT EXISTS balance      NUMERIC;
+ALTER TABLE qbo_invoices ADD COLUMN IF NOT EXISTS recur_ref    TEXT;
+
+-- Invoice visibility — the invoice analogue of hidden_products / hidden_customers.
+-- A phantom recurring auto-invoice a human excluded drops from every analytics page.
+CREATE TABLE IF NOT EXISTS hidden_invoices (
+    qbo_invoice_id TEXT PRIMARY KEY,
+    reason         TEXT,
+    hidden_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -- QuickBooks Phase 2: matching PO requests to invoices ("what shipped").
 CREATE TABLE IF NOT EXISTS qbo_invoice_items (

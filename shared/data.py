@@ -456,14 +456,28 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 def load_invoice_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     """The full QuickBooks invoice history — every customer, not just the 3 with PO
     documents. This is what makes Overview/Trends/Products/Customers reflect the whole
-    business rather than the PO-covered slice of it."""
+    business rather than the PO-covered slice of it. Invoices a human excluded
+    (hidden_invoices — phantom recurring auto-invoices) are dropped here, so they
+    never reach any analytics page."""
     conn = psycopg2.connect(get_database_url())
     try:
-        inv_df = pd.read_sql_query(
-            "SELECT id, doc_number, customer_name, txn_date, ship_date, total_amt, "
-            "private_note FROM qbo_invoices",
-            conn,
-        )
+        # email_status / recur_ref / hidden_invoices land with migration 0012 — fall
+        # back to the plain read until the schema catches up.
+        try:
+            inv_df = pd.read_sql_query(
+                "SELECT id, qbo_invoice_id, doc_number, customer_name, txn_date, "
+                "ship_date, total_amt, private_note, email_status, delivered_at, "
+                "balance, recur_ref FROM qbo_invoices "
+                "WHERE qbo_invoice_id NOT IN (SELECT qbo_invoice_id FROM hidden_invoices)",
+                conn,
+            )
+        except Exception:
+            conn.rollback()
+            inv_df = pd.read_sql_query(
+                "SELECT id, doc_number, customer_name, txn_date, ship_date, total_amt, "
+                "private_note FROM qbo_invoices",
+                conn,
+            )
         inv_items_df = pd.read_sql_query(
             "SELECT ii.invoice_id, ii.product_name, ii.container_size, ii.category, "
             "ii.is_sample, ii.quantity, ii.unit_price, ii.line_total, "

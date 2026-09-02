@@ -164,6 +164,18 @@ def test_reference_price_write_forbidden_for_editor():
     assert r.status_code == 403 and r.json()["detail"]["need"] == "admin"
 
 
+def test_hidden_invoice_toggle_is_editor_not_admin():
+    # excluding a phantom invoice is a visibility control, like hiding a product
+    assert _client.post("/api/settings/hidden-invoices",
+                        json={"qbo_invoice_id": "1", "hidden": True}).status_code == 403  # no bearer
+    r = _client_noraise.post(
+        "/api/settings/hidden-invoices",
+        json={"qbo_invoice_id": "1", "hidden": True},
+        headers={"Authorization": f"Bearer {_tok()}"},  # editor
+    )
+    assert r.status_code != 403  # editor gets past the gate (then 500s on the absent DB)
+
+
 def test_saved_view_delete_requires_kind():
     r = _client.request(
         "DELETE",

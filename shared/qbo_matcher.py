@@ -219,10 +219,20 @@ def search_pos(conn, query: str = "", limit: int = 50, include_matched: bool = F
 
 def _load_invoices(conn) -> list[dict]:
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT id, qbo_invoice_id, customer_name, txn_date, total_amt, "
-            "private_note, raw_json FROM qbo_invoices"
-        )
+        # skip invoices a human excluded (hidden_invoices — phantom recurring
+        # auto-invoices); they shouldn't be offered as a match candidate.
+        try:
+            cur.execute(
+                "SELECT id, qbo_invoice_id, customer_name, txn_date, total_amt, "
+                "private_note, raw_json FROM qbo_invoices "
+                "WHERE qbo_invoice_id NOT IN (SELECT qbo_invoice_id FROM hidden_invoices)"
+            )
+        except Exception:
+            conn.rollback()
+            cur.execute(
+                "SELECT id, qbo_invoice_id, customer_name, txn_date, total_amt, "
+                "private_note, raw_json FROM qbo_invoices"
+            )
         cols = [d[0] for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     for r in rows:
