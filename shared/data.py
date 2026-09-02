@@ -617,13 +617,82 @@ def _qty_overlap(a: dict, b: dict) -> float:
     return inter / union if union else 0.0
 
 
-def _choose_revision(links, cand_pos, po_items, inv_items):
-    """Per confirmed link, swap po_id to the revision of that po_number whose line
-    items best match the linked invoice — closest total quantity, then most product
-    overlap, then most recent, then the originally-linked row. A po_number often has
-    several extracted revision rows (customer emailed updates) and the matcher's
-    date heuristic can leave the link on a stale small one, so the invoice looks
-    massively over-shipped. NULL-po_number links are left as-is."""
+# ── Revision grouping (shared identity of "one order" across its versions) ─────
+# Mirrors extract_pos.annotate_revisions so the analytics group revisions the way
+# the pipeline does: a human "revision of X" / "standalone" review decision is
+# authoritative, then a shared Gmail thread (a thread = one order conversation),
+# then a shared PO number, then the source file. Used by _choose_revision (the
+# line-level requested-vs-shipped basis) and prepare() (the per-order waterfall)
+# so both agree — and so requested value is counted once per order, not once per
+# revision row or once per linked invoice.
+
+
+@st.cache_data(ttl=300)
+def _load_revision_overrides() -> dict:
+    """{target_key: {"revision_of", "standalone"}} from human review decisions."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        return extraction_reviews.group_override_map(conn)
+    finally:
+        conn.close()
+
+
+def _po_target_key(row) -> str:
+    tid = row.get("gmail_thread_id")
+    return str(tid) if tid not in (None, "") else str(row.get("source_file") or "")
+
+
+def _base_group_key(row, overrides: dict) -> str:
+    ov = overrides.get(_po_target_key(row))
+    pid = row.get("id", row.get("po_id"))
+    if ov and ov.get("standalone"):
+        return f"solo:{pid}"
+    if ov and ov.get("revision_of"):
+        return f"n:{ov['revision_of']}"
+    tid = row.get("gmail_thread_id")
+    if tid not in (None, ""):
+        return f"t:{tid}"
+    num = row.get("po_number")
+    if num not in (None, ""):
+        return f"n:{num}"
+    return f"f:{row.get('source_file') or pid}"
+
+
+def revision_group_keys(po_df: pd.DataFrame, overrides: dict) -> dict:
+    """{po_id -> group key} for every row in po_df. A couple of remap rounds fold
+    an overridden row onto its target's key even when the target's own base key is
+    t:<thread> rather than n:<number>."""
+    id_col = "id" if "id" in po_df.columns else "po_id"
+    recs = po_df.to_dict("records")
+    key = {int(r[id_col]): _base_group_key(r, overrides) for r in recs}
+    for _ in range(4):
+        num_key: dict = {}
+        for r in recs:
+            n = r.get("po_number")
+            if n not in (None, ""):
+                num_key.setdefault(str(n), key[int(r[id_col])])
+        changed = False
+        for r in recs:
+            ov = overrides.get(_po_target_key(r))
+            tgt = ov and ov.get("revision_of")
+            if tgt and str(tgt) in num_key and key[int(r[id_col])] != num_key[str(tgt)]:
+                key[int(r[id_col])] = num_key[str(tgt)]
+                changed = True
+        if not changed:
+            break
+    return key
+
+
+def _choose_revision(links, cand_pos, po_items, inv_items, group_of):
+    """For each order group with more than one candidate revision, pick the ONE
+    revision whose line items best match the COMBINED profile of all that group's
+    linked invoices — closest total quantity, then most product overlap, then most
+    recent, then an originally-linked row. Every link in the group then takes the
+    requested side from that one revision, so a PO number split across two invoices
+    (or two revision rows) counts its request once. Groups with a single candidate
+    keep each link's own row.
+
+    `group_of`: {po_id -> group key} from revision_group_keys()."""
     def _profile(df, id_col):
         out = {}
         for pid, grp in df.groupby(id_col):
@@ -634,29 +703,38 @@ def _choose_revision(links, cand_pos, po_items, inv_items):
     inv_map = _profile(inv_items, "invoice_id")
     po_tot = {k: sum(v.values()) for k, v in po_map.items()}
     inv_tot = {k: sum(v.values()) for k, v in inv_map.items()}
-
     rec = {r.po_id: po_recency(r._asdict()) for r in cand_pos.itertuples(index=False)}
-    by_num: dict = {}
-    for n, g in cand_pos.groupby("po_number"):
-        by_num[n] = g["po_id"].tolist()
 
-    chosen = []
-    for row in links.itertuples(index=False):
-        cands = by_num.get(row.po_number)
-        if row.po_number is None or not cands or len(cands) <= 1:
-            chosen.append(row.po_id)
+    cands_by_group: dict = {}
+    for r in cand_pos.itertuples(index=False):
+        cands_by_group.setdefault(group_of.get(r.po_id), []).append(r.po_id)
+
+    out = links.copy()
+    out["_group"] = out["po_id"].map(group_of)
+
+    chosen_for_group: dict = {}
+    for grp, grp_links in out.groupby("_group", dropna=False):
+        cands = cands_by_group.get(grp) or list(grp_links["po_id"].unique())
+        if len(cands) <= 1:
             continue
-        target = inv_tot.get(row.invoice_id, 0.0)
-        iprof = inv_map.get(row.invoice_id, {})
+        inv_ids = grp_links["invoice_id"].unique().tolist()
+        target = sum(inv_tot.get(i, 0.0) for i in inv_ids)
+        iprof: dict = {}
+        for i in inv_ids:
+            for k, v in inv_map.get(i, {}).items():
+                iprof[k] = iprof.get(k, 0.0) + v
+        orig = set(grp_links["po_id"])
         best = max(cands, key=lambda pid: (
             -abs(po_tot.get(pid, 0.0) - target),
             _qty_overlap(po_map.get(pid, {}), iprof),
-            rec[pid],
-            pid == row.po_id,
+            rec.get(pid, po_recency({})),
+            pid in orig,
         ))
-        chosen.append(best)
-    out = links.copy()
-    out["po_id"] = chosen
+        chosen_for_group[grp] = best
+
+    out["po_id"] = [
+        chosen_for_group.get(g, pid) for g, pid in zip(out["_group"], out["po_id"])
+    ]
     return out
 
 
@@ -678,7 +756,8 @@ def load_matched_line_items() -> pd.DataFrame:
     try:
         links = pd.read_sql_query(
             """
-            SELECT l.po_id, l.invoice_id, po.po_number, po.customer_name, po.po_date, po.sent_date,
+            SELECT l.po_id, l.invoice_id, po.po_number, po.gmail_thread_id, po.source_file,
+                   po.customer_name, po.po_date, po.sent_date,
                    inv.customer_name AS customer_canonical
             FROM po_invoice_links l
             JOIN purchase_orders po ON po.id = l.po_id
@@ -696,15 +775,17 @@ def load_matched_line_items() -> pd.DataFrame:
         # whichever revision best matches each invoice, not blindly the linked row.
         po_numbers = [n for n in links["po_number"].dropna().unique().tolist()]
         po_ids = links["po_id"].unique().tolist()
+        thread_ids = links["gmail_thread_id"].dropna().unique().tolist() if "gmail_thread_id" in links.columns else []
         cand_pos = pd.read_sql_query(
             """
-            SELECT po.id AS po_id, po.po_number,
+            SELECT po.id AS po_id, po.po_number, po.gmail_thread_id, po.source_file,
                    po.document_printed_at, po.source_received_at, po.sent_date, po.po_date
             FROM purchase_orders po
             WHERE po.error IS NULL AND COALESCE(po.status, 'active') = 'active'
-              AND (po.po_number = ANY(%(nums)s) OR po.id = ANY(%(ids)s))
+              AND (po.po_number = ANY(%(nums)s) OR po.id = ANY(%(ids)s)
+                   OR po.gmail_thread_id = ANY(%(tids)s))
             """,
-            conn, params={"nums": po_numbers, "ids": po_ids},
+            conn, params={"nums": po_numbers, "ids": po_ids, "tids": thread_ids},
         )
         po_items = pd.read_sql_query(
             "SELECT po_id, product_name, container_size, quantity, line_total, math_mismatch "
@@ -727,12 +808,13 @@ def load_matched_line_items() -> pd.DataFrame:
     po_items["_pk"] = po_items["product_name"].map(_norm_product)
     inv_items["_pk"] = inv_items["product_name"].map(_norm_product)
 
-    links = _choose_revision(links, cand_pos, po_items, inv_items)
+    group_of = revision_group_keys(cand_pos, _load_revision_overrides())
+    links = _choose_revision(links, cand_pos, po_items, inv_items, group_of)
     # `customer_canonical` = the linked QBO invoice's customer — the single real
     # entity behind the many PO-side spellings ("Get Fresh", "Get Fresh Produce,
     # LLC.", …). Group customer views on this, not the raw extracted name.
     links["customer_canonical"] = links["customer_canonical"].fillna(links["customer_name"])
-    links = links[["po_id", "invoice_id", "customer_name", "customer_canonical", "effective_date"]]
+    links = links[["po_id", "_group", "invoice_id", "customer_name", "customer_canonical", "effective_date"]]
 
     def _first_real(s):
         return next((x for x in s if x is not None and str(x).strip()), None)
@@ -753,21 +835,21 @@ def load_matched_line_items() -> pd.DataFrame:
 
     combined = pd.merge(
         po_side, inv_side,
-        on=["po_id", "invoice_id", "customer_name", "customer_canonical", "effective_date", "_pk"],
+        on=["po_id", "_group", "invoice_id", "customer_name", "customer_canonical", "effective_date", "_pk"],
         how="outer",
     )
     for col in ("requested_qty", "requested_amount", "delivered_qty", "delivered_amount"):
         combined[col] = combined[col].fillna(0.0)
     combined["product_name"] = combined["po_product"].fillna(combined["inv_product"]).fillna(combined["_pk"])
 
-    # A PO linked to more than one invoice has its requested-side rows fanned out
-    # once per invoice (po_side merged po_grouped on po_id alone). Keep the requested
-    # amounts on the first row per (po_id, product) only — so summing this frame
-    # counts each PO's request once, while delivered still sums across every linked
-    # invoice. (No live multi-invoice POs today, but manual_link allows split
-    # shipments, and every requested-vs-delivered aggregation sums these columns.)
-    combined = combined.sort_values(["po_id", "_pk", "invoice_id"])
-    dup = combined.duplicated(subset=["po_id", "_pk"], keep="first")
+    # An order's requested-side rows are fanned out once per linked invoice (and,
+    # for a PO number split across revision rows, once per revision). Keep the
+    # requested amounts on the FIRST row per (order group, product) only — so a
+    # sum of this frame counts each order's request exactly once, while delivered
+    # still sums across every linked invoice. Split shipments / manual multi-links
+    # rely on this; every requested-vs-delivered aggregation sums these columns.
+    combined = combined.sort_values(["_group", "_pk", "po_id", "invoice_id"])
+    dup = combined.duplicated(subset=["_group", "_pk"], keep="first")
     combined.loc[dup, ["requested_qty", "requested_amount"]] = 0.0
     combined.loc[dup, "po_math_note"] = None
     return combined[_MATCHED_ITEMS_COLUMNS].reset_index(drop=True)
@@ -907,7 +989,17 @@ def delete_view(name: str) -> None:
 def prepare(po_df: pd.DataFrame, items_df: pd.DataFrame):
     """Dedupe to the latest version of each PO and join line items to it."""
     po = po_df.copy()
-    po["po_key"] = po["po_number"].fillna(po["source_file"])
+    # po_key = the order-group identity (same rule as _choose_revision, so the
+    # per-order waterfall and the line-level gap agree on what "one order" is:
+    # human revision-of / standalone decision > shared Gmail thread > PO number >
+    # source file).
+    _id = "id" if "id" in po.columns else "po_id"
+    try:
+        _gk = revision_group_keys(po, _load_revision_overrides())
+        po["po_key"] = po[_id].map(_gk)
+    except Exception:  # DB unavailable for the override read — fall back
+        po["po_key"] = None
+    po["po_key"] = po["po_key"].fillna(po["po_number"]).fillna(po["source_file"])
     po["po_date"] = pd.to_datetime(po["po_date"], errors="coerce")
     po["delivery_date"] = pd.to_datetime(po["delivery_date"], errors="coerce")
     po["effective_date"] = pd.to_datetime(po["sent_date"], errors="coerce").fillna(po["po_date"])

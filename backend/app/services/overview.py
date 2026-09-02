@@ -262,9 +262,17 @@ def overview_page(fp: FilterParams) -> PageResponse:
               series=_yoy(inv_all, value_col="id", agg="nunique"), y_format="int"),
     ]
 
+    notes = [breakdown]
+    if not gap.m.empty:
+        notes.append(
+            "“Requested vs shipped” and Under-shipped / Fulfilment cover only orders "
+            "matched to a confirmed invoice; each order is counted once (its best-"
+            "matching revision), never once per revision. Full breakdown on Order Lifecycle."
+        )
+
     return PageResponse(
         scope=Scope(count=n_invoices, noun="invoices", start=fp.start, end=fp.end, note=span_note),
         kpis=kpis,
         charts=charts,
-        notes=[breakdown],
+        notes=notes,
     )

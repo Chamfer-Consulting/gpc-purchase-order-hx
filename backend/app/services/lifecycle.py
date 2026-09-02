@@ -307,13 +307,13 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
     _ed = pd.to_datetime(disp["effective_date"], errors="coerce")
     disp["effective_date"] = _ed.dt.strftime("%Y-%m-%d").where(_ed.notna(), None)
     tables["orders"] = Table(
-        title=f"Per-order — requested → revised → shipped ({len(lc)}; "
+        title=f"Per-order — first ask → revised → shipped ({len(lc)}; "
               f"{int(have_ship.sum())} matched)",
         columns=[
             TableColumn(key="po_number", label="PO"),
             TableColumn(key="customer_name", label="Customer"),
             TableColumn(key="effective_date", label="Date", kind="date"),
-            TableColumn(key="requested_amount", label="Requested", kind="currency"),
+            TableColumn(key="requested_amount", label="First ask", kind="currency"),
             TableColumn(key="revised_amount", label="Revised", kind="currency"),
             TableColumn(key="shipped_amount", label="Shipped", kind="currency"),
             TableColumn(key="fulfillment_pct", label="Fulfilment %", kind="percent"),
@@ -339,15 +339,25 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
             Kpi(label="Fulfilment rate", value=fulfil, format="percent", north_star=True,
                 help="Σ shipped ÷ Σ requested across matched order lines (over-ships mask "
                      "under-ships here — see Under-shipped for the per-order view)."),
-            Kpi(label="Requested", value=round(requested, 2), format="currency"),
+            Kpi(label="Requested", value=round(requested, 2), format="currency",
+                help="Σ of the matched order lines' requested value, taken from the PO "
+                     "revision that best fits each linked invoice — the customer's FINAL "
+                     "agreed ask, not their first. (The per-order table below shows the "
+                     "first ask separately.) Covers only orders with a confirmed invoice "
+                     "match; fully-withdrawn orders are not included."),
             Kpi(label="Shipped", value=round(shipped, 2), format="currency"),
         ],
         charts=charts,
         tables=tables,
         notes=[
+            "All figures here cover only orders matched to a confirmed invoice — an order "
+            "requested but never linked to an invoice (e.g. fully withdrawn) contributes "
+            "nothing to Requested or Shipped.",
             "Matched PO ⇄ invoice lines are aligned by product name (sizes and the two "
             "sides' spellings vary); the requested side is taken from whichever PO "
-            "revision best matches each invoice. $ figures cover only lines the PO priced.",
+            "revision best matches each invoice. $ figures cover only lines the PO priced. "
+            "Every extracted version of one order (revisions, thread updates, a human "
+            "“revision of X”) is treated as a single order, counted once.",
             "“Under-shipped” counts only order lines invoiced for less than the customer's "
             "final request; an over-ship elsewhere doesn't offset it. Per row: "
             "Requested − Delivered = Under − Over.",
