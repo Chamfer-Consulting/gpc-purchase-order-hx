@@ -86,3 +86,14 @@ jobs:
             echo "the app's Settings → QuickBooks page. Otherwise download the"
             echo "\`run-doc-capture-log\` artifact for details."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Post the run outcome (success or failure, with stats) to Slack and the
+      # in-app audit timeline. No-ops the Slack half if SLACK_WEBHOOK_URL is unset.
+      - name: Notify run outcome
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JOB_STATUS: ${{ job.status }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python notify_run.py --kind doc_capture

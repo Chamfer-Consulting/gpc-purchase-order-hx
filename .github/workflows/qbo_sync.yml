@@ -83,3 +83,14 @@ jobs:
             echo "QuickBooks → Connection & Sync → Reconnect, then run a full resync."
             echo "Otherwise download the \`run-qbo-sync-log\` artifact for details."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Post the run outcome (success or failure, with stats) to Slack and the
+      # in-app audit timeline. No-ops the Slack half if SLACK_WEBHOOK_URL is unset.
+      - name: Notify run outcome
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JOB_STATUS: ${{ job.status }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python notify_run.py --kind qbo_sync

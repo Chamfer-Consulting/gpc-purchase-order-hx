@@ -30,6 +30,7 @@ import psycopg2
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "shared"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import pipeline_summary  # noqa: E402
 import qbo_client  # noqa: E402
 import qbo_matcher  # noqa: E402
 
@@ -102,6 +103,7 @@ def main() -> None:
             logger.error("Not connected to QuickBooks — connect from the dashboard first.")
             sys.exit(2)
 
+        match_summary = None
         try:
             n_items = qbo_client.sync_items(conn)
             logger.info(f"catalog: {n_items} item(s) upserted")
@@ -113,17 +115,26 @@ def main() -> None:
             )
 
             if not args.skip_matching:
-                summary = qbo_matcher.run_matching(conn)
-                logger.info(f"matching: {summary}")
+                match_summary = qbo_matcher.run_matching(conn)
+                logger.info(f"matching: {match_summary}")
 
         except qbo_client.QBOReauthRequired as e:
             logger.error(f"QuickBooks connection needs reauthorisation — {e}")
             _record(conn, ok=False, error=str(e))
+            pipeline_summary.write("qbo_sync", "reauth_required", error=str(e))
             print("\n⚠️  QuickBooks connection expired/revoked — reconnect from the "
                   "dashboard's QuickBooks → Connection & Sync page, then run a full resync.")
             sys.exit(3)
 
         _record(conn, ok=True, error=None)
+        pipeline_summary.write(
+            "qbo_sync", "ok",
+            items=n_items,
+            invoices_synced=result["synced"],
+            invoices_pruned=result.get("deleted", 0),
+            mode="full resync" if full_resync else "incremental",
+            matching=str(match_summary) if match_summary is not None else "",
+        )
         logger.info("✅ QBO sync done.")
     except SystemExit:
         raise
@@ -133,6 +144,7 @@ def main() -> None:
             _record(conn, ok=False, error=f"{type(e).__name__}: {e}")
         except Exception:
             pass
+        pipeline_summary.write("qbo_sync", "failed", error=f"{type(e).__name__}: {e}")
         sys.exit(1)
     finally:
         conn.close()

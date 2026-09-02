@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "sha
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import doc_storage  # noqa: E402
+import pipeline_summary  # noqa: E402
 import po_doc_capture  # noqa: E402
 import qbo_client  # noqa: E402
 
@@ -104,6 +105,7 @@ def main() -> None:
             )
         except qbo_client.QBOReauthRequired as e:
             logger.error("QuickBooks connection needs reauthorisation — %s", e)
+            pipeline_summary.write("doc_capture", "reauth_required", error=str(e))
             print("\n⚠️  QuickBooks connection expired/revoked — reconnect from the app's "
                   "Settings → QuickBooks page.")
             sys.exit(3)
@@ -117,11 +119,20 @@ def main() -> None:
                 logger.warning("  %s", err)
 
         failed = sum(r["failed"] for r in out.values())
+        pipeline_summary.write(
+            "doc_capture", "ok" if failed == 0 else "partial",
+            failed=failed,
+            **{
+                src: {k: r[k] for k in ("scanned", "captured", "failed", "remaining")}
+                for src, r in out.items()
+            },
+        )
         logger.info("✅ doc capture done%s.", f" ({failed} PO-level failures)" if failed else "")
     except SystemExit:
         raise
-    except Exception:
+    except Exception as e:
         logger.exception("doc capture failed")
+        pipeline_summary.write("doc_capture", "failed", error=f"{type(e).__name__}: {e}")
         sys.exit(1)
     finally:
         conn.close()

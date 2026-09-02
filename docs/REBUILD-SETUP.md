@@ -231,6 +231,20 @@ setup needed, it just works. To offload them to Supabase Storage instead:
 New captures then go to Storage (`content` NULL, `storage_path` set); reads are
 proxied by the API. Existing inline rows stay inline until re-captured.
 
+### 3.2 Run notifications (optional)
+
+Each scheduled workflow (`extract_pos.yml`, `qbo_sync.yml`, `doc_capture.yml`) ends
+with a `Notify run outcome` step (`notify_run.py`) that posts the run's result —
+success, partial, "reconnect QuickBooks", or crash, with stats — to:
+
+- **the in-app audit timeline** (`/audit`, filter *Entity = pipeline*) — always, via
+  `DATABASE_URL`; no setup.
+- **Slack** — only if `SLACK_WEBHOOK_URL` is set. Create a Slack **Incoming Webhook**
+  (Slack → Apps → Incoming Webhooks → add to a channel) and paste the URL into
+  GitHub → **Settings → Secrets and variables → Actions** as `SLACK_WEBHOOK_URL`.
+
+The step never fails a run, and with the secret unset it simply skips the Slack half.
+
 ---
 
 ## 4. Backend host — Railway
@@ -552,6 +566,7 @@ Env-var name in **bold**. "Railway" = the API service's Variables tab.
 | `QBO_CLIENT_ID` / `_SECRET` | ✅ | ✅ (connect flow) | |
 | `QBO_REDIRECT_URI` | | ✅ = `https://api.garfieldproduce.com/auth/qbo/callback` | |
 | `QBO_ENVIRONMENT` | ✅ | ✅ (`production`) | |
+| `SLACK_WEBHOOK_URL` | ✅ *(optional — run notifications, see §3.2)* | | |
 
 Minimum to boot the API: **DATABASE_URL** + a token-verification path — either
 **SUPABASE_URL** (asymmetric JWT signing keys, verified via JWKS; the current

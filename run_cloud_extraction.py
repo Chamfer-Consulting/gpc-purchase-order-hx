@@ -58,6 +58,7 @@ from tqdm import tqdm
 
 import extraction_reviews
 import gmail_client
+import pipeline_summary
 import postgres_store
 from extract_pos import _extract_from_source, annotate_revisions, extract_pdf_text, pdf_to_base64
 from sync_dashboard import _publish_to_postgres  # noqa — same cross-module private-import
@@ -1144,6 +1145,7 @@ def main():
         connection = gmail_client.get_connection(pg_conn)
         if connection is None:
             print("❌ Not connected to Gmail — connect via the dashboard's ✉️ Email Ingestion page first.", file=sys.stderr)
+            pipeline_summary.write("extraction", "reauth_required", error="Gmail not connected")
             sys.exit(1)
         mailbox_email = connection["email_address"]  # for thread deep links (see _thread_meta)
 
@@ -1330,20 +1332,34 @@ def main():
         if skipped:
             print(f"⚠️  {skipped} thread(s) failed before extraction (see log) — cursor NOT advanced, will retry next run")
 
+        _extraction_stats = dict(
+            extracted=published_total - error_total,
+            errors=error_total,
+            skipped=skipped,
+            published=published_total,
+            cursor_advanced=cursor_safe_to_advance,
+        )
+
         if term_event.is_set():
             # Cursor deliberately NOT advanced (we exit before mark_synced): the next
             # run re-scans the same window and skips what this run already published.
             print(f"\n⏹️  Stopped early on SIGTERM (job timeout / cancellation) — "
                   f"{published_total} result(s) published this run before stopping.")
             print("   Re-run the same command — already-processed threads are skipped automatically.")
+            pipeline_summary.write("extraction", "stopped", **_extraction_stats)
             sys.exit(1)
 
         if stop_event.is_set():
             print(f"\n⏸️  Paused: ran out of API credits — {published_total} result(s) published this run before the pause.")
             print("   Add credits and rerun the same command — already-processed messages are skipped automatically.")
+            pipeline_summary.write("extraction", "paused", **_extraction_stats)
             sys.exit(3)
 
         print(f"📈 {published_total - error_total} extracted successfully, {error_total} error(s); {published_total} published.")
+        pipeline_summary.write(
+            "extraction", "ok" if error_total == 0 and skipped == 0 else "partial",
+            **_extraction_stats,
+        )
 
         if cursor_safe_to_advance:
             pg_conn = _ensure_connection(pg_conn, database_url)
