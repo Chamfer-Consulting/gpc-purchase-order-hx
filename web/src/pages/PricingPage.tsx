@@ -19,6 +19,8 @@ import { Chart } from "@/charts/Chart";
 import { timeLineOption, type TimeSeries } from "@/charts/options";
 import { fmtCurrency } from "@/lib/format";
 import { notifyError, notifySuccess } from "@/lib/notify";
+import { confirmAction } from "@/lib/modals";
+import { useUnsavedGuard } from "@/hooks/useUnsavedGuard";
 import { useMe } from "@/api/me";
 import {
   useReferencePrices,
@@ -122,34 +124,83 @@ export function PricingPage() {
     setRows((rs) => rs.filter((r) => r._rk !== rk));
   }
 
-  function onSave() {
-    if (!canAdmin) return;
+  // one pass over the editable rows -> what a save would send, plus a count of
+  // half-filled rows that would be dropped. Drives the Save button, the dirty
+  // guard and the "incomplete rows" hint.
+  const { changed, deleted, skipped } = useMemo(() => {
     const present = new Set<string>();
-    const changed: RefPriceRow[] = [];
+    const changedRows: RefPriceRow[] = [];
+    let skippedRows = 0;
     for (const r of rows) {
       const cust = r.customer_name.trim();
       const prod = r.product_name.trim();
       const sz = r.container_size.trim();
-      if (!cust || !prod || !sz || r.price === "" || Number.isNaN(Number(r.price))) continue;
+      const priceOk = r.price !== "" && !Number.isNaN(Number(r.price));
+      if (!cust || !prod || !sz || !priceOk) {
+        if (cust || prod || sz || r.price !== "") skippedRows += 1; // has content but incomplete
+        continue;
+      }
       const k = keyOf({ customer_name: cust, product_name: prod, container_size: sz });
       present.add(k);
       const prev = seed.get(k);
       if (prev === undefined || Number(prev) !== Number(r.price)) {
-        changed.push({ customer_name: cust, product_name: prod, container_size: sz, price: Number(r.price) });
+        changedRows.push({ customer_name: cust, product_name: prod, container_size: sz, price: Number(r.price) });
       }
     }
-    const deleted = [...seed.keys()]
-      .filter((k) => !present.has(k))
-      .map((k) => k.split(SEP));
-    if (!changed.length && !deleted.length) return;
+    return {
+      changed: changedRows,
+      deleted: [...seed.keys()].filter((k) => !present.has(k)).map((k) => k.split(SEP)),
+      skipped: skippedRows,
+    };
+  }, [rows, seed]);
+
+  const isDirty = changed.length > 0 || deleted.length > 0;
+  useUnsavedGuard(isDirty);
+
+  function doSave() {
     save.mutate(
       { rows: changed, delete: deleted },
       {
-        onSuccess: (d) =>
-          notifySuccess(`Saved ${d.saved} changed/added · ${d.deleted} deleted.`),
+        onSuccess: (d) => notifySuccess(`Saved ${d.saved} changed/added · ${d.deleted} deleted.`),
         onError: (e) => notifyError(e),
       },
     );
+  }
+
+  function onSave() {
+    if (!canAdmin || !isDirty) return;
+    if (deleted.length === 0) {
+      doSave();
+      return;
+    }
+    const names = deleted
+      .map(([c, p, s]) => `${c} · ${p} · ${s}`)
+      .slice(0, 8)
+      .join("\n");
+    confirmAction({
+      title: `Remove ${deleted.length} reference price${deleted.length === 1 ? "" : "s"}?`,
+      body: (
+        <Stack gap="xs">
+          <Text size="sm">
+            {changed.length > 0
+              ? `${changed.length} row(s) will also be saved. `
+              : ""}
+            These rows will be deleted:
+          </Text>
+          <Text size="xs" style={{ whiteSpace: "pre-wrap" }} c="dimmed">
+            {names}
+            {deleted.length > 8 ? `\n…and ${deleted.length - 8} more` : ""}
+          </Text>
+          <Text size="xs" c="dimmed">
+            An <b>auto</b> row comes back on the next extraction sync if that price is still
+            being paid; a <b>manual</b> row stays gone.
+          </Text>
+        </Stack>
+      ),
+      confirmLabel: "Save changes",
+      confirmColor: "red",
+      onConfirm: doSave,
+    });
   }
 
   return (
@@ -157,7 +208,7 @@ export function PricingPage() {
       title={meta.title}
       description="Review unit-price history and the reference prices that drive the price-anomaly flag on new orders. auto rows refresh from the most recent price actually paid on each extraction sync; an admin editing one makes it a permanent manual override."
       breadcrumbs={meta.breadcrumbs}
-      width="form"
+      width="wide"
     >
       <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
         {data && (
@@ -201,9 +252,13 @@ export function PricingPage() {
                     size="xs"
                     onClick={onSave}
                     loading={save.isPending}
-                    disabled={!canAdmin}
+                    disabled={!canAdmin || !isDirty}
                   >
-                    Save changes
+                    {isDirty
+                      ? `Save ${changed.length + deleted.length} change${
+                          changed.length + deleted.length === 1 ? "" : "s"
+                        }`
+                      : "Save changes"}
                   </Button>
                 </>
               }
@@ -290,6 +345,17 @@ export function PricingPage() {
                   </Table.Tbody>
                 </Table>
               </Table.ScrollContainer>
+
+              {canAdmin && skipped > 0 && (
+                <Text size="xs" c="orange" mt={6}>
+                  {skipped} incomplete row{skipped === 1 ? "" : "s"} will be skipped on save —
+                  fill in customer, product, size and price.
+                </Text>
+              )}
+              <Text size="xs" c="dimmed" mt={6}>
+                Changing a reference price only affects <b>future</b> extractions. Lines already
+                flagged in Data Quality clear when their PO is next re-extracted, not on save.
+              </Text>
             </SectionCard>
           </>
         )}
