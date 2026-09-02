@@ -32,10 +32,17 @@ interface PageLayoutProps {
   loading?: boolean;
   error?: unknown;
   onRetry?: () => void;
-  /** "wide" (default, ~1360) or "form" (~960) content column */
-  width?: "wide" | "form";
+  /** content column: "wide" (default, 1360), "form" (960), or "full" — up to the
+   *  shell's 1600 bound, for dense split views like Reconcile */
+  width?: "wide" | "form" | "full";
   children?: ReactNode;
 }
+
+const MAW: Record<NonNullable<PageLayoutProps["width"]>, number | undefined> = {
+  wide: 1360,
+  form: 960,
+  full: undefined,
+};
 
 /**
  * Every route renders through this: breadcrumb → title row → optional sticky
@@ -57,7 +64,7 @@ export function PageLayout({
   children,
 }: PageLayoutProps) {
   return (
-    <Box maw={width === "form" ? 960 : undefined} mx={width === "form" ? "auto" : undefined}>
+    <Box maw={MAW[width]} mx={MAW[width] != null ? "auto" : undefined}>
       <Stack gap="md">
         {breadcrumbs && breadcrumbs.length > 0 && (
           <Breadcrumbs

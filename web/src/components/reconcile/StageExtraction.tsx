@@ -155,7 +155,7 @@ export function StageExtraction({ view }: { view: ReconcilePoView }) {
         )
       }
     >
-      <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
         <Stack gap={6}>
           <Group gap="xs">
             <Text size="xs" fw={700} tt="uppercase" c="dimmed">
@@ -175,7 +175,7 @@ export function StageExtraction({ view }: { view: ReconcilePoView }) {
             </Text>
           )}
           {ext.snapshot ? (
-            <ScrollArea.Autosize mah={320}>
+            <ScrollArea.Autosize mah={420}>
               <Code block fz={11}>
                 {ext.snapshot}
               </Code>

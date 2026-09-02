@@ -71,7 +71,9 @@
 }
 
 .content {
-  max-width: 1360px;
+  /* the outer bound; PageLayout caps most pages tighter (wide=1360, form=960).
+     `width="full"` pages (Reconcile, and other dense split views) get the room. */
+  max-width: 1600px;
   margin: 0 auto;
   width: 100%;
   min-width: 0; /* let flex/grid children shrink instead of forcing a body scroll */

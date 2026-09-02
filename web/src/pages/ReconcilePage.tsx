@@ -107,6 +107,7 @@ export function ReconcilePage() {
       title={meta.title}
       description={meta.description}
       breadcrumbs={meta.breadcrumbs}
+      width="full"
     >
       <Group gap="xs" mb="xs">
         {c && (
@@ -133,7 +134,7 @@ export function ReconcilePage() {
       <Box
         style={{
           display: "grid",
-          gridTemplateColumns: isMobile ? "1fr" : "minmax(260px, 340px) 1fr",
+          gridTemplateColumns: isMobile ? "1fr" : "minmax(230px, 288px) minmax(0, 1fr)",
           gap: "var(--mantine-spacing-lg)",
           alignItems: "start",
         }}
