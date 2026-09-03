@@ -35,15 +35,16 @@ function ArchiveTable({ rows }: { rows: ArchivedPo[] }) {
       <Table highlightOnHover verticalSpacing="xs">
         <Table.Thead>
           <Table.Tr>
-            <Table.Th>PO</Table.Th>
-            <Table.Th>Status</Table.Th>
+            {/* widths on the short columns; Customer + Reason share the slack */}
+            <Table.Th w={104}>PO</Table.Th>
+            <Table.Th w={104}>Status</Table.Th>
             <Table.Th>Customer</Table.Th>
-            <Table.Th>PO date</Table.Th>
-            <Table.Th ta="right">Lines</Table.Th>
-            <Table.Th ta="right">Total</Table.Th>
+            <Table.Th w={104}>PO date</Table.Th>
+            <Table.Th w={72} ta="right">Lines</Table.Th>
+            <Table.Th w={116} ta="right">Total</Table.Th>
             <Table.Th>Reason</Table.Th>
-            <Table.Th>Changed</Table.Th>
-            <Table.Th>By</Table.Th>
+            <Table.Th w={150}>Changed</Table.Th>
+            <Table.Th w={150}>By</Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>

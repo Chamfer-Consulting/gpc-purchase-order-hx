@@ -362,12 +362,12 @@ function HiddenInvoicesList() {
           <Table verticalSpacing="xs" fz="sm">
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Invoice</Table.Th>
+                <Table.Th w={130}>Invoice</Table.Th>
                 <Table.Th>Customer</Table.Th>
-                <Table.Th>Date</Table.Th>
-                <Table.Th ta="right">Total</Table.Th>
+                <Table.Th w={110}>Date</Table.Th>
+                <Table.Th w={116} ta="right">Total</Table.Th>
                 <Table.Th>Reason</Table.Th>
-                <Table.Th w={80} />
+                <Table.Th w={92} />
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>

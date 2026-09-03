@@ -277,7 +277,7 @@ export function PricingPage() {
                     <Table.Tr>
                       <Table.Th>Customer</Table.Th>
                       <Table.Th>Product</Table.Th>
-                      <Table.Th>Size</Table.Th>
+                      <Table.Th w={130}>Size</Table.Th>
                       <Table.Th w={130} ta="right">Price ($)</Table.Th>
                       <Table.Th w={90}>Source</Table.Th>
                       <Table.Th w={44} />

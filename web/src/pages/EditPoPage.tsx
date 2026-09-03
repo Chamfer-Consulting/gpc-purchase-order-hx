@@ -527,12 +527,12 @@ function RevisionsPanel({ poId, revisions }: { poId: number; revisions: PoRevisi
           <Table>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>PO</Table.Th>
+                <Table.Th w={132}>PO</Table.Th>
                 <Table.Th>Customer</Table.Th>
-                <Table.Th>PO date</Table.Th>
-                <Table.Th>Delivery</Table.Th>
-                <Table.Th ta="right">Total</Table.Th>
-                <Table.Th />
+                <Table.Th w={110}>PO date</Table.Th>
+                <Table.Th w={110}>Delivery</Table.Th>
+                <Table.Th w={116} ta="right">Total</Table.Th>
+                <Table.Th w={116} />
                 <Table.Th />
               </Table.Tr>
             </Table.Thead>
@@ -982,12 +982,12 @@ function DocumentsPanel({ poId, sources }: { poId: number; sources?: PoSources }
           <Table>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Kind</Table.Th>
+                <Table.Th w={110}>Kind</Table.Th>
                 <Table.Th>File</Table.Th>
-                <Table.Th>Source</Table.Th>
-                <Table.Th ta="right">Size</Table.Th>
-                <Table.Th>Captured</Table.Th>
-                <Table.Th />
+                <Table.Th w={132}>Source</Table.Th>
+                <Table.Th w={92} ta="right">Size</Table.Th>
+                <Table.Th w={150}>Captured</Table.Th>
+                <Table.Th w={44} />
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -1073,9 +1073,9 @@ function AuditPanel({ entries }: { entries: AuditEntry[] }) {
             <Table fz="xs">
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>When</Table.Th>
-                  <Table.Th>Who</Table.Th>
-                  <Table.Th>Action</Table.Th>
+                  <Table.Th w={140}>When</Table.Th>
+                  <Table.Th w={170}>Who</Table.Th>
+                  <Table.Th w={110}>Action</Table.Th>
                   <Table.Th>Change</Table.Th>
                 </Table.Tr>
               </Table.Thead>
@@ -1090,7 +1090,9 @@ function AuditPanel({ entries }: { entries: AuditEntry[] }) {
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      <Code>{e.delta}</Code>
+                      <Code style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                        {e.delta}
+                      </Code>
                     </Table.Td>
                   </Table.Tr>
                 ))}

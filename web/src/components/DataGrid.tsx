@@ -37,6 +37,20 @@ interface DataGridProps<Row extends Record<string, unknown>> {
 }
 
 /**
+ * Preferred px width per formatted-column kind. `table-layout: auto` treats
+ * these as a hint, not a hard cap: it keeps the numeric / date columns tight to
+ * their content (so the values read as a group instead of drifting apart) and
+ * lets the unconstrained text columns soak up the card's slack.
+ */
+const KIND_WIDTH: Partial<Record<ColumnKind, number>> = {
+  date: 112,
+  int: 92,
+  currency: 124,
+  currency2: 128,
+  percent: 104,
+};
+
+/**
  * Table wrapper: click-to-sort with aria-sort, right-aligned tabular numerics,
  * per-column formatting from lib/format, optional CSV export (formula-injection
  * guarded). Scrolls inside a Table.ScrollContainer.
@@ -116,13 +130,15 @@ export function DataGrid<Row extends Record<string, unknown>>({
               {columns.map((c, ci) => {
                 const numeric =
                   c.align === "right" || (c.kind && c.kind !== "text" && c.kind !== "date");
+                const width =
+                  (c.kind && KIND_WIDTH[c.kind]) ?? (numeric && !c.kind ? 116 : undefined);
                 const active = sortKey === c.key;
                 const SortIcon = !active ? IconSelector : asc ? IconChevronUp : IconChevronDown;
                 return (
                   <Table.Th
                     key={c.key}
                     className={ci === 0 ? classes.stickyCol : undefined}
-                    style={{ textAlign: numeric ? "right" : "left" }}
+                    style={{ textAlign: numeric ? "right" : "left", width }}
                     aria-sort={active ? (asc ? "ascending" : "descending") : "none"}
                   >
                     <UnstyledButton
@@ -156,7 +172,10 @@ export function DataGrid<Row extends Record<string, unknown>>({
                     <Table.Td
                       key={c.key}
                       className={ci === 0 ? classes.stickyCol : undefined}
-                      style={{ textAlign: numeric ? "right" : "left", ...(numeric ? NUMERIC_STYLE : null) }}
+                      style={{
+                        textAlign: numeric ? "right" : "left",
+                        ...(numeric ? { ...NUMERIC_STYLE, whiteSpace: "nowrap" } : null),
+                      }}
                     >
                       {c.linkTo && r[c.key] != null ? (
                         <Anchor component={Link} to={c.linkTo(r[c.key], r)} size="sm">

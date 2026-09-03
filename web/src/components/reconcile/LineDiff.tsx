@@ -47,7 +47,7 @@ export function LineDiffTable({ diff }: { diff: LineDiff }) {
             <Table.Th>Product</Table.Th>
             <Table.Th>Purchase order</Table.Th>
             <Table.Th>Invoice</Table.Th>
-            <Table.Th ta="right">Δ total</Table.Th>
+            <Table.Th w={104} ta="right">Δ total</Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
