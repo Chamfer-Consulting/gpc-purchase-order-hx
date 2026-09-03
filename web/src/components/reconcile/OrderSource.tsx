@@ -9,7 +9,6 @@ import {
   Divider,
   Group,
   ScrollArea,
-  SimpleGrid,
   Table,
   Text,
 } from "@mantine/core";
@@ -69,88 +68,83 @@ export function OrderSource({
 
       <Divider my="sm" />
 
-      {/* Evidence side by side: what came in | what we pulled out of it */}
-      <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg" mb="md">
-        <Box>
-          <Group justify="space-between" mb={4}>
-            <Group gap="xs">
-              <Text size="xs" fw={700} tt="uppercase" c="dimmed">
-                What the customer sent
-              </Text>
-              {e.gmail_url && (
-                <Anchor href={e.gmail_url} target="_blank" rel="noreferrer" size="xs">
-                  <Group gap={3}>
-                    Open Gmail thread <IconExternalLink size={11} />
-                  </Group>
-                </Anchor>
-              )}
-            </Group>
-            {e.snapshot && (
-              <Button size="compact-xs" variant="subtle" onClick={() => setShowSnap((s) => !s)}>
-                {showSnap ? "Hide" : "Show"}
-              </Button>
-            )}
-          </Group>
-          {e.subject && (
-            <Text size="sm" fw={500} mb={4}>
-              {e.subject}
-            </Text>
-          )}
-          {e.snapshot ? (
-            showSnap && (
-              <ScrollArea.Autosize mah={420}>
-                <Code block fz={11}>
-                  {e.snapshot}
-                </Code>
-              </ScrollArea.Autosize>
-            )
-          ) : (
-            <Text size="sm" c="dimmed">
-              No stored extraction snapshot for this order.
-            </Text>
-          )}
-        </Box>
-
-        <Box>
-          <Text size="xs" fw={700} tt="uppercase" c="dimmed" mb={4}>
-            What we extracted
+      {/* What the customer sent */}
+      <Group justify="space-between" mb={4}>
+        <Group gap="xs">
+          <Text size="xs" fw={700} tt="uppercase" c="dimmed">
+            What the customer sent
           </Text>
-          <Table fz="xs" verticalSpacing={3} withRowBorders>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Product</Table.Th>
-                <Table.Th ta="right">Qty</Table.Th>
-                <Table.Th ta="right">Line total</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {view.items.map((it, i) => (
-                <Table.Tr key={i}>
-                  <Table.Td>
-                    {it.product_name ?? it.product_raw ?? "?"}
-                    {it.container_size ? ` · ${it.container_size}` : ""}
-                  </Table.Td>
-                  <Table.Td ta="right" style={NUMERIC_STYLE}>
-                    {it.quantity ?? "—"}
-                  </Table.Td>
-                  <Table.Td ta="right" style={NUMERIC_STYLE}>
-                    {fmtCurrency(it.line_total, true)}
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-              {view.items.length === 0 && (
-                <Table.Tr>
-                  <Table.Td colSpan={3}>
-                    <Text size="xs" c="dimmed">
-                      No line items extracted.
-                    </Text>
-                  </Table.Td>
-                </Table.Tr>
-              )}
-            </Table.Tbody>
-          </Table>
-        </Box>
-      </SimpleGrid>
+          {e.gmail_url && (
+            <Anchor href={e.gmail_url} target="_blank" rel="noreferrer" size="xs">
+              <Group gap={3}>
+                Open Gmail thread <IconExternalLink size={11} />
+              </Group>
+            </Anchor>
+          )}
+        </Group>
+        {e.snapshot && (
+          <Button size="compact-xs" variant="subtle" onClick={() => setShowSnap((s) => !s)}>
+            {showSnap ? "Hide" : "Show"}
+          </Button>
+        )}
+      </Group>
+      {e.subject && (
+        <Text size="sm" fw={500} mb={4}>
+          {e.subject}
+        </Text>
+      )}
+      {e.snapshot ? (
+        showSnap && (
+          <ScrollArea.Autosize mah={420} mb="md">
+            <Code block fz={11}>
+              {e.snapshot}
+            </Code>
+          </ScrollArea.Autosize>
+        )
+      ) : (
+        <Text size="sm" c="dimmed" mb="md">
+          No stored extraction snapshot for this order.
+        </Text>
+      )}
+
+      {/* What we extracted */}
+      <Text size="xs" fw={700} tt="uppercase" c="dimmed" mb={4}>
+        What we extracted
+      </Text>
+      <Table fz="xs" verticalSpacing={3} withRowBorders mb="md">
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Product</Table.Th>
+            <Table.Th ta="right">Qty</Table.Th>
+            <Table.Th ta="right">Line total</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {view.items.map((it, i) => (
+            <Table.Tr key={i}>
+              <Table.Td>
+                {it.product_name ?? it.product_raw ?? "?"}
+                {it.container_size ? ` · ${it.container_size}` : ""}
+              </Table.Td>
+              <Table.Td ta="right" style={NUMERIC_STYLE}>
+                {it.quantity ?? "—"}
+              </Table.Td>
+              <Table.Td ta="right" style={NUMERIC_STYLE}>
+                {fmtCurrency(it.line_total, true)}
+              </Table.Td>
+            </Table.Tr>
+          ))}
+          {view.items.length === 0 && (
+            <Table.Tr>
+              <Table.Td colSpan={3}>
+                <Text size="xs" c="dimmed">
+                  No line items extracted.
+                </Text>
+              </Table.Td>
+            </Table.Tr>
+          )}
+        </Table.Tbody>
+      </Table>
 
       <VerdictPills ctl={ext} view={view} />
     </Box>
