@@ -115,8 +115,8 @@ ALTER TABLE line_items ADD COLUMN IF NOT EXISTS math_ack_reason TEXT;
 CREATE TABLE IF NOT EXISTS audit_log (
     id         BIGSERIAL PRIMARY KEY,
     actor      TEXT,
-    action     TEXT NOT NULL,   -- create | edit | status | delete | restore | link | unlink | line_void | customer | revision | connect | disconnect | sync | team_set | team_remove | price_edit | price_delete | doc_capture | doc_upload | doc_delete | hide | unhide | login | logout
-    entity     TEXT NOT NULL,   -- purchase_order | line_item | po_invoice_link | connection | app_user | reference_price | product | customer | invoice
+    action     TEXT NOT NULL,   -- create|edit|status|delete|restore|link|unlink|line_void|customer|revision | connect|disconnect|sync | team_set|team_remove | price_edit|price_delete | doc_capture|doc_upload|doc_delete | hide|unhide | view_save|view_delete | verdict_retracted | run | login|logout|login_denied
+    entity     TEXT NOT NULL,   -- purchase_order|line_item|po_invoice_link | connection | app_user | reference_price | product|customer|invoice | saved_view | extraction_review | pipeline
     entity_id  TEXT,
     before     JSONB,
     after      JSONB,

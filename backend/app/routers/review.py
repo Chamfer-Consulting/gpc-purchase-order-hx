@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from ..auth import AuthedUser, current_user, require_editor
 from ..reused_db import reused_conn
-from ..services import review_queue
+from ..services import audit, review_queue
 
 router = APIRouter(prefix="/api/review", tags=["review"])
 
@@ -100,8 +100,27 @@ def upsert(d: Decision, user: AuthedUser = Depends(require_editor)) -> dict:
 
 @router.delete("/decision")
 def remove(
-    target_kind: str = Body(...), target_key: str = Body(...), _: AuthedUser = Depends(require_editor)
+    target_kind: str = Body(...), target_key: str = Body(...),
+    user: AuthedUser = Depends(require_editor),
 ) -> dict:
     with reused_conn() as conn:
-        extraction_reviews.delete_decision(conn, target_kind, target_key)
-    return {"ok": True}
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT verdict, revision_of, standalone, reviewer FROM extraction_reviews "
+                "WHERE target_kind = %s AND target_key = %s",
+                (target_kind, target_key),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return {"ok": True, "retracted": False}  # nothing to undo
+        extraction_reviews.delete_decision(conn, target_kind, target_key, commit=False)
+        audit.log(
+            conn, actor=user.email, action="verdict_retracted",
+            entity="extraction_review", entity_id=target_key,
+            before={
+                "verdict": row[0], "revision_of": row[1],
+                "standalone": row[2], "reviewer": row[3],
+            },
+        )
+        conn.commit()
+    return {"ok": True, "retracted": True}

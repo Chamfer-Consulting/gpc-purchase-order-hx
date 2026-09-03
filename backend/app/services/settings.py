@@ -243,6 +243,8 @@ def save_view(conn, kind: str, name: str, config: dict, owner: str) -> None:
             "ON CONFLICT (owner, kind, name) DO UPDATE SET config = EXCLUDED.config, created_at = now()",
             (name, kind, json.dumps(config), owner),
         )
+    audit.log(conn, actor=owner, action="view_save", entity="saved_view",
+              entity_id=f"{kind}/{name}", after={"kind": kind, "name": name})
     conn.commit()
 
 
@@ -253,4 +255,8 @@ def delete_view(conn, kind: str, name: str, owner: str) -> None:
             "DELETE FROM dashboard_saved_views WHERE kind = %s AND name = %s AND owner = %s",
             (kind, name, owner),
         )
+        removed = cur.rowcount
+    if removed:
+        audit.log(conn, actor=owner, action="view_delete", entity="saved_view",
+                  entity_id=f"{kind}/{name}", before={"kind": kind, "name": name})
     conn.commit()

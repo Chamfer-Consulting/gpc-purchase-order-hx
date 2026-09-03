@@ -83,6 +83,31 @@ def _decode(token: str) -> dict:
     return jwt.decode(token, s.supabase_jwt_secret, algorithms=["HS256"], **common)
 
 
+# Emails we've already logged a denied sign-in for recently — the rejected
+# client keeps retrying (react-query refetches), so cap it to one DB write per
+# email per 30 min without even opening a connection in between.
+_denied_logged: TTLCache = TTLCache(maxsize=256, ttl=1800)
+
+
+def _record_denied_signin(email: str | None, session_id: str | None) -> None:
+    key = (email or "").strip().lower()
+    if not key or key in _denied_logged:
+        return
+    _denied_logged[key] = True
+    try:
+        from .reused_db import reused_conn
+        from .services import audit
+
+        with reused_conn() as conn:
+            audit.record_auth_event(
+                conn, email=key, event="login_denied", session_id=session_id,
+                reason="email is not on the sign-in allow-list",
+            )
+            conn.commit()
+    except Exception:  # audit is best-effort — never block the (correct) rejection
+        _log.warning("could not record denied sign-in for %s", key, exc_info=True)
+
+
 def current_user(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> AuthedUser:
     try:
         claims = _decode(creds.credentials)
@@ -96,6 +121,7 @@ def current_user(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> Auth
         )
     user = AuthedUser(claims)
     if not email_allowed(user.email):
+        _record_denied_signin(user.email, user.session_id)
         raise AccountNotAllowed(user.email)
     return user
 

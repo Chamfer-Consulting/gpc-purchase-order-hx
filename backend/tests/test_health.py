@@ -48,15 +48,22 @@ def test_email_allow_list():
     assert not email_allowed(None) and not email_allowed("no-at-sign")
 
 
-def test_disallowed_email_is_rejected_with_a_typed_403():
+def test_disallowed_email_is_rejected_with_a_typed_403(monkeypatch):
+    import app.auth as _auth
+
+    seen: list[str | None] = []
+    monkeypatch.setattr(_auth, "_record_denied_signin", lambda email, sid: seen.append(email))
+
     tok = jwt.encode(
         {"sub": "x", "email": "outsider@gmail.com", "aud": "authenticated",
+         "session_id": "sess-1",
          "exp": dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)},
         os.environ["SUPABASE_JWT_SECRET"], algorithm="HS256",
     )
     r = client.get("/api/me", headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 403
     assert r.json()["detail"]["code"] == "account_not_allowed"
+    assert seen == ["outsider@gmail.com"]  # the denied attempt is logged to /audit
 
 
 def test_hs256_token_accepted():

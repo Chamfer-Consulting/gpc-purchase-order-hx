@@ -5,10 +5,11 @@ import { apiGet } from "@/lib/api";
 export const AUDIT_PAGE = 50;
 
 /** One event in the cross-system activity feed. `source` says where it came from:
- *  "admin" = an admin mutation (audit_log), "auth" = a sign-in / sign-out,
- *  "review" = an extraction-review decision. */
+ *  "admin" = a person changed data by hand, "auth" = a sign-in / sign-out /
+ *  blocked attempt, "pipeline" = a scheduled run, "review" = an
+ *  extraction-review decision. */
 export interface AuditRow {
-  source: "admin" | "auth" | "review";
+  source: "admin" | "auth" | "pipeline" | "review";
   id: string;
   at: string | null;
   actor: string | null;

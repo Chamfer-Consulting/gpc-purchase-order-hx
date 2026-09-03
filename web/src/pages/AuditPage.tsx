@@ -29,8 +29,18 @@ import { pageMeta } from "@/nav";
 
 const iso = (d: Date | null) => (d ? dayjs(d).format("YYYY-MM-DD") : undefined);
 
-const SOURCE_LABEL: Record<string, string> = { admin: "admin", auth: "auth", review: "review" };
-const SOURCE_COLOR: Record<string, string> = { admin: "gpGreen", auth: "blue", review: "grape" };
+const SOURCE_LABEL: Record<string, string> = {
+  admin: "admin",
+  auth: "auth",
+  pipeline: "pipeline",
+  review: "review",
+};
+const SOURCE_COLOR: Record<string, string> = {
+  admin: "gpGreen",
+  auth: "blue",
+  pipeline: "cyan",
+  review: "grape",
+};
 
 function titleCase(s: string) {
   return s.replace(/[_-]+/g, " ");
