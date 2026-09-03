@@ -45,19 +45,17 @@ function activeCount(f: Filters): number {
 }
 
 /** The scope controls. State lives in the URL (useFilters) so views are shareable.
- *  Desktop: an inline wrapping row. Phone: quick-range chips + a "Filters" button
- *  that opens the full set in a bottom drawer. */
+ *  Desktop: one compact, label-less row that centre-aligns. Phone: quick-range
+ *  chips + a "Filters" button that opens the full set in a bottom drawer. */
 export function FilterBar(props: FilterBarProps) {
   const isMobile = useIsMobile();
   const { filters, setFilters } = useFilters();
   const [opened, { open, close }] = useDisclosure(false);
 
-  const controls = <Controls {...props} full />;
-
   if (!isMobile) {
     return (
-      <Group align="flex-end" gap="sm" wrap="wrap" mb="md">
-        {controls}
+      <Group align="center" gap="xs" wrap="wrap">
+        <Controls {...props} />
       </Group>
     );
   }
@@ -90,7 +88,7 @@ export function FilterBar(props: FilterBarProps) {
         padding="md"
       >
         <Stack gap="md">
-          <Controls {...props} full stacked />
+          <Controls {...props} stacked />
           <Divider />
           <Group justify="space-between">
             <Button
@@ -112,8 +110,9 @@ export function FilterBar(props: FilterBarProps) {
   );
 }
 
-/** The individual filter inputs. `stacked` (drawer) makes each full-width; the
- *  desktop row keeps the fixed widths it was tuned with. */
+/** The individual filter inputs. Desktop drops the per-field labels (placeholders
+ *  carry the meaning) so the row is one line tall and everything aligns on a
+ *  single baseline; `stacked` (drawer) restores labels and makes each full-width. */
 function Controls({
   customerOptions = [],
   productOptions = [],
@@ -122,31 +121,34 @@ function Controls({
   hideCustomers = false,
   viewKind,
   stacked = false,
-}: FilterBarProps & { full?: boolean; stacked?: boolean }) {
+}: FilterBarProps & { stacked?: boolean }) {
   const { filters, setFilters } = useFilters();
   const w = (fixed: number) => (stacked ? "100%" : fixed);
+  const label = (s: string) => (stacked ? s : undefined);
 
   return (
     <>
+      {!stacked && <RangePresets />}
+
       <DatePickerInput
         type="range"
-        label="Date range"
+        label={label("Date range")}
+        placeholder="All dates"
         size="xs"
-        w={w(230)}
+        w={w(210)}
         value={[toDate(filters.start), toDate(filters.end)]}
         onChange={([s, e]) => setFilters({ start: iso(s), end: iso(e) })}
         clearable
       />
-      {!stacked && (
-        <div style={{ marginBottom: 6 }}>
-          <RangePresets />
-        </div>
-      )}
+
+      {stacked && <RangePresets />}
+
       {!hideCustomers && (
         <MultiSelect
-          label="Customers"
+          label={label("Customers")}
+          placeholder="All customers"
           size="xs"
-          w={w(220)}
+          w={w(190)}
           data={customerOptions}
           value={filters.customers}
           onChange={(v) => setFilters({ customers: v })}
@@ -156,9 +158,10 @@ function Controls({
         />
       )}
       <MultiSelect
-        label="Products"
+        label={label("Products")}
+        placeholder="All products"
         size="xs"
-        w={w(200)}
+        w={w(170)}
         data={productOptions}
         value={filters.products}
         onChange={(v) => setFilters({ products: v })}
@@ -166,9 +169,10 @@ function Controls({
         clearable
       />
       <MultiSelect
-        label="Sizes"
+        label={label("Sizes")}
+        placeholder="All sizes"
         size="xs"
-        w={w(140)}
+        w={w(130)}
         data={sizeOptions}
         value={filters.sizes}
         onChange={(v) => setFilters({ sizes: v })}
@@ -178,12 +182,11 @@ function Controls({
         <Switch
           label="Include samples"
           size="xs"
-          mb={stacked ? 0 : 6}
           checked={filters.includeSamples}
           onChange={(e) => setFilters({ includeSamples: e.currentTarget.checked })}
         />
       )}
-      {viewKind && <SavedViewsControl kind={viewKind} />}
+      {viewKind && <SavedViewsControl kind={viewKind} stacked={stacked} />}
     </>
   );
 }

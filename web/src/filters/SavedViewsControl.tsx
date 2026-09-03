@@ -4,10 +4,11 @@ import { useFilters, type Filters } from "./useFilters";
 
 /**
  * A compact saved-views control for the FilterBar: pick a saved view to apply it,
- * "Save view" to store the current scope under a name, "×" to delete the applied
- * one. `kind` scopes the list to a page (e.g. "customers").
+ * "Save view" to store the current scope under a name, "Delete" to drop one.
+ * `kind` scopes the list to a page (e.g. "customers"). `stacked` (the mobile
+ * drawer) restores the field label and lets the select go full-width.
  */
-export function SavedViewsControl({ kind }: { kind: string }) {
+export function SavedViewsControl({ kind, stacked = false }: { kind: string; stacked?: boolean }) {
   const { filters, setFilters } = useFilters();
   const { data: views = [] } = useSavedViews<Filters>(kind);
   const saveView = useSaveView();
@@ -25,18 +26,18 @@ export function SavedViewsControl({ kind }: { kind: string }) {
   }
 
   return (
-    <Group gap={4} align="flex-end">
+    <Group gap={4} align="center">
       <Select
-        label="Saved views"
+        label={stacked ? "Saved views" : undefined}
         size="xs"
-        w={170}
+        w={stacked ? "100%" : 150}
         data={views.map((v) => v.name)}
-        placeholder={views.length ? "Apply a view" : "None saved"}
+        placeholder={views.length ? "Saved view" : "None saved"}
         onChange={apply}
         clearable
         searchable
       />
-      <Button size="xs" variant="default" mb={1} onClick={save} loading={saveView.isPending}>
+      <Button size="xs" variant="default" onClick={save} loading={saveView.isPending}>
         Save view
       </Button>
       {views.length > 0 && (
@@ -44,7 +45,6 @@ export function SavedViewsControl({ kind }: { kind: string }) {
           size="xs"
           variant="subtle"
           color="red"
-          mb={1}
           onClick={() => {
             const name = window.prompt("Delete which saved view? (exact name)");
             if (name?.trim()) deleteView.mutate(name.trim());
