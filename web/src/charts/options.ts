@@ -86,10 +86,10 @@ const esc = (s: string) =>
 
 // --- hover emphasis -----------------------------------------------------------
 // The axis tooltip lists every series at the hovered x; `_hoverSeries` is the
-// line the cursor is nearest to (Chart.tsx computes it from the pointer's data
-// coords and re-shows the tip on change so this lands the same frame). The
-// tooltip keeps that row lit and dims the rest. One tooltip shows at a time, so
-// module-level is fine.
+// line the cursor is nearest to. Chart.tsx writes it (via setHoveredSeries)
+// immediately before each tooltip formatter runs, so with several charts mounted
+// the slot always reflects the chart whose tip is rendering. The tooltip keeps
+// that row lit and dims the rest; -1 = dim nothing.
 let _hoverSeries = -1;
 
 /** set by Chart.tsx's pointer tracker; -1 = nothing / outside the plot */
@@ -97,8 +97,9 @@ export function setHoveredSeries(i: number): void {
   _hoverSeries = i;
 }
 
-const emph = (si: number | undefined, row: string): string =>
-  _hoverSeries < 0 || si === _hoverSeries ? row : `<span style="opacity:.4">${row}</span>`;
+/** `active` is the row to keep lit (< 0 = keep every row lit). */
+const emph = (active: number, si: number | undefined, row: string): string =>
+  active < 0 || si === active ? row : `<span style="opacity:.4">${row}</span>`;
 
 /** axis-trigger tooltip formatter: the hovered x, one row per series, then — if
  *  given — each breakdown's top rows (requested → shipped, or a single value). */
@@ -119,10 +120,15 @@ function axisTooltip(fmt: NumFormat, breakdowns: ChartBreakdown[] = []) {
     const arr = (Array.isArray(raw) ? raw : [raw]) as P[];
     const x = arr[0]?.axisValueLabel ?? arr[0]?.axisValue ?? "";
     const head = `<div style="font-weight:600;margin-bottom:2px">${esc(String(x))}</div>`;
-    const series = arr
-      .filter((p) => num(p.value) != null)
+    const rows = arr.filter((p) => num(p.value) != null);
+    // only dim when the hovered line actually has a row here — if it has a gap
+    // at this x, or the cursor is past its date range, light every row instead
+    // of washing the whole tooltip out.
+    const active = rows.some((p) => p.seriesIndex === _hoverSeries) ? _hoverSeries : -1;
+    const series = rows
       .map((p) =>
         emph(
+          active,
           p.seriesIndex,
           `${typeof p.marker === "string" ? p.marker : ""}${esc(p.seriesName ?? "")}: <b>${label(num(p.value) as number)}</b>`,
         ),
@@ -161,11 +167,12 @@ function axisTooltip(fmt: NumFormat, breakdowns: ChartBreakdown[] = []) {
 function crosshair(fmt: NumFormat, timeAxis = false) {
   const label = valueFormatter(fmt);
   return {
+    // no `valueFormatter` — lineOption / timeLineOption always set their own
+    // `formatter` (axisTooltip), which makes ECharts ignore valueFormatter.
     tooltip: {
       trigger: "axis" as const,
       axisPointer: { type: "cross" as const },
       confine: true,
-      valueFormatter: (v: unknown) => label(v as number),
     },
     xAxis: {
       axisPointer: {
@@ -350,6 +357,10 @@ export function timeLineOption(
         type: "line" as const,
         name: s.name,
         data: s.points,
+        // only the plain data lines are hover-emphasis targets — the ghost /
+        // flat reference / smoothed trend overlays are read by Chart.tsx's
+        // pointer tracker otherwise and would steal emphasis from the real row.
+        __track: v === "solid",
         markLine: i === 0 ? markLine : undefined,
         markArea: i === 0 ? markArea : undefined,
         smooth: v === "trend",

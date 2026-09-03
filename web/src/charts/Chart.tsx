@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import ReactEChartsCore from "echarts-for-react/lib/core";
 import { useComputedColorScheme } from "@mantine/core";
 import { echarts, type EChartsOption } from "./echartsCore";
@@ -27,75 +27,133 @@ const BASE: EChartsOption = {
 };
 
 type EC = ReturnType<typeof echarts.init>;
-type LineSeries = { i: number; data: unknown[] };
+/** one trackable line: series index + x/y already reduced to plain numbers
+ *  (dates parsed to epoch ms once) so the pointer tracker never re-parses. */
+type LineSeries = { i: number; xs: number[]; ys: (number | null)[] };
 
-/** value of a line series at (or nearest to) the x the cursor is over */
-function seriesYAt(data: unknown[], xData: number): number | null {
-  if (data.length === 0) return null;
-  if (Array.isArray(data[0])) {
-    // time axis: data is [x, y] pairs, x an ISO string or epoch ms
-    let bestY: number | null = null;
-    let bestDx = Infinity;
-    for (const p of data as [string | number, number | null][]) {
-      const px = typeof p[0] === "string" ? Date.parse(p[0]) : Number(p[0]);
-      const dx = Math.abs(px - xData);
-      if (dx < bestDx && p[1] != null) {
-        bestDx = dx;
-        bestY = Number(p[1]);
+/** line series worth tracking for hover emphasis: real data lines with points,
+ *  minus any the option builder flagged `__track: false` (ghost / reference /
+ *  trend overlays). x is parsed to a number here, not on every pointer move. */
+function deriveLines(merged: EChartsOption): LineSeries[] {
+  const raw = (merged as { series?: unknown }).series;
+  const arr = Array.isArray(raw)
+    ? (raw as { type?: string; data?: unknown[]; __track?: boolean }[])
+    : [];
+  const out: LineSeries[] = [];
+  arr.forEach((s, i) => {
+    if (s.type !== "line" || !Array.isArray(s.data) || !s.data.length) return;
+    if (s.__track === false) return;
+    const xs: number[] = [];
+    const ys: (number | null)[] = [];
+    if (Array.isArray(s.data[0])) {
+      // time axis: [x, y] pairs, x an ISO string or epoch ms
+      for (const p of s.data as [string | number, number | null][]) {
+        xs.push(typeof p[0] === "string" ? Date.parse(p[0]) : Number(p[0]));
+        ys.push(p[1] == null ? null : Number(p[1]));
       }
+    } else {
+      // category axis: y values, index-aligned to the shared x categories
+      (s.data as (number | null)[]).forEach((v, k) => {
+        xs.push(k);
+        ys.push(v == null ? null : Number(v));
+      });
     }
-    return bestY;
+    out.push({ i, xs, ys });
+  });
+  return out;
+}
+
+/**
+ * Value of a line at the cursor's x — linearly interpolated between the two
+ * bracketing points, and `null` when the cursor sits outside the series' own
+ * x-range. Interpolating (rather than snapping to the nearest vertex) means the
+ * distance we compare against is the distance to the drawn line; the range check
+ * keeps a series that stops in June from being a hover target in November.
+ */
+function seriesYAt({ xs, ys }: LineSeries, x: number): number | null {
+  let prevX = NaN;
+  let prevY: number | null = null;
+  for (let k = 0; k < xs.length; k++) {
+    const y = ys[k];
+    if (y == null) continue;
+    const cx = xs[k];
+    if (cx === x) return y;
+    if (cx > x) {
+      if (prevY == null) return null; // before the first drawn point
+      const t = (x - prevX) / (cx - prevX);
+      return prevY + t * (y - prevY);
+    }
+    prevX = cx;
+    prevY = y;
   }
-  const v = (data as (number | null)[])[Math.round(xData)];
-  return v == null ? null : Number(v);
+  return null; // after the last drawn point
 }
 
 /**
  * Track which line the pointer is nearest to (in data space — the value axes are
- * linear, so nearest-in-value is nearest-on-screen) and hand it to the tooltip
- * formatter via `setHoveredSeries`. Our zr listener runs after ECharts' own, so
- * on a change we re-show the tip to rebuild it with the new emphasis the same
- * frame (safe now that the pointer no longer snaps — `x/y` matches the crosshair).
+ * linear, so nearest-in-value is nearest-on-screen) and stash it on
+ * `hoverIdxRef`; Chart.tsx's tooltip-formatter wrapper hands that to
+ * `setHoveredSeries` the instant before the tip renders. On a change we re-show
+ * the tip so the new emphasis lands the same frame (safe — the pointer no longer
+ * snaps, so `x/y` matches the crosshair). The hit-test is coalesced to one run
+ * per animation frame so a burst of mousemove events is cheap.
  */
-function attachPointerTracker(inst: EC, linesRef: React.MutableRefObject<LineSeries[]>) {
+function attachPointerTracker(
+  inst: EC,
+  linesRef: React.MutableRefObject<LineSeries[]>,
+  hoverIdxRef: React.MutableRefObject<number>,
+) {
   const zr = inst.getZr();
   let last = -2;
-  const set = (next: number, ev?: { offsetX: number; offsetY: number }) => {
-    setHoveredSeries(next);
+  let frame = 0;
+  let pending: { offsetX: number; offsetY: number } | null = null;
+
+  const commit = (next: number, ev?: { offsetX: number; offsetY: number }) => {
+    hoverIdxRef.current = next;
     if (next === last) return;
     last = next;
     if (ev) inst.dispatchAction({ type: "showTip", x: ev.offsetX, y: ev.offsetY });
   };
 
-  const onMove = (ev: { offsetX: number; offsetY: number }) => {
+  const handle = (ev: { offsetX: number; offsetY: number }) => {
+    if (inst.isDisposed()) return;
     const lines = linesRef.current;
     if (lines.length < 2 || !inst.containPixel({ gridIndex: 0 }, [ev.offsetX, ev.offsetY])) {
-      set(-1);
+      commit(-1);
       return;
     }
     const conv = inst.convertFromPixel({ gridIndex: 0 }, [ev.offsetX, ev.offsetY]) as
       | number[]
       | undefined;
     if (!conv) {
-      set(-1);
+      commit(-1);
       return;
     }
     const [xData, yCursor] = conv;
     let best = -1;
     let bestDy = Infinity;
-    for (const { i, data } of lines) {
-      const y = seriesYAt(data, xData);
+    for (const line of lines) {
+      const y = seriesYAt(line, xData);
       if (y == null || Number.isNaN(y)) continue;
       const dy = Math.abs(y - yCursor);
       if (dy < bestDy) {
         bestDy = dy;
-        best = i;
+        best = line.i;
       }
     }
-    set(best, ev);
+    commit(best, ev);
+  };
+
+  const onMove = (ev: { offsetX: number; offsetY: number }) => {
+    pending = { offsetX: ev.offsetX, offsetY: ev.offsetY };
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      if (pending) handle(pending);
+    });
   };
   zr.on("mousemove", onMove);
-  zr.on("globalout", () => set(-1));
+  zr.on("globalout", () => commit(-1));
 }
 
 /**
@@ -112,25 +170,41 @@ export function Chart({
   onEvents,
 }: ChartProps) {
   const scheme = useComputedColorScheme("light");
-  const merged = useMemo<EChartsOption>(() => ({ ...BASE, ...option }), [option]);
+  // this instance's hovered-line index — written by the pointer tracker, read
+  // back into the module-level slot by the formatter wrapper below.
+  const hoverIdxRef = useRef(-1);
 
-  // line series (index + raw data) for the pointer tracker — refreshed each
-  // render, read by the zrender listener attached once in onChartReady.
-  const linesRef = useRef<LineSeries[]>([]);
-  linesRef.current = useMemo(() => {
-    const raw = (merged as { series?: unknown }).series;
-    const arr = Array.isArray(raw) ? (raw as { type?: string; data?: unknown[] }[]) : [];
-    const out: LineSeries[] = [];
-    arr.forEach((s, i) => {
-      if (s.type === "line" && Array.isArray(s.data) && s.data.length) out.push({ i, data: s.data });
-    });
-    return out;
-  }, [merged]);
+  const merged = useMemo<EChartsOption>(() => {
+    const base: EChartsOption = { ...BASE, ...option };
+    const tip = (base as { tooltip?: { formatter?: unknown } }).tooltip;
+    if (tip && typeof tip.formatter === "function") {
+      const orig = tip.formatter as (...a: unknown[]) => unknown;
+      (base as { tooltip?: unknown }).tooltip = {
+        ...tip,
+        // hand this instance's hovered index to options.ts right before its
+        // formatter runs, so several mounted charts can't read each other's.
+        formatter: (...a: unknown[]) => {
+          setHoveredSeries(hoverIdxRef.current);
+          return orig(...a);
+        },
+      };
+    }
+    return base;
+  }, [option]);
+
+  // line series for the pointer tracker; derived here, synced to the ref in an
+  // effect so the zrender listener (attached once in onChartReady) sees fresh
+  // data without a ref write during render.
+  const lines = useMemo(() => deriveLines(merged), [merged]);
+  const linesRef = useRef<LineSeries[]>(lines);
+  useEffect(() => {
+    linesRef.current = lines;
+  }, [lines]);
 
   // echarts-for-react types the instance from its own bundled echarts; same
   // object at runtime, so bridge it here.
   const onChartReady = useCallback(
-    (inst: unknown) => attachPointerTracker(inst as EC, linesRef),
+    (inst: unknown) => attachPointerTracker(inst as EC, linesRef, hoverIdxRef),
     [],
   );
 
