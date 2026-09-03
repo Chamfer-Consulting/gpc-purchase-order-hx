@@ -42,7 +42,7 @@ export function Chart({
   const scheme = useComputedColorScheme("light");
   const merged = useMemo<EChartsOption>(() => ({ ...BASE, ...option }), [option]);
 
-  // `highlight`/`downplay`/`globalout` keep the tooltip's hover-emphasis in sync;
+  // mouseover/mouseout/globalout keep the tooltip's hover-emphasis in sync;
   // any handler the caller passes for the same event still runs after.
   const events = useMemo<Record<string, (params: unknown) => void>>(() => {
     const out: Record<string, (params: unknown) => void> = { ...chartHoverEvents };

@@ -85,21 +85,23 @@ const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
 
 // --- hover emphasis -------------------------------------------------------------
-// Which series the cursor is currently over (ECharts fires `highlight`/`downplay`
-// as `emphasis.focus:"series"` fades the other lines). The axis-trigger tooltip
-// lists every series at that x; reading this lets it dim the rows that aren't the
-// one being hovered so the popup matches the chart. Module-level is fine — only
-// one chart shows a tooltip at a time, and `downplay`/`globalout` clear it.
+// Which series the cursor is directly over. The axis-trigger tooltip lists every
+// series at that x; reading this lets it keep that one row lit and dim the rest,
+// matching the faded lines. `mouseover`/`mouseout` on the series geometry is the
+// precise signal — `highlight` also fires for the axis pointer touching *every*
+// series, which would pin the wrong row. Module-level is fine: only one chart
+// shows a tooltip at a time, and mouseout / globalout clear it.
 let _hoverSeries = -1;
 
 /** Spread into every <Chart onEvents>; keeps `_hoverSeries` in sync. */
 export const chartHoverEvents: Record<string, (p: unknown) => void> = {
-  highlight: (p) => {
-    const b = (p as { batch?: { seriesIndex?: number }[]; seriesIndex?: number }) ?? {};
-    const i = b.batch?.[0]?.seriesIndex ?? b.seriesIndex;
-    if (typeof i === "number") _hoverSeries = i;
+  mouseover: (p) => {
+    const e = p as { componentType?: string; seriesIndex?: number };
+    if (e?.componentType === "series" && typeof e.seriesIndex === "number") {
+      _hoverSeries = e.seriesIndex;
+    }
   },
-  downplay: () => {
+  mouseout: () => {
     _hoverSeries = -1;
   },
   globalout: () => {
