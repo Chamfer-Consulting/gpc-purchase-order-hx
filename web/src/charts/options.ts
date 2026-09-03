@@ -84,29 +84,15 @@ function trendUp(data: (number | null)[]): boolean {
 const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
 
-// --- hover emphasis -------------------------------------------------------------
-// The axis-trigger tooltip lists every series at the hovered x. `_hoverSeries` is
-// the one the cursor is nearest to (computed in Chart.tsx from the pointer's data
-// coords — `mouseover` on a 2px line path is too easy to miss, and `highlight`
-// fires for every series at once). The tooltip keeps that row lit and dims the
-// rest. Module-level is fine: only one chart shows a tooltip at a time.
-let _hoverSeries = -1;
+// --- hover emphasis -----------------------------------------------------------
+// Each series row is tagged `data-si="<seriesIndex>"`. Chart.tsx's pointer
+// tracker dims the rows that aren't the line nearest the cursor by setting
+// `style.opacity` on those nodes directly — done post-render (not in this
+// formatter) so it can't desync from the axis pointer / crosshair, and it
+// survives "hover and hold still" (no formatter re-run to reset it).
 
-/** Set by Chart.tsx's pointer tracker; -1 = nothing / cursor outside the plot. */
-export function setHoveredSeries(i: number): void {
-  _hoverSeries = i;
-}
-
-/** Wrap one tooltip row: full strength for the hovered series, dimmed for the
- *  rest (no-op when nothing is hovered). */
-function emph(seriesIndex: number | undefined, row: string): string {
-  if (_hoverSeries < 0 || seriesIndex === _hoverSeries) return row;
-  return `<span style="opacity:.38">${row}</span>`;
-}
-
-/** axis-trigger tooltip formatter: the hovered x, one row per series (the row for
- *  the line under the cursor stays lit, the others dim), then — if given — each
- *  breakdown's top rows (requested → shipped, or a single formatted value). */
+/** axis-trigger tooltip formatter: the hovered x, one row per series, then — if
+ *  given — each breakdown's top rows (requested → shipped, or a single value). */
 function axisTooltip(fmt: NumFormat, breakdowns: ChartBreakdown[] = []) {
   const label = valueFormatter(fmt);
   type P = {
@@ -126,13 +112,13 @@ function axisTooltip(fmt: NumFormat, breakdowns: ChartBreakdown[] = []) {
     const head = `<div style="font-weight:600;margin-bottom:2px">${esc(String(x))}</div>`;
     const series = arr
       .filter((p) => num(p.value) != null)
-      .map((p) =>
-        emph(
-          p.seriesIndex,
-          `${typeof p.marker === "string" ? p.marker : ""}${esc(p.seriesName ?? "")}: <b>${label(num(p.value) as number)}</b>`,
-        ),
+      .map(
+        (p) =>
+          `<div data-si="${p.seriesIndex ?? ""}">` +
+          `${typeof p.marker === "string" ? p.marker : ""}${esc(p.seriesName ?? "")}: ` +
+          `<b>${label(num(p.value) as number)}</b></div>`,
       )
-      .join("<br/>");
+      .join("");
     const blocks = breakdowns
       .map((b) => {
         const pt = b.points.find((q) => String(q.x) === String(x));
