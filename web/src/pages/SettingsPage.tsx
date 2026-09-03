@@ -22,7 +22,7 @@ import {
   useQboSyncNow,
   type ConnectionsStatus,
 } from "@/api/connections";
-import { useBackfillDocs } from "@/api/poDocs";
+import { useBackfillDocs, type BackfillBucket } from "@/api/poDocs";
 import {
   useHiddenInvoices,
   useSetInvoiceHidden,
@@ -517,10 +517,83 @@ function VisibilityList({ dim }: { dim: VisibilityDim }) {
   );
 }
 
+type DocSrc = "gmail" | "qbo";
+const DOC_SRCS: readonly DocSrc[] = ["gmail", "qbo"];
+const emptyBucket = (): BackfillBucket => ({
+  scanned: 0,
+  captured: 0,
+  failed: 0,
+  remaining: 0,
+  errors: [],
+  more: false,
+});
+const sumOf = (a: Partial<Record<DocSrc, BackfillBucket>> | null, k: keyof BackfillBucket) =>
+  a ? DOC_SRCS.reduce((n, s) => n + (Number(a[s]?.[k]) || 0), 0) : 0;
+
 function DocumentsCard() {
   const { canEdit } = useMe();
   const backfill = useBackfillDocs();
-  const r = backfill.data;
+  const [running, setRunning] = useState<string | null>(null);
+  const [acc, setAcc] = useState<Partial<Record<DocSrc, BackfillBucket>> | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  // One button press drives many short backfill calls: each server call has an
+  // ~18s budget and returns `more` while work is queued, so we loop until it's
+  // drained. (A single whole-catalogue call outruns the request timeout — the
+  // browser then shows "Load failed" even though the server keeps going.)
+  const run = async (sources: DocSrc[], label: string) => {
+    if (running) return;
+    setRunning(label);
+    setErr(null);
+    setDone(false);
+    const totals: Partial<Record<DocSrc, BackfillBucket>> = {};
+    for (const s of sources) totals[s] = emptyBucket();
+    let prevRemaining = Infinity;
+    try {
+      for (let pass = 0; pass < 40; pass++) {
+        const res = await backfill.mutateAsync({ sources, limit: 100 });
+        let more = false;
+        let capturedThisPass = 0;
+        for (const s of sources) {
+          const b = res[s];
+          if (!b) continue;
+          const t = totals[s]!;
+          t.scanned += b.scanned;
+          t.captured += b.captured;
+          t.failed += b.failed;
+          t.remaining = b.remaining;
+          t.errors = b.errors;
+          t.more = b.more;
+          capturedThisPass += b.captured;
+          if (b.more) more = true;
+        }
+        setAcc({ ...totals });
+        const nowRemaining = sumOf(totals, "remaining");
+        if (!more) break;
+        // stalled: the only rows left keep erroring — don't spin
+        if (capturedThisPass === 0 && nowRemaining >= prevRemaining) break;
+        prevRemaining = nowRemaining;
+      }
+      setDone(true);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Backfill failed.");
+    } finally {
+      setRunning(null);
+    }
+  };
+
+  const btn = (sources: DocSrc[], label: string, primary = false) => (
+    <Button
+      size="xs"
+      variant={primary ? undefined : "default"}
+      disabled={!canEdit || !!running}
+      loading={running === label}
+      onClick={() => run(sources, label)}
+    >
+      {label}
+    </Button>
+  );
 
   return (
     <SectionCard
@@ -528,50 +601,33 @@ function DocumentsCard() {
       subtitle="Pulls the emailed PO PDF (Gmail) and the invoice PDF (QuickBooks) onto each PO. Runs nightly; use this to fill gaps now. Idempotent."
     >
       <Group>
-        <Button
-          size="xs"
-          disabled={!canEdit}
-          onClick={() => backfill.mutate({ sources: ["gmail", "qbo"] })}
-          loading={backfill.isPending}
-        >
-          Backfill missing PDFs
-        </Button>
-        <Button
-          size="xs"
-          variant="default"
-          disabled={!canEdit}
-          onClick={() => backfill.mutate({ sources: ["gmail"] })}
-          loading={backfill.isPending}
-        >
-          Gmail only
-        </Button>
-        <Button
-          size="xs"
-          variant="default"
-          disabled={!canEdit}
-          onClick={() => backfill.mutate({ sources: ["qbo"] })}
-          loading={backfill.isPending}
-        >
-          QuickBooks only
-        </Button>
+        {btn(["gmail", "qbo"], "Backfill missing PDFs", true)}
+        {btn(["gmail"], "Gmail only")}
+        {btn(["qbo"], "QuickBooks only")}
       </Group>
-      {backfill.isError && (
-        <Text size="xs" c="red">
-          {backfill.error instanceof Error ? backfill.error.message : "Backfill failed."}
+      {running && (
+        <Text size="xs" c="dimmed">
+          Working… {sumOf(acc, "captured")} captured
+          {sumOf(acc, "remaining") ? `, ${sumOf(acc, "remaining")} to go` : ""}.
         </Text>
       )}
-      {r && (
+      {err && (
+        <Text size="xs" c="red">
+          {err}
+        </Text>
+      )}
+      {acc && (
         <Stack gap={4}>
-          {(["gmail", "qbo"] as const).map((k) => {
-            const b = r[k];
+          {DOC_SRCS.map((k) => {
+            const b = acc[k];
             if (!b) return null;
             const line =
-              b.scanned === 0
+              b.scanned === 0 && b.remaining === 0
                 ? `${k}: nothing missing — every eligible PO already has its PDF.`
-                : `${k}: ${b.captured} captured across ${b.scanned} PO(s)` +
+                : `${k}: ${b.captured} captured` +
                   (b.failed ? `, ${b.failed} failed` : "") +
-                  (b.remaining ? `, ${b.remaining} still to do` : "") +
-                  ".";
+                  (b.remaining ? `, ${b.remaining} still missing` : "") +
+                  (running ? "…" : ".");
             return (
               <div key={k}>
                 <Text size="xs" c={b.failed && !b.captured ? "red" : "dimmed"}>
@@ -590,6 +646,11 @@ function DocumentsCard() {
               </div>
             );
           })}
+          {done && sumOf(acc, "remaining") > 0 && (
+            <Text size="xs" c="dimmed">
+              {sumOf(acc, "remaining")} couldn’t be captured (reasons above) — the nightly job retries.
+            </Text>
+          )}
         </Stack>
       )}
     </SectionCard>

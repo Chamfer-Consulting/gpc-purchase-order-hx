@@ -64,12 +64,14 @@ export function useUploadDoc(poId: number) {
   });
 }
 
-interface BackfillBucket {
+export interface BackfillBucket {
   scanned: number;
   captured: number;
   failed: number;
   remaining: number;
   errors: string[];
+  /** the sweep hit its time/row budget with work still queued — call again */
+  more: boolean;
 }
 export interface BackfillResponse {
   ok: boolean;

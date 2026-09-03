@@ -15,6 +15,7 @@ po_documents.content.
 """
 
 import hashlib
+import time
 
 import psycopg2
 import psycopg2.extras
@@ -270,48 +271,49 @@ def _count(conn, sql: str) -> int:
 
 def backfill(conn, *, sources: list[str], limit: int = 100,
              captured_by: str | None = "backfill",
-             gmail_client_id: str = "", gmail_client_secret: str = "") -> dict:
+             gmail_client_id: str = "", gmail_client_secret: str = "",
+             max_seconds: float | None = None) -> dict:
     """Sweep POs that are missing their captured PDFs, up to `limit` per source.
     Commits after each PO, so a long run is resumable. Per-PO errors are collected,
-    not fatal."""
+    not fatal. With `max_seconds`, the sweep stops early once that wall-clock
+    budget is spent — each source reports `remaining`, and each bucket carries
+    `more` (True = time/limit ran out with work left), so a caller can loop.
+    (A whole-catalogue run over slow Gmail/QuickBooks calls otherwise outlives
+    the HTTP request and the client sees a network error.)"""
     out: dict = {}
+    started = time.monotonic()
+    over_budget = lambda: max_seconds is not None and time.monotonic() - started >= max_seconds
+
+    def _sweep(key: str, needs_sql: str, capture) -> None:
+        res = {"scanned": 0, "captured": 0, "failed": 0, "errors": [], "more": False}
+        if not over_budget():
+            with conn.cursor() as cur:
+                cur.execute(f"{needs_sql} LIMIT %s", (limit,))
+                ids = [r[0] for r in cur.fetchall()]
+            for po_id in ids:
+                if over_budget():
+                    break
+                res["scanned"] += 1
+                try:
+                    r = capture(po_id)
+                    conn.commit()
+                    res["captured"] += len(r["stored"])
+                except Exception as exc:
+                    conn.rollback()
+                    res["failed"] += 1
+                    res["errors"].append(f"PO {po_id}: {exc}")
+        res["remaining"] = _count(conn, needs_sql)
+        # more work left than this call got through
+        res["more"] = res["remaining"] > 0 and (over_budget() or res["scanned"] >= limit)
+        out[key] = res
 
     if "gmail" in sources:
-        res = {"scanned": 0, "captured": 0, "failed": 0, "errors": []}
-        with conn.cursor() as cur:
-            cur.execute(f"{_NEEDS_GMAIL} LIMIT %s", (limit,))
-            ids = [r[0] for r in cur.fetchall()]
-        for po_id in ids:
-            res["scanned"] += 1
-            try:
-                r = capture_gmail(conn, po_id, client_id=gmail_client_id,
-                                  client_secret=gmail_client_secret, captured_by=captured_by)
-                conn.commit()
-                res["captured"] += len(r["stored"])
-            except Exception as exc:
-                conn.rollback()
-                res["failed"] += 1
-                res["errors"].append(f"PO {po_id}: {exc}")
-        res["remaining"] = _count(conn, _NEEDS_GMAIL)
-        out["gmail"] = res
+        _sweep("gmail", _NEEDS_GMAIL, lambda pid: capture_gmail(
+            conn, pid, client_id=gmail_client_id,
+            client_secret=gmail_client_secret, captured_by=captured_by))
 
     if "qbo" in sources:
-        res = {"scanned": 0, "captured": 0, "failed": 0, "errors": []}
-        with conn.cursor() as cur:
-            cur.execute(f"{_NEEDS_QBO} LIMIT %s", (limit,))
-            ids = [r[0] for r in cur.fetchall()]
-        for po_id in ids:
-            res["scanned"] += 1
-            try:
-                r = capture_qbo(conn, po_id, captured_by=captured_by)
-                conn.commit()
-                res["captured"] += len(r["stored"])
-            except Exception as exc:
-                conn.rollback()
-                res["failed"] += 1
-                res["errors"].append(f"PO {po_id}: {exc}")
-        res["remaining"] = _count(conn, _NEEDS_QBO)
-        out["qbo"] = res
+        _sweep("qbo", _NEEDS_QBO, lambda pid: capture_qbo(conn, pid, captured_by=captured_by))
 
     return out
 
