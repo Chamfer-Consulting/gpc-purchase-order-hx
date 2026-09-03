@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { Anchor, Center, Loader, Stack, Text } from "@mantine/core";
 import { BrandMark } from "@/components/Brand";
-import { useAuth } from "./AuthProvider";
+import { pingLoginOnce, useAuth } from "./AuthProvider";
 
 /**
  * Landing route for the Supabase OAuth (Google) redirect. supabase-js parses the
@@ -18,7 +18,10 @@ export function AuthCallback() {
   const oauthError = params.get("error_description") ?? params.get("error");
 
   useEffect(() => {
-    if (session) navigate("/", { replace: true });
+    if (session) {
+      pingLoginOnce(); // safety net if the OAuth exchange didn't emit SIGNED_IN
+      navigate("/", { replace: true });
+    }
   }, [session, navigate]);
 
   useEffect(() => {
