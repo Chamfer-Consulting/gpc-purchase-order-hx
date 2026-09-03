@@ -54,3 +54,9 @@ export const STATUS_COLOR: Record<PoStatus, string> = {
 
 /** Shared inline style for numeric cells / figures (was re-inlined app-wide). */
 export const NUMERIC_STYLE = { fontVariantNumeric: "tabular-nums" } as const;
+
+/** `styles` prop for a NumberInput sitting in a right-aligned numeric column —
+ *  keeps the typed figure under its right-aligned header. */
+export const NUMERIC_INPUT_STYLES = {
+  input: { textAlign: "right" as const, fontVariantNumeric: "tabular-nums" },
+} as const;

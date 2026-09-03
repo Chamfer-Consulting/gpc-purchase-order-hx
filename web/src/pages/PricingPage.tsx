@@ -18,6 +18,7 @@ import { IconTrash } from "@tabler/icons-react";
 import { Chart } from "@/charts/Chart";
 import { timeLineOption, type TimeSeries } from "@/charts/options";
 import { fmtCurrency } from "@/lib/format";
+import { NUMERIC_INPUT_STYLES } from "@/theme/tokens";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { confirmAction } from "@/lib/modals";
 import { useUnsavedGuard } from "@/hooks/useUnsavedGuard";
@@ -277,7 +278,7 @@ export function PricingPage() {
                       <Table.Th>Customer</Table.Th>
                       <Table.Th>Product</Table.Th>
                       <Table.Th>Size</Table.Th>
-                      <Table.Th w={130}>Price ($)</Table.Th>
+                      <Table.Th w={130} ta="right">Price ($)</Table.Th>
                       <Table.Th w={90}>Source</Table.Th>
                       <Table.Th w={44} />
                     </Table.Tr>
@@ -318,6 +319,7 @@ export function PricingPage() {
                             aria-label="Price"
                             disabled={!canAdmin}
                             decimalScale={2}
+                            styles={NUMERIC_INPUT_STYLES}
                             value={r.price}
                             onChange={(v) => patch(r._rk, { price: v === "" ? "" : Number(v) })}
                             hideControls

@@ -125,7 +125,11 @@ export function DataGrid<Row extends Record<string, unknown>>({
                     style={{ textAlign: numeric ? "right" : "left" }}
                     aria-sort={active ? (asc ? "ascending" : "descending") : "none"}
                   >
-                    <UnstyledButton className={classes.sortBtn} onClick={() => toggleSort(c.key)}>
+                    <UnstyledButton
+                      className={classes.sortBtn}
+                      style={{ justifyContent: numeric ? "flex-end" : "flex-start" }}
+                      onClick={() => toggleSort(c.key)}
+                    >
                       <span className={classes.thLabel}>{c.label}</span>
                       <SortIcon
                         size={13}

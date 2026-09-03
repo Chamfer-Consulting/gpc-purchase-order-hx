@@ -154,7 +154,7 @@ export function MatchList({ view }: { view: ReconcilePoView }) {
                 <Table.Td>{h.doc_number ?? h.invoice_id}</Table.Td>
                 <Table.Td>{h.customer_name}</Table.Td>
                 <Table.Td>{h.txn_date}</Table.Td>
-                <Table.Td style={NUMERIC_STYLE}>
+                <Table.Td ta="right" style={NUMERIC_STYLE}>
                   {h.total_amt != null ? fmtCurrency(h.total_amt) : "—"}
                 </Table.Td>
                 <Table.Td>

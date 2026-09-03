@@ -2,7 +2,7 @@ import { ActionIcon, Button, Group, NumberInput, Table, Text, TextInput, Tooltip
 import { IconAlertTriangle, IconBan, IconCopy, IconPlus, IconTrash } from "@tabler/icons-react";
 import type { PoLineItem } from "@/api/poEdit";
 import { fmtCurrency } from "@/lib/format";
-import { NUMERIC_STYLE } from "@/theme/tokens";
+import { NUMERIC_INPUT_STYLES, NUMERIC_STYLE } from "@/theme/tokens";
 
 export type EditableLine = PoLineItem & { _rk: string };
 
@@ -143,6 +143,7 @@ export function PoLineItemsEditor({
                       size="xs"
                       aria-label="Quantity"
                       hideControls
+                      styles={NUMERIC_INPUT_STYLES}
                       disabled={disabled}
                       value={it.quantity ?? undefined}
                       onChange={(v) => patch(i, "quantity", v === "" ? null : Number(v))}
@@ -154,6 +155,7 @@ export function PoLineItemsEditor({
                       aria-label="Unit price"
                       hideControls
                       decimalScale={2}
+                      styles={NUMERIC_INPUT_STYLES}
                       disabled={disabled}
                       value={it.unit_price ?? undefined}
                       onChange={(v) => patch(i, "unit_price", v === "" ? null : Number(v))}
@@ -165,6 +167,7 @@ export function PoLineItemsEditor({
                       aria-label="Additional cost"
                       hideControls
                       decimalScale={2}
+                      styles={NUMERIC_INPUT_STYLES}
                       disabled={disabled}
                       value={it.additional_cost ?? undefined}
                       onChange={(v) => patch(i, "additional_cost", v === "" ? null : Number(v))}
@@ -176,6 +179,7 @@ export function PoLineItemsEditor({
                       aria-label="Line total"
                       hideControls
                       decimalScale={2}
+                      styles={NUMERIC_INPUT_STYLES}
                       disabled={disabled}
                       value={it.line_total ?? undefined}
                       onChange={(v) => patch(i, "line_total", v === "" ? null : Number(v))}
