@@ -37,8 +37,9 @@
   align-items: center;
   gap: 4px;
   width: 100%;
-  /* justify-content is set inline from the column's alignment — a numeric
-     column right-aligns its header to sit over its right-aligned figures. */
+  /* pack to the start of the flow direction: `row` (text cols) hugs left,
+     `row-reverse` (numeric cols, set inline) hugs right so the label's edge
+     sits over the right-aligned figures. */
   justify-content: flex-start;
 }
 

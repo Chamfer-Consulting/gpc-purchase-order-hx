@@ -127,7 +127,11 @@ export function DataGrid<Row extends Record<string, unknown>>({
                   >
                     <UnstyledButton
                       className={classes.sortBtn}
-                      style={{ justifyContent: numeric ? "flex-end" : "flex-start" }}
+                      // numeric columns right-align: row-reverse drops the sort
+                      // icon to the LEFT of the label so the label's right edge
+                      // meets the cell's edge and lines up with the figures
+                      // below (a trailing icon pushes the text ~17px off).
+                      style={{ flexDirection: numeric ? "row-reverse" : "row" }}
                       onClick={() => toggleSort(c.key)}
                     >
                       <span className={classes.thLabel}>{c.label}</span>
