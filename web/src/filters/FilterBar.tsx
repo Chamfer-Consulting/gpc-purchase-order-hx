@@ -1,11 +1,26 @@
+import { useMemo, useState } from "react";
 import dayjs from "dayjs";
-import { Badge, Button, Divider, Drawer, Group, MultiSelect, Stack, Switch } from "@mantine/core";
+import {
+  Badge,
+  Button,
+  Checkbox,
+  Divider,
+  Drawer,
+  Group,
+  MultiSelect,
+  ScrollArea,
+  Stack,
+  Switch,
+  Text,
+  TextInput,
+} from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { DatePickerInput } from "@mantine/dates";
-import { IconAdjustmentsHorizontal } from "@tabler/icons-react";
+import { DatePicker, DatePickerInput } from "@mantine/dates";
+import { IconAdjustmentsHorizontal, IconCheck, IconSearch } from "@tabler/icons-react";
 import { useFilters, type Filters } from "./useFilters";
-import { RangePresets } from "./RangePresets";
+import { PRESETS, RangePresets, activePreset, rangeFor } from "./RangePresets";
 import { SavedViewsControl } from "./SavedViewsControl";
+import { FilterPill } from "./FilterPill";
 import { useIsMobile } from "@/hooks/useIsMobile";
 
 interface FilterBarProps {
@@ -44,23 +59,81 @@ function activeCount(f: Filters): number {
   );
 }
 
-/** The scope controls. State lives in the URL (useFilters) so views are shareable.
- *  Desktop: one compact, label-less row that centre-aligns. Phone: quick-range
- *  chips + a "Filters" button that opens the full set in a bottom drawer. */
+/**
+ * The dashboard scope. State lives in the URL (useFilters) so views are
+ * shareable. Desktop: a row of same-shape filter "pills" that each open a
+ * popover — the row stays aligned and one line tall however many values are
+ * picked. Phone: quick-range chips + a "Filters" button opening a bottom drawer.
+ */
 export function FilterBar(props: FilterBarProps) {
   const isMobile = useIsMobile();
   const { filters, setFilters } = useFilters();
   const [opened, { open, close }] = useDisclosure(false);
+  const n = activeCount(filters);
 
   if (!isMobile) {
     return (
       <Group align="center" gap="xs" wrap="wrap">
-        <Controls {...props} />
+        <DatePill />
+
+        {!props.hideCustomers && (
+          <FilterPill label="Customers" count={filters.customers.length}>
+            <MultiCheck
+              data={props.customerOptions ?? []}
+              value={filters.customers}
+              onChange={(v) => setFilters({ customers: v })}
+            />
+          </FilterPill>
+        )}
+        <FilterPill label="Products" count={filters.products.length}>
+          <MultiCheck
+            data={props.productOptions ?? []}
+            value={filters.products}
+            onChange={(v) => setFilters({ products: v })}
+          />
+        </FilterPill>
+        <FilterPill label="Sizes" count={filters.sizes.length} width={200}>
+          <MultiCheck
+            data={props.sizeOptions ?? []}
+            value={filters.sizes}
+            onChange={(v) => setFilters({ sizes: v })}
+            searchable={false}
+          />
+        </FilterPill>
+
+        {(props.showSamples ?? true) && (
+          <Button
+            size="xs"
+            variant={filters.includeSamples ? "light" : "default"}
+            color={filters.includeSamples ? "gpGreen" : "gray"}
+            leftSection={
+              <IconCheck
+                size={13}
+                style={{ opacity: filters.includeSamples ? 1 : 0.25 }}
+              />
+            }
+            styles={{ label: { fontWeight: 500 } }}
+            onClick={() => setFilters({ includeSamples: !filters.includeSamples })}
+          >
+            Samples
+          </Button>
+        )}
+
+        {n > 0 && (
+          <Button size="xs" variant="subtle" color="red" onClick={() => setFilters(EMPTY)}>
+            Clear
+          </Button>
+        )}
+
+        {props.viewKind && (
+          <Group ml="auto" gap={4} align="center">
+            <SavedViewsControl kind={props.viewKind} />
+          </Group>
+        )}
       </Group>
     );
   }
 
-  const n = activeCount(filters);
   return (
     <Group gap="xs" wrap="nowrap" style={{ overflowX: "auto" }}>
       <RangePresets />
@@ -79,16 +152,9 @@ export function FilterBar(props: FilterBarProps) {
         )}
       </Button>
 
-      <Drawer
-        opened={opened}
-        onClose={close}
-        position="bottom"
-        size="88%"
-        title="Filters"
-        padding="md"
-      >
+      <Drawer opened={opened} onClose={close} position="bottom" size="88%" title="Filters" padding="md">
         <Stack gap="md">
-          <Controls {...props} stacked />
+          <StackedControls {...props} />
           <Divider />
           <Group justify="space-between">
             <Button
@@ -110,45 +176,137 @@ export function FilterBar(props: FilterBarProps) {
   );
 }
 
-/** The individual filter inputs. Desktop drops the per-field labels (placeholders
- *  carry the meaning) so the row is one line tall and everything aligns on a
- *  single baseline; `stacked` (drawer) restores labels and makes each full-width. */
-function Controls({
+/* -------------------------------------------------------------------------- */
+
+/** Desktop date pill — presets + an inline range calendar. The button shows the
+ *  resolved window ("Past month", "Sep 1 – Sep 30") so the current scope reads at
+ *  a glance without opening it. */
+function DatePill() {
+  const { filters, setFilters } = useFilters();
+  const preset = activePreset(filters);
+
+  let label: string | undefined;
+  if (preset) {
+    label = PRESETS.find((p) => p.id === preset)?.long;
+  } else if (filters.start || filters.end) {
+    const f = (s: string | null) => (s ? dayjs(s).format("MMM D, YYYY") : "…");
+    label = `${f(filters.start)} – ${f(filters.end)}`;
+  }
+
+  return (
+    <FilterPill label="Any date" value={label} width={290}>
+      <Stack gap={8}>
+        <Group gap={4}>
+          {PRESETS.map(({ id, label: short }) => {
+            const r = rangeFor(id);
+            const active = filters.start === r.start && filters.end === r.end;
+            return (
+              <Button
+                key={id}
+                size="compact-xs"
+                variant={active ? "filled" : "default"}
+                onClick={() => setFilters({ start: r.start, end: r.end })}
+              >
+                {short}
+              </Button>
+            );
+          })}
+        </Group>
+        <DatePicker
+          type="range"
+          size="xs"
+          allowSingleDateInRange
+          value={[toDate(filters.start), toDate(filters.end)]}
+          onChange={([s, e]) => setFilters({ start: iso(s), end: iso(e) })}
+        />
+      </Stack>
+    </FilterPill>
+  );
+}
+
+/** Searchable checkbox list for the desktop Customers / Products / Sizes pills —
+ *  self-contained (no nested dropdown) so it always aligns inside the popover. */
+function MultiCheck({
+  data,
+  value,
+  onChange,
+  searchable = true,
+}: {
+  data: string[];
+  value: string[];
+  onChange: (v: string[]) => void;
+  searchable?: boolean;
+}) {
+  const [q, setQ] = useState("");
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return needle ? data.filter((d) => d.toLowerCase().includes(needle)) : data;
+  }, [data, q]);
+
+  return (
+    <Stack gap={6}>
+      {searchable && (
+        <TextInput
+          size="xs"
+          placeholder="Search…"
+          data-autofocus
+          leftSection={<IconSearch size={13} />}
+          value={q}
+          onChange={(e) => setQ(e.currentTarget.value)}
+        />
+      )}
+      <ScrollArea.Autosize mah={240} type="auto">
+        {shown.length === 0 ? (
+          <Text size="xs" c="dimmed" ta="center" py="xs">
+            No match
+          </Text>
+        ) : (
+          <Checkbox.Group value={value} onChange={onChange}>
+            <Stack gap={4} pr={4}>
+              {shown.map((o) => (
+                <Checkbox key={o} value={o} label={o} size="xs" />
+              ))}
+            </Stack>
+          </Checkbox.Group>
+        )}
+      </ScrollArea.Autosize>
+      {value.length > 0 && (
+        <Button size="compact-xs" variant="subtle" color="red" onClick={() => onChange([])}>
+          Clear {value.length}
+        </Button>
+      )}
+    </Stack>
+  );
+}
+
+/** The mobile drawer body — full-width, labelled inputs stacked vertically. */
+function StackedControls({
   customerOptions = [],
   productOptions = [],
   sizeOptions = [],
   showSamples = true,
   hideCustomers = false,
   viewKind,
-  stacked = false,
-}: FilterBarProps & { stacked?: boolean }) {
+}: FilterBarProps) {
   const { filters, setFilters } = useFilters();
-  const w = (fixed: number) => (stacked ? "100%" : fixed);
-  const label = (s: string) => (stacked ? s : undefined);
 
   return (
     <>
-      {!stacked && <RangePresets />}
-
       <DatePickerInput
         type="range"
-        label={label("Date range")}
-        placeholder="All dates"
+        label="Date range"
         size="xs"
-        w={w(210)}
+        w="100%"
         value={[toDate(filters.start), toDate(filters.end)]}
         onChange={([s, e]) => setFilters({ start: iso(s), end: iso(e) })}
         clearable
       />
-
-      {stacked && <RangePresets />}
-
+      <RangePresets />
       {!hideCustomers && (
         <MultiSelect
-          label={label("Customers")}
-          placeholder="All customers"
+          label="Customers"
           size="xs"
-          w={w(190)}
+          w="100%"
           data={customerOptions}
           value={filters.customers}
           onChange={(v) => setFilters({ customers: v })}
@@ -158,10 +316,9 @@ function Controls({
         />
       )}
       <MultiSelect
-        label={label("Products")}
-        placeholder="All products"
+        label="Products"
         size="xs"
-        w={w(170)}
+        w="100%"
         data={productOptions}
         value={filters.products}
         onChange={(v) => setFilters({ products: v })}
@@ -169,10 +326,9 @@ function Controls({
         clearable
       />
       <MultiSelect
-        label={label("Sizes")}
-        placeholder="All sizes"
+        label="Sizes"
         size="xs"
-        w={w(130)}
+        w="100%"
         data={sizeOptions}
         value={filters.sizes}
         onChange={(v) => setFilters({ sizes: v })}
@@ -186,7 +342,7 @@ function Controls({
           onChange={(e) => setFilters({ includeSamples: e.currentTarget.checked })}
         />
       )}
-      {viewKind && <SavedViewsControl kind={viewKind} stacked={stacked} />}
+      {viewKind && <SavedViewsControl kind={viewKind} stacked />}
     </>
   );
 }
