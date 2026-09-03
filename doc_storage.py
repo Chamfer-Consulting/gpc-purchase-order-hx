@@ -65,3 +65,24 @@ def delete(path: str) -> None:
     # 404 = already gone; treat as success
     if not resp.ok and resp.status_code != 404:
         raise RuntimeError(f"Supabase Storage delete failed {resp.status_code}: {resp.text[:300]}")
+
+
+def health() -> dict:
+    """Cheap round-trip so the app can show whether captured PDFs are actually
+    reaching Storage: {enabled, bucket, reachable, error}. `reachable` is None
+    when Storage isn't configured (nothing to check)."""
+    if not is_enabled():
+        return {"enabled": False, "bucket": _BUCKET, "reachable": None, "error": None}
+    try:
+        resp = requests.post(
+            f"{_URL}/storage/v1/object/list/{_BUCKET}",
+            headers=_headers({"Content-Type": "application/json"}),
+            json={"prefix": "", "limit": 1},
+            timeout=_TIMEOUT,
+        )
+        if resp.ok:
+            return {"enabled": True, "bucket": _BUCKET, "reachable": True, "error": None}
+        return {"enabled": True, "bucket": _BUCKET, "reachable": False,
+                "error": f"{resp.status_code}: {resp.text[:200]}"}
+    except requests.RequestException as exc:
+        return {"enabled": True, "bucket": _BUCKET, "reachable": False, "error": str(exc)}

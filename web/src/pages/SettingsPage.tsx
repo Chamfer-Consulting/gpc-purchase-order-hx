@@ -22,7 +22,7 @@ import {
   useQboSyncNow,
   type ConnectionsStatus,
 } from "@/api/connections";
-import { useBackfillDocs, type BackfillBucket } from "@/api/poDocs";
+import { useBackfillDocs, useDocStorageStatus, type BackfillBucket } from "@/api/poDocs";
 import {
   useHiddenInvoices,
   useSetInvoiceHidden,
@@ -530,6 +530,33 @@ const emptyBucket = (): BackfillBucket => ({
 const sumOf = (a: Partial<Record<DocSrc, BackfillBucket>> | null, k: keyof BackfillBucket) =>
   a ? DOC_SRCS.reduce((n, s) => n + (Number(a[s]?.[k]) || 0), 0) : 0;
 
+function StorageLine() {
+  const { data: s } = useDocStorageStatus();
+  if (!s) return null;
+  if (s.mode === "inline") {
+    return (
+      <Text size="xs" c="orange">
+        PDFs are stored inline in the database — Supabase Storage isn’t configured (set
+        SUPABASE_URL + a secret key). {s.counts.total} on file.
+      </Text>
+    );
+  }
+  if (s.reachable === false) {
+    return (
+      <Text size="xs" c="red">
+        Supabase Storage is configured but the “{s.bucket}” bucket isn’t reachable: {s.error}.
+        New captures will fail until it exists.
+      </Text>
+    );
+  }
+  return (
+    <Text size="xs" c="dimmed">
+      PDFs upload to Supabase Storage (bucket “{s.bucket}”). {s.counts.in_storage} in Storage
+      {s.counts.inline ? `, ${s.counts.inline} still inline (run --migrate-storage)` : ""}.
+    </Text>
+  );
+}
+
 function DocumentsCard() {
   const { canEdit } = useMe();
   const backfill = useBackfillDocs();
@@ -605,6 +632,7 @@ function DocumentsCard() {
         {btn(["gmail"], "Gmail only")}
         {btn(["qbo"], "QuickBooks only")}
       </Group>
+      <StorageLine />
       {running && (
         <Text size="xs" c="dimmed">
           Working… {sumOf(acc, "captured")} captured

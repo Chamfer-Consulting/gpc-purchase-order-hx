@@ -26,6 +26,23 @@ export interface CaptureResponse {
   qbo?: CaptureResult;
 }
 
+export interface DocStorageStatus {
+  mode: "supabase" | "inline";
+  bucket: string;
+  /** live bucket check: true/false, or null when Storage isn't configured */
+  reachable: boolean | null;
+  error: string | null;
+  counts: { in_storage: number; inline: number; total: number };
+}
+
+export function useDocStorageStatus() {
+  return useQuery({
+    queryKey: ["doc-storage-status"],
+    queryFn: () => apiGet<DocStorageStatus>("/api/po/documents/storage"),
+    staleTime: 60_000,
+  });
+}
+
 export function usePoDocuments(poId: number) {
   return useQuery({
     queryKey: ["po-docs", poId],

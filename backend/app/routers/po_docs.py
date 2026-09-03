@@ -4,6 +4,7 @@ rendered invoice PDF (QuickBooks). See services/po_docs.py."""
 import base64
 import binascii
 
+import doc_storage  # repo root, via app.reuse
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
@@ -79,6 +80,29 @@ def backfill(body: BackfillIn, user: AuthedUser = Depends(require_editor)) -> di
             announce=not body.continued,
         )
     return {"ok": True, **out}
+
+
+@router.get("/documents/storage")
+def storage_status(_: AuthedUser = Depends(current_user)) -> dict:
+    """Where captured PO/invoice PDFs land: Supabase Storage (auto, when
+    SUPABASE_URL + a secret key are set) or inline in Postgres. Includes a live
+    bucket check and the split of existing documents, so you can confirm new
+    captures are actually reaching Storage."""
+    h = doc_storage.health()
+    with reused_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FILTER (WHERE storage_path IS NOT NULL), "
+            "       count(*) FILTER (WHERE content IS NOT NULL), count(*) "
+            "FROM po_documents"
+        )
+        in_storage, inline, total = cur.fetchone()
+    return {
+        "mode": "supabase" if h["enabled"] else "inline",
+        "bucket": h["bucket"],
+        "reachable": h["reachable"],
+        "error": h["error"],
+        "counts": {"in_storage": in_storage, "inline": inline, "total": total},
+    }
 
 
 @router.get("/{po_id}/documents")
