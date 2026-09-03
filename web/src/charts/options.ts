@@ -84,20 +84,63 @@ function trendUp(data: (number | null)[]): boolean {
 const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
 
-/** axis-trigger tooltip formatter that appends each breakdown's top rows
- *  (requested → shipped, or a single formatted value) behind the hovered x. */
-function breakdownFormatter(fmt: NumFormat, breakdowns: ChartBreakdown[]) {
+// --- hover emphasis -------------------------------------------------------------
+// Which series the cursor is currently over (ECharts fires `highlight`/`downplay`
+// as `emphasis.focus:"series"` fades the other lines). The axis-trigger tooltip
+// lists every series at that x; reading this lets it dim the rows that aren't the
+// one being hovered so the popup matches the chart. Module-level is fine — only
+// one chart shows a tooltip at a time, and `downplay`/`globalout` clear it.
+let _hoverSeries = -1;
+
+/** Spread into every <Chart onEvents>; keeps `_hoverSeries` in sync. */
+export const chartHoverEvents: Record<string, (p: unknown) => void> = {
+  highlight: (p) => {
+    const b = (p as { batch?: { seriesIndex?: number }[]; seriesIndex?: number }) ?? {};
+    const i = b.batch?.[0]?.seriesIndex ?? b.seriesIndex;
+    if (typeof i === "number") _hoverSeries = i;
+  },
+  downplay: () => {
+    _hoverSeries = -1;
+  },
+  globalout: () => {
+    _hoverSeries = -1;
+  },
+};
+
+/** Wrap one tooltip row: full strength for the hovered series, dimmed for the
+ *  rest (no-op when nothing is hovered). */
+function emph(seriesIndex: number | undefined, row: string): string {
+  if (_hoverSeries < 0 || seriesIndex === _hoverSeries) return row;
+  return `<span style="opacity:.38">${row}</span>`;
+}
+
+/** axis-trigger tooltip formatter: the hovered x, one row per series (the row for
+ *  the line under the cursor stays lit, the others dim), then — if given — each
+ *  breakdown's top rows (requested → shipped, or a single formatted value). */
+function axisTooltip(fmt: NumFormat, breakdowns: ChartBreakdown[] = []) {
   const label = valueFormatter(fmt);
-  type P = { axisValueLabel?: string; axisValue?: string | number; seriesName?: string; value?: unknown; marker?: unknown };
+  type P = {
+    axisValueLabel?: string;
+    axisValue?: string | number;
+    seriesName?: string;
+    seriesIndex?: number;
+    value?: unknown;
+    marker?: unknown;
+  };
+  // a category-axis point is a scalar; a time-axis point is the [x, y] pair
+  const num = (v: unknown): number | null =>
+    Array.isArray(v) ? (typeof v[1] === "number" ? v[1] : null) : typeof v === "number" ? v : null;
   return (raw: unknown) => {
     const arr = (Array.isArray(raw) ? raw : [raw]) as P[];
     const x = arr[0]?.axisValueLabel ?? arr[0]?.axisValue ?? "";
     const head = `<div style="font-weight:600;margin-bottom:2px">${esc(String(x))}</div>`;
     const series = arr
-      .filter((p) => p.value != null)
-      .map(
-        (p) =>
-          `${typeof p.marker === "string" ? p.marker : ""}${esc(p.seriesName ?? "")}: <b>${label(p.value as number)}</b>`,
+      .filter((p) => num(p.value) != null)
+      .map((p) =>
+        emph(
+          p.seriesIndex,
+          `${typeof p.marker === "string" ? p.marker : ""}${esc(p.seriesName ?? "")}: <b>${label(num(p.value) as number)}</b>`,
+        ),
       )
       .join("<br/>");
     const blocks = breakdowns
@@ -170,9 +213,13 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: Line
   const wantArea = opts?.area ?? single;
   const accent = single && opts?.palette ? (trendUp(series[0].data) ? opts.palette.status.good : opts.palette.status.critical) : undefined;
   const ch = crosshair(fmt);
-  const tooltip = opts?.breakdowns?.length
-    ? { ...ch.tooltip, formatter: breakdownFormatter(fmt, opts.breakdowns), confine: true }
-    : ch.tooltip;
+  // Always a custom formatter (even with no breakdowns) so the row for the line
+  // under the cursor is lit and the rest dimmed — matching the faded lines.
+  const tooltip = {
+    ...ch.tooltip,
+    formatter: axisTooltip(fmt, opts?.breakdowns ?? []),
+    confine: true,
+  };
   // Point markers are a chart-wide decision, not per-series: mixing dotted and
   // dotless lines on one plot reads as a rendering bug. Show them on every line
   // when ANY series is sparse enough that its line would otherwise be near-
@@ -281,6 +328,7 @@ export function timeLineOption(
 
   return {
     ...ch,
+    tooltip: { ...ch.tooltip, formatter: axisTooltip(fmt), confine: true },
     legend: legendNames.length > 1 ? { data: legendNames } : { show: false },
     xAxis: { type: "time", ...ch.xAxis },
     // don't force a zero baseline — unit prices move in a narrow band. A y-axis
@@ -354,7 +402,7 @@ function barTooltip(
     return signed && Number(v) > 0 ? `+${s}` : s;
   };
   const base = { trigger: "axis" as const, axisPointer: { type: "shadow" as const }, confine: true };
-  if (breakdowns?.length) return { ...base, formatter: breakdownFormatter(fmt, breakdowns) };
+  if (breakdowns?.length) return { ...base, formatter: axisTooltip(fmt, breakdowns) };
   if (pointNotes?.length) {
     return {
       ...base,

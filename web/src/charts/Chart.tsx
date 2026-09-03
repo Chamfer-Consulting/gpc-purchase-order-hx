@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import ReactEChartsCore from "echarts-for-react/lib/core";
 import { useComputedColorScheme } from "@mantine/core";
 import { echarts, type EChartsOption } from "./echartsCore";
+import { chartHoverEvents } from "./options";
 import { registerChartThemes, themeNameFor } from "./theme";
 import { FONT_FAMILY } from "./palette";
 import { EmptyState } from "@/components/EmptyState";
@@ -41,6 +42,22 @@ export function Chart({
   const scheme = useComputedColorScheme("light");
   const merged = useMemo<EChartsOption>(() => ({ ...BASE, ...option }), [option]);
 
+  // `highlight`/`downplay`/`globalout` keep the tooltip's hover-emphasis in sync;
+  // any handler the caller passes for the same event still runs after.
+  const events = useMemo<Record<string, (params: unknown) => void>>(() => {
+    const out: Record<string, (params: unknown) => void> = { ...chartHoverEvents };
+    for (const [name, fn] of Object.entries(onEvents ?? {})) {
+      const base = out[name];
+      out[name] = base
+        ? (p: unknown) => {
+            base(p);
+            fn(p);
+          }
+        : fn;
+    }
+    return out;
+  }, [onEvents]);
+
   if (empty) {
     return <EmptyState label={emptyLabel} height={height} />;
   }
@@ -54,7 +71,7 @@ export function Chart({
       lazyUpdate
       style={{ height, width: "100%" }}
       className={className}
-      onEvents={onEvents}
+      onEvents={events}
     />
   );
 }
