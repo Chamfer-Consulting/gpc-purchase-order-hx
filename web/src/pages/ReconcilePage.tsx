@@ -1,26 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Alert, Box, Loader, Paper, Stack, Text } from "@mantine/core";
-import { useHotkeys } from "@mantine/hooks";
+import { Box, Loader, Stack, Text } from "@mantine/core";
+import { useDisclosure, useHotkeys } from "@mantine/hooks";
 import {
   useReconcileConfirm,
   useReconcilePo,
   useReconcileQueue,
   useReconcileReject,
-  type Stage,
 } from "@/api/reconcile";
-import { useUpsertDecision } from "@/api/review";
 import { useMe } from "@/api/me";
 import { useRealtimeInvalidate } from "@/lib/realtime";
-import { errorMessage } from "@/lib/errors";
 import { PageLayout } from "@/components/PageLayout";
 import { ErrorState } from "@/components/ErrorState";
 import { pageMeta } from "@/nav";
-import { ExtractionFailureCard } from "@/components/po/ExtractionFailureCard";
-import { Queue } from "@/components/reconcile/Queue";
-import { Workbench } from "@/components/reconcile/Workbench";
-import { blockingStage, STAGE_ORDER } from "@/components/reconcile/state";
-import { useIsMobile } from "@/hooks/useIsMobile";
+import { ReviewHeader, type ReviewFilter } from "@/components/reconcile/ReviewHeader";
+import { ReviewStream } from "@/components/reconcile/ReviewStream";
+import { QueueJump } from "@/components/reconcile/QueueJump";
+import { useExtractionDecision, type Verdict } from "@/components/reconcile/extraction";
+
+const FILTER_STAGE: Record<Exclude<ReviewFilter, "all">, string> = {
+  verdict: "extraction",
+  match: "match",
+};
 
 export function ReconcilePage() {
   const meta = pageMeta("/reconcile")!;
@@ -30,21 +31,24 @@ export function ReconcilePage() {
   const { canEdit } = useMe();
 
   const queue = useReconcileQueue();
-  const isMobile = useIsMobile();
   const view = useReconcilePo(poId);
-  const upsert = useUpsertDecision();
   const confirm = useReconcileConfirm();
   const reject = useReconcileReject();
+  const [jumpOpen, jump] = useDisclosure(false);
+  const [filter, setFilter] = useState<ReviewFilter>("all");
 
   useRealtimeInvalidate("purchase_orders", ["reconcile-queue", "reconcile-po"]);
   useRealtimeInvalidate("po_invoice_links", ["reconcile-queue", "reconcile-po"]);
   useRealtimeInvalidate("extraction_reviews", ["reconcile-queue", "reconcile-po"]);
 
   const items = queue.data?.items ?? [];
-  const idx = useMemo(() => items.findIndex((i) => i.po_id === poId), [items, poId]);
-  const qStage = items.find((i) => i.po_id === poId)?.stage;
+  const filtered = useMemo(
+    () => (filter === "all" ? items : items.filter((i) => i.stage === FILTER_STAGE[filter])),
+    [items, filter],
+  );
+  const idx = filtered.findIndex((i) => i.po_id === poId);
 
-  // session progress: everything we've ever seen in the queue, minus what's left
+  // session progress — every po_id ever seen in the queue, minus what's left
   const everSeen = useRef(new Set<number>());
   items.forEach((i) => everSeen.current.add(i.po_id));
   const cleared = useMemo(() => {
@@ -52,125 +56,104 @@ export function ReconcilePage() {
     return [...everSeen.current].filter((id) => !left.has(id)).length;
   }, [items]);
 
-  // which stage the workbench is showing; lands on whatever blocks each PO
-  const [focus, setFocus] = useState<Stage>("extraction");
-  useEffect(() => {
-    if (view.data) setFocus(blockingStage(view.data, qStage));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poId, view.data?.header.id]);
+  const ext = useExtractionDecision(view.data);
 
+  // advance once the current PO leaves the queue (resolved), or lands off-filter
   useEffect(() => {
     if (queue.isLoading || items.length === 0) return;
-    const stillQueued = poId != null && items.some((i) => i.po_id === poId);
-    if (!stillQueued) nav(`/reconcile/${items[0].po_id}`, { replace: true });
-  }, [poId, items, queue.isLoading, nav]);
+    const resolved = poId != null && !items.some((i) => i.po_id === poId);
+    if (resolved || poId == null) {
+      const next = (filtered[0] ?? items[0])?.po_id;
+      if (next != null && next !== poId) nav(`/reconcile/${next}`, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [poId, items, queue.isLoading]);
+
+  useEffect(() => {
+    if (filter === "all" || filtered.length === 0) return;
+    if (poId == null || !filtered.some((i) => i.po_id === poId)) {
+      nav(`/reconcile/${filtered[0].po_id}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]);
 
   const go = (delta: number) => {
-    if (!items.length) return;
-    const next = idx < 0 ? 0 : Math.min(Math.max(idx + delta, 0), items.length - 1);
-    nav(`/reconcile/${items[next].po_id}`);
+    if (!filtered.length) return;
+    const at = idx < 0 ? 0 : Math.min(Math.max(idx + delta, 0), filtered.length - 1);
+    nav(`/reconcile/${filtered[at].po_id}`);
   };
-  const cycleFocus = (delta: number) => {
-    const i = STAGE_ORDER.indexOf(focus);
-    setFocus(STAGE_ORDER[(i + delta + STAGE_ORDER.length) % STAGE_ORDER.length]);
-  };
-
-  const setVerdict = (v: "is_po" | "not_po" | "needs_fix") => {
-    if (!canEdit || !view.data) return;
-    const ext = view.data.extraction;
-    upsert.mutate({ target_kind: ext.target_kind, target_key: ext.target_key, verdict: v, revision_of: null });
-  };
-  const matchFirst = (action: "confirm" | "reject") => {
-    if (!canEdit || !view.data?.candidates.length) return;
-    const inv = view.data.candidates[0].invoice_id;
-    (action === "confirm" ? confirm : reject).mutate({ po_id: poId!, invoice_id: inv });
-  };
+  const bestInvoice = () => view.data?.candidates[0]?.invoice_id ?? null;
 
   useHotkeys([
     ["j", () => go(1)],
     ["k", () => go(-1)],
-    ["ArrowDown", () => go(1)],
-    ["ArrowUp", () => go(-1)],
-    ["[", () => cycleFocus(-1)],
-    ["]", () => cycleFocus(1)],
-    ["1", () => setVerdict("is_po")],
-    ["2", () => setVerdict("not_po")],
-    ["3", () => setVerdict("needs_fix")],
-    ["y", () => matchFirst("confirm")],
-    ["n", () => matchFirst("reject")],
+    ["ArrowRight", () => go(1)],
+    ["ArrowLeft", () => go(-1)],
+    ["s", () => go(1)],
+    ["e", () => poId != null && nav(`/po/${poId}`)],
+    ["mod+k", () => jump.open()],
+    ["1", () => canEdit && ext.pick("is_po" as Verdict)],
+    ["2", () => canEdit && ext.pick("not_po" as Verdict)],
+    ["3", () => canEdit && ext.pick("needs_fix" as Verdict)],
+    ["4", () => canEdit && ext.pick("revision" as Verdict)],
+    ["y", () => {
+      const inv = bestInvoice();
+      if (canEdit && inv != null && poId != null) confirm.mutate({ po_id: poId, invoice_id: inv });
+    }],
+    ["n", () => {
+      const inv = bestInvoice();
+      if (canEdit && inv != null && poId != null) reject.mutate({ po_id: poId, invoice_id: inv });
+    }],
   ]);
 
   return (
-    <PageLayout
-      title={meta.title}
-      description={meta.description}
-      breadcrumbs={meta.breadcrumbs}
-      width="full"
-    >
-      <Box
-        style={{
-          display: "grid",
-          gridTemplateColumns: isMobile ? "1fr" : "minmax(230px, 288px) minmax(0, 1fr)",
-          gap: "var(--mantine-spacing-lg)",
-          alignItems: "start",
-        }}
-      >
-        <Paper
-          withBorder
-          radius="md"
-          p="xs"
-          bg="var(--gp-surface)"
-          style={isMobile ? undefined : { position: "sticky", top: 8 }}
-        >
-          {queue.isLoading ? (
-            <Loader size="sm" m="md" />
-          ) : queue.error ? (
-            <ErrorState error={queue.error} onRetry={() => void queue.refetch()} compact />
-          ) : (
-            <Queue
-              items={items}
-              counts={queue.data!.counts}
-              selected={poId}
-              cleared={cleared}
-              onSelect={(id) => nav(`/reconcile/${id}`)}
-            />
-          )}
-        </Paper>
+    <PageLayout title={meta.title} description={meta.description} breadcrumbs={meta.breadcrumbs} width="wide">
+      <Box maw={940} mx="auto">
+        <Stack gap="md">
+          <ReviewHeader
+            position={idx >= 0 ? idx + 1 : 0}
+            total={filtered.length}
+            cleared={cleared}
+            filter={filter}
+            onFilter={setFilter}
+            counts={queue.data?.counts ?? { extraction: 0, match: 0 }}
+            onPrev={() => go(-1)}
+            onNext={() => go(1)}
+            onSkip={() => go(1)}
+            onJump={jump.open}
+            canPrev={idx > 0}
+            canNext={idx >= 0 && idx < filtered.length - 1}
+          />
 
-        <div style={{ minWidth: 0 }}>
-          {!queue.isLoading && items.length === 0 ? (
+          {queue.isLoading ? (
+            <Loader m="xl" />
+          ) : queue.error ? (
+            <ErrorState error={queue.error} onRetry={() => void queue.refetch()} />
+          ) : items.length === 0 ? (
             <Text c="dimmed" p="xl" ta="center">
               Nothing needs reconciling. 🎉
             </Text>
           ) : poId == null ? (
             <Text c="dimmed" p="xl" ta="center">
-              Select an order from the queue.
+              Loading the first order…
             </Text>
           ) : view.isLoading ? (
-            <Loader />
+            <Loader m="xl" />
           ) : view.error ? (
             <ErrorState error={view.error} onRetry={() => void view.refetch()} />
           ) : view.data ? (
-            <Stack gap="md">
-              {upsert.isError && (
-                <Alert color="red" variant="light">
-                  {errorMessage(upsert.error)}
-                </Alert>
-              )}
-              {view.data.header.error && (
-                <ExtractionFailureCard poId={poId} error={view.data.header.error} canEdit={canEdit} />
-              )}
-              <Workbench
-                view={view.data}
-                poId={poId}
-                focus={focus}
-                onFocus={setFocus}
-                onSkip={() => go(1)}
-              />
-            </Stack>
+            <ReviewStream view={view.data} ext={ext} />
           ) : null}
-        </div>
+        </Stack>
       </Box>
+
+      <QueueJump
+        opened={jumpOpen}
+        onClose={jump.close}
+        items={items}
+        selected={poId}
+        onSelect={(id) => nav(`/reconcile/${id}`)}
+      />
     </PageLayout>
   );
 }
