@@ -173,6 +173,12 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: Line
   const tooltip = opts?.breakdowns?.length
     ? { ...ch.tooltip, formatter: breakdownFormatter(fmt, opts.breakdowns), confine: true }
     : ch.tooltip;
+  // Point markers are a chart-wide decision, not per-series: mixing dotted and
+  // dotless lines on one plot reads as a rendering bug. Show them on every line
+  // when ANY series is sparse enough that its line would otherwise be near-
+  // invisible (isolated non-null points with nothing adjacent to connect);
+  // otherwise every dense line stays clean.
+  const showDots = series.some((s) => s.data.filter((v) => v != null).length <= 8);
   return {
     ...ch,
     tooltip,
@@ -186,12 +192,7 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: Line
       type: "line",
       name: s.name,
       data: s.data,
-      // per-series, not chart-wide: a sparse series (a customer who only ordered
-      // a few times against a long shared x-axis) has no adjacent non-null points
-      // to draw a line between, so with symbols off it's invisible outright —
-      // easy to read as "the chart is empty" once hover/legend-click blurs the
-      // one dense series that WAS carrying the visible line.
-      showSymbol: s.data.filter((v) => v != null).length <= 8,
+      showSymbol: showDots,
       lineStyle: accent ? { color: accent } : undefined,
       itemStyle: accent ? { color: accent } : undefined,
       areaStyle: wantArea ? (accent ? areaGradient(accent) : { opacity: 0.08 }) : undefined,
@@ -268,6 +269,10 @@ export function timeLineOption(
       }
     : undefined;
 
+  // Point markers: chart-wide, so solid lines don't disagree with each other.
+  // On when any solid series is sparse enough to otherwise render near-invisible.
+  const showDots = solids.some((s) => s.points.length <= 24);
+
   // legend: only the solid/trend series carry a distinct entry — a ghost shares
   // its solid partner's name, so ECharts folds the two onto one toggle.
   const legendNames = Array.from(
@@ -315,7 +320,7 @@ export function timeLineOption(
         silent: v === "reference",
         z: v === "ghost" ? 1 : v === "reference" ? 2 : v === "trend" ? 6 : undefined,
         emphasis: v === "trend" ? { disabled: true } : undefined,
-        showSymbol: solid ? s.points.length <= 24 : false,
+        showSymbol: solid ? showDots : false,
         lineStyle: dashed,
         itemStyle: v === "ghost" ? { opacity: 0.3 } : accent && solid ? { color: accent } : undefined,
         areaStyle:
