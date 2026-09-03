@@ -36,7 +36,8 @@ def options(_: AuthedUser = Depends(current_user)) -> dict:
         products = [r[0] for r in cur.fetchall()]
         cur.execute(
             "SELECT DISTINCT container_size FROM qbo_invoice_items "
-            "WHERE container_size IS NOT NULL AND container_size <> '' ORDER BY container_size"
+            "WHERE container_size IS NOT NULL AND container_size <> '' "
+            "AND category = 'product' ORDER BY container_size"
         )
         sizes = [r[0] for r in cur.fetchall()]
     return {"customers": customers, "products": products, "sizes": sizes}

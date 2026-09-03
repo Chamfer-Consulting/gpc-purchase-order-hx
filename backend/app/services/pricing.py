@@ -160,14 +160,17 @@ def price_history(conn, product_name: str, container_size: str) -> dict:
               AND NOT COALESCE(li.voided, FALSE)
               AND COALESCE(po.status, 'active') = 'active' AND po.po_date IS NOT NULL
               AND li.product_name NOT IN (SELECT product_name FROM hidden_products)
-              -- exact match only: a "(deleted)" hidden entry can't collide with a
-              -- live customer's raw PO spelling. Fuzzy variants aren't caught here.
-              AND COALESCE(po.customer_name, '') NOT IN (SELECT customer_name FROM hidden_customers)
             ORDER BY po.po_date
             """,
             (product_name, container_size),
         )
         points = [dict(r) for r in cur.fetchall()]
+
+        # hidden_customers holds the QBO invoice name; PO lines carry the raw PO
+        # spelling — so this can't be a SQL `NOT IN`. Drop the points below, after
+        # the same fuzzy canonicalisation the chart already does.
+        cur.execute("SELECT customer_name FROM hidden_customers")
+        hidden_cust_raw = [r["customer_name"] for r in cur.fetchall() if r["customer_name"]]
 
         cur.execute(
             """
@@ -202,6 +205,7 @@ def price_history(conn, product_name: str, container_size: str) -> dict:
             FROM qbo_invoices inv
             JOIN qbo_invoice_items ii ON ii.invoice_id = inv.id
             WHERE (inv.private_note IS NULL OR inv.private_note NOT ILIKE '%void%')
+              AND inv.qbo_invoice_id NOT IN (SELECT qbo_invoice_id FROM hidden_invoices)
             GROUP BY inv.id, inv.customer_name, date_part('year', inv.txn_date)
             HAVING SUM(ii.line_total) FILTER (WHERE ii.category = 'delivery') > 0
                AND SUM(ii.quantity)   FILTER (WHERE ii.category = 'product')  > 0
@@ -212,9 +216,18 @@ def price_history(conn, product_name: str, container_size: str) -> dict:
     # collapse customer-name spelling variants so one account = one line / one ref
     canon = _canonicalise(
         [r["customer_name"] for r in points + refs + rate_rows if r["customer_name"]]
+        + hidden_cust_raw
     )
     for r in points + refs:
         r["customer_name"] = canon.get(r["customer_name"], r["customer_name"])
+
+    # Settings → Visibility: a hidden customer drops off the history chart and its
+    # reference lines — matched fuzzily so a QBO "(deleted)" name still catches the
+    # PO's short spelling.
+    hidden_canon = {canon.get(h, h) for h in hidden_cust_raw}
+    if hidden_canon:
+        points = [p for p in points if p["customer_name"] not in hidden_canon]
+        refs = [r for r in refs if r["customer_name"] not in hidden_canon]
 
     rates = _build_delivery_rates(rate_rows, canon)
     for p in points:
