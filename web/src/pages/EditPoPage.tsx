@@ -8,7 +8,6 @@ import {
   Button,
   Code,
   Collapse,
-  Grid,
   Group,
   Loader,
   Modal,
@@ -269,11 +268,6 @@ export function EditPoPage() {
           </Alert>
         )}
 
-        <Grid gutter="lg" align="flex-start">
-        {/* left — what you edit */}
-        <Grid.Col span={{ base: 12, lg: 7 }}>
-        <Stack gap="lg">
-
         <SectionCard title="Order details">
           <PoHeaderFields
             value={header}
@@ -496,21 +490,10 @@ export function EditPoPage() {
           )}
         </SectionCard>
 
-        </Stack>
-        </Grid.Col>
-
-        {/* right — related & history */}
-        <Grid.Col span={{ base: 12, lg: 5 }}>
-        <Stack gap="lg">
-
         <RevisionsPanel poId={poId} revisions={data.revisions ?? []} />
         <LinksPanel poId={poId} links={data.links ?? []} />
         <DocumentsPanel poId={poId} sources={data.sources} />
         <AuditPanel entries={data.audit ?? []} />
-
-        </Stack>
-        </Grid.Col>
-        </Grid>
       </Stack>
     </PageLayout>
   );
