@@ -13,18 +13,34 @@ from . import audit
 
 
 def list_products(conn) -> list[dict]:
-    """Every product name seen on an active PO (plus any still-hidden name that no
-    longer appears), each with its current hidden flag and a usage count."""
+    """Every product name the app can hide — the UNION of the two namespaces
+    `hidden_products` is matched against: PO-extraction names
+    (`line_items.product_name`, used by the Overview attention digest + reference
+    prices) and QuickBooks names (`qbo_invoice_items.product_name`, what every
+    revenue/analytics page groups on). They diverge for anything outside the
+    handful of hard-coded canonical products, so listing only one side let a
+    hidden product keep showing on the pages fed by the other."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
             WITH seen AS (
-                SELECT li.product_name, count(*) AS n_lines
-                FROM line_items li
-                JOIN purchase_orders po ON po.id = li.po_id
-                WHERE po.status = 'active'
-                  AND li.product_name IS NOT NULL AND li.product_name <> ''
-                GROUP BY li.product_name
+                SELECT product_name, sum(n)::bigint AS n_lines
+                FROM (
+                    SELECT li.product_name, count(*) AS n
+                    FROM line_items li
+                    JOIN purchase_orders po ON po.id = li.po_id
+                    WHERE po.status = 'active'
+                      AND li.product_name IS NOT NULL AND li.product_name <> ''
+                    GROUP BY li.product_name
+                    UNION ALL
+                    SELECT ii.product_name, count(*) AS n
+                    FROM qbo_invoice_items ii
+                    WHERE ii.category = 'product'
+                      AND ii.product_name IS NOT NULL
+                      AND ii.product_name NOT IN ('', 'UNKNOWN')
+                    GROUP BY ii.product_name
+                ) u
+                GROUP BY product_name
             )
             SELECT COALESCE(s.product_name, h.product_name) AS name,
                    COALESCE(s.n_lines, 0) AS n_lines,
