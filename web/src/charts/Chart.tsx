@@ -1,8 +1,8 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import ReactEChartsCore from "echarts-for-react/lib/core";
 import { useComputedColorScheme } from "@mantine/core";
 import { echarts, type EChartsOption } from "./echartsCore";
-import { chartHoverEvents } from "./options";
+import { setHoveredSeries } from "./options";
 import { registerChartThemes, themeNameFor } from "./theme";
 import { FONT_FAMILY } from "./palette";
 import { EmptyState } from "@/components/EmptyState";
@@ -26,6 +26,78 @@ const BASE: EChartsOption = {
   textStyle: { fontFamily: FONT_FAMILY },
 };
 
+type EC = ReturnType<typeof echarts.init>;
+type LineSeries = { i: number; data: unknown[] };
+
+/** value of a line series at (or nearest to) the x the cursor is over */
+function seriesYAt(data: unknown[], xData: number): number | null {
+  if (data.length === 0) return null;
+  if (Array.isArray(data[0])) {
+    // time axis: data is [x, y] pairs, x an ISO string or epoch ms
+    let bestY: number | null = null;
+    let bestDx = Infinity;
+    for (const p of data as [string | number, number | null][]) {
+      const px = typeof p[0] === "string" ? Date.parse(p[0]) : Number(p[0]);
+      const dx = Math.abs(px - xData);
+      if (dx < bestDx && p[1] != null) {
+        bestDx = dx;
+        bestY = Number(p[1]);
+      }
+    }
+    return bestY;
+  }
+  const v = (data as (number | null)[])[Math.round(xData)];
+  return v == null ? null : Number(v);
+}
+
+/**
+ * Track which line the pointer is nearest to (in data space — the value axes are
+ * linear, so nearest-in-value is nearest-on-screen). The axis-trigger tooltip
+ * reads it via `setHoveredSeries` to keep that row lit and dim the others. Done
+ * from raw pointer coords, not `mouseover`: a 2px line path is too easy to miss.
+ */
+function attachPointerTracker(inst: EC, linesRef: React.MutableRefObject<LineSeries[]>) {
+  const zr = inst.getZr();
+  let last = -2;
+  const apply = (next: number, ev?: { offsetX: number; offsetY: number }) => {
+    setHoveredSeries(next);
+    if (next === last) return;
+    last = next;
+    // our zr listener runs after ECharts' own, so the tooltip that's showing was
+    // built with the previous value — re-show it so the emphasis lands this frame.
+    if (ev) inst.dispatchAction({ type: "showTip", x: ev.offsetX, y: ev.offsetY });
+  };
+  const onMove = (ev: { offsetX: number; offsetY: number }) => {
+    const lines = linesRef.current;
+    if (lines.length < 2 || !inst.containPixel({ gridIndex: 0 }, [ev.offsetX, ev.offsetY])) {
+      apply(-1);
+      return;
+    }
+    const conv = inst.convertFromPixel({ gridIndex: 0 }, [ev.offsetX, ev.offsetY]) as
+      | number[]
+      | undefined;
+    if (!conv) {
+      apply(-1);
+      return;
+    }
+    const [xData, yCursor] = conv;
+    let best = -1;
+    let bestDy = Infinity;
+    for (const { i, data } of lines) {
+      const y = seriesYAt(data, xData);
+      if (y == null || Number.isNaN(y)) continue;
+      const dy = Math.abs(y - yCursor);
+      if (dy < bestDy) {
+        bestDy = dy;
+        best = i;
+      }
+    }
+    apply(best, ev);
+  };
+  zr.on("mousemove", onMove);
+  zr.on("globalout", () => apply(-1));
+}
+
 /**
  * The one chart component. Give it a plain ECharts `option`; it applies the house
  * theme for the active colour scheme, keeps a sensible base, and resizes with its
@@ -42,21 +114,25 @@ export function Chart({
   const scheme = useComputedColorScheme("light");
   const merged = useMemo<EChartsOption>(() => ({ ...BASE, ...option }), [option]);
 
-  // mouseover/mouseout/globalout keep the tooltip's hover-emphasis in sync;
-  // any handler the caller passes for the same event still runs after.
-  const events = useMemo<Record<string, (params: unknown) => void>>(() => {
-    const out: Record<string, (params: unknown) => void> = { ...chartHoverEvents };
-    for (const [name, fn] of Object.entries(onEvents ?? {})) {
-      const base = out[name];
-      out[name] = base
-        ? (p: unknown) => {
-            base(p);
-            fn(p);
-          }
-        : fn;
-    }
+  // line series (index + raw data) for the pointer tracker — refreshed each
+  // render, read by the zrender listener attached once in onChartReady.
+  const linesRef = useRef<LineSeries[]>([]);
+  linesRef.current = useMemo(() => {
+    const raw = (merged as { series?: unknown }).series;
+    const arr = Array.isArray(raw) ? (raw as { type?: string; data?: unknown[] }[]) : [];
+    const out: LineSeries[] = [];
+    arr.forEach((s, i) => {
+      if (s.type === "line" && Array.isArray(s.data) && s.data.length) out.push({ i, data: s.data });
+    });
     return out;
-  }, [onEvents]);
+  }, [merged]);
+
+  // echarts-for-react types the instance from its own bundled echarts; same
+  // object at runtime, so bridge it here.
+  const onChartReady = useCallback(
+    (inst: unknown) => attachPointerTracker(inst as EC, linesRef),
+    [],
+  );
 
   if (empty) {
     return <EmptyState label={emptyLabel} height={height} />;
@@ -69,9 +145,10 @@ export function Chart({
       option={merged}
       notMerge
       lazyUpdate
+      onChartReady={onChartReady}
       style={{ height, width: "100%" }}
       className={className}
-      onEvents={events}
+      onEvents={onEvents}
     />
   );
 }

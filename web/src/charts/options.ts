@@ -85,29 +85,17 @@ const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
 
 // --- hover emphasis -------------------------------------------------------------
-// Which series the cursor is directly over. The axis-trigger tooltip lists every
-// series at that x; reading this lets it keep that one row lit and dim the rest,
-// matching the faded lines. `mouseover`/`mouseout` on the series geometry is the
-// precise signal — `highlight` also fires for the axis pointer touching *every*
-// series, which would pin the wrong row. Module-level is fine: only one chart
-// shows a tooltip at a time, and mouseout / globalout clear it.
+// The axis-trigger tooltip lists every series at the hovered x. `_hoverSeries` is
+// the one the cursor is nearest to (computed in Chart.tsx from the pointer's data
+// coords — `mouseover` on a 2px line path is too easy to miss, and `highlight`
+// fires for every series at once). The tooltip keeps that row lit and dims the
+// rest. Module-level is fine: only one chart shows a tooltip at a time.
 let _hoverSeries = -1;
 
-/** Spread into every <Chart onEvents>; keeps `_hoverSeries` in sync. */
-export const chartHoverEvents: Record<string, (p: unknown) => void> = {
-  mouseover: (p) => {
-    const e = p as { componentType?: string; seriesIndex?: number };
-    if (e?.componentType === "series" && typeof e.seriesIndex === "number") {
-      _hoverSeries = e.seriesIndex;
-    }
-  },
-  mouseout: () => {
-    _hoverSeries = -1;
-  },
-  globalout: () => {
-    _hoverSeries = -1;
-  },
-};
+/** Set by Chart.tsx's pointer tracker; -1 = nothing / cursor outside the plot. */
+export function setHoveredSeries(i: number): void {
+  _hoverSeries = i;
+}
 
 /** Wrap one tooltip row: full strength for the hovered series, dimmed for the
  *  rest (no-op when nothing is hovered). */
