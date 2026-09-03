@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef } from "react";
 import ReactEChartsCore from "echarts-for-react/lib/core";
 import { useComputedColorScheme } from "@mantine/core";
 import { echarts, type EChartsOption } from "./echartsCore";
+import { setHoveredSeries } from "./options";
 import { registerChartThemes, themeNameFor } from "./theme";
 import { FONT_FAMILY } from "./palette";
 import { EmptyState } from "@/components/EmptyState";
@@ -50,34 +51,33 @@ function seriesYAt(data: unknown[], xData: number): number | null {
 }
 
 /**
- * Dim every tooltip row except the line the pointer is nearest to (in data space
- * — value axes are linear, so nearest-in-value is nearest-on-screen). Works on
- * the already-rendered tooltip DOM (`[data-si]` rows the formatter emits) rather
- * than through the formatter, so it can't fall out of step with the axis pointer
- * and it holds while the mouse is still.
+ * Track which line the pointer is nearest to (in data space — the value axes are
+ * linear, so nearest-in-value is nearest-on-screen) and hand it to the tooltip
+ * formatter via `setHoveredSeries`. Our zr listener runs after ECharts' own, so
+ * on a change we re-show the tip to rebuild it with the new emphasis the same
+ * frame (safe now that the pointer no longer snaps — `x/y` matches the crosshair).
  */
 function attachPointerTracker(inst: EC, linesRef: React.MutableRefObject<LineSeries[]>) {
   const zr = inst.getZr();
-
-  const paint = (best: number) => {
-    const rows = inst.getDom().querySelectorAll<HTMLElement>("[data-si]");
-    rows.forEach((el) => {
-      const si = el.dataset.si;
-      el.style.opacity = best < 0 || si === "" || Number(si) === best ? "1" : "0.4";
-    });
+  let last = -2;
+  const set = (next: number, ev?: { offsetX: number; offsetY: number }) => {
+    setHoveredSeries(next);
+    if (next === last) return;
+    last = next;
+    if (ev) inst.dispatchAction({ type: "showTip", x: ev.offsetX, y: ev.offsetY });
   };
 
   const onMove = (ev: { offsetX: number; offsetY: number }) => {
     const lines = linesRef.current;
     if (lines.length < 2 || !inst.containPixel({ gridIndex: 0 }, [ev.offsetX, ev.offsetY])) {
-      paint(-1);
+      set(-1);
       return;
     }
     const conv = inst.convertFromPixel({ gridIndex: 0 }, [ev.offsetX, ev.offsetY]) as
       | number[]
       | undefined;
     if (!conv) {
-      paint(-1);
+      set(-1);
       return;
     }
     const [xData, yCursor] = conv;
@@ -92,10 +92,10 @@ function attachPointerTracker(inst: EC, linesRef: React.MutableRefObject<LineSer
         best = i;
       }
     }
-    paint(best);
+    set(best, ev);
   };
   zr.on("mousemove", onMove);
-  zr.on("globalout", () => paint(-1));
+  zr.on("globalout", () => set(-1));
 }
 
 /**

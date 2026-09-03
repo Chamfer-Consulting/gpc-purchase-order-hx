@@ -85,11 +85,20 @@ const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
 
 // --- hover emphasis -----------------------------------------------------------
-// Each series row is tagged `data-si="<seriesIndex>"`. Chart.tsx's pointer
-// tracker dims the rows that aren't the line nearest the cursor by setting
-// `style.opacity` on those nodes directly — done post-render (not in this
-// formatter) so it can't desync from the axis pointer / crosshair, and it
-// survives "hover and hold still" (no formatter re-run to reset it).
+// The axis tooltip lists every series at the hovered x; `_hoverSeries` is the
+// line the cursor is nearest to (Chart.tsx computes it from the pointer's data
+// coords and re-shows the tip on change so this lands the same frame). The
+// tooltip keeps that row lit and dims the rest. One tooltip shows at a time, so
+// module-level is fine.
+let _hoverSeries = -1;
+
+/** set by Chart.tsx's pointer tracker; -1 = nothing / outside the plot */
+export function setHoveredSeries(i: number): void {
+  _hoverSeries = i;
+}
+
+const emph = (si: number | undefined, row: string): string =>
+  _hoverSeries < 0 || si === _hoverSeries ? row : `<span style="opacity:.4">${row}</span>`;
 
 /** axis-trigger tooltip formatter: the hovered x, one row per series, then — if
  *  given — each breakdown's top rows (requested → shipped, or a single value). */
@@ -112,13 +121,13 @@ function axisTooltip(fmt: NumFormat, breakdowns: ChartBreakdown[] = []) {
     const head = `<div style="font-weight:600;margin-bottom:2px">${esc(String(x))}</div>`;
     const series = arr
       .filter((p) => num(p.value) != null)
-      .map(
-        (p) =>
-          `<div data-si="${p.seriesIndex ?? ""}">` +
-          `${typeof p.marker === "string" ? p.marker : ""}${esc(p.seriesName ?? "")}: ` +
-          `<b>${label(num(p.value) as number)}</b></div>`,
+      .map((p) =>
+        emph(
+          p.seriesIndex,
+          `${typeof p.marker === "string" ? p.marker : ""}${esc(p.seriesName ?? "")}: <b>${label(num(p.value) as number)}</b>`,
+        ),
       )
-      .join("");
+      .join("<br/>");
     const blocks = breakdowns
       .map((b) => {
         const pt = b.points.find((q) => String(q.x) === String(x));
@@ -145,13 +154,16 @@ function axisTooltip(fmt: NumFormat, breakdowns: ChartBreakdown[] = []) {
   };
 }
 
-/** snapping cross-hair + formatted value labels; shared by the time-series builders. */
+/** cross-hair + formatted value labels; shared by the time-series builders.
+ *  No `snap` — a snapping pointer jumps point-to-point as the mouse moves, which
+ *  reads as the whole tooltip stuttering. Let the cross-hair glide; the tooltip
+ *  content still resolves to the nearest x. */
 function crosshair(fmt: NumFormat, timeAxis = false) {
   const label = valueFormatter(fmt);
   return {
     tooltip: {
       trigger: "axis" as const,
-      axisPointer: { type: "cross" as const, snap: true },
+      axisPointer: { type: "cross" as const },
       confine: true,
       valueFormatter: (v: unknown) => label(v as number),
     },
