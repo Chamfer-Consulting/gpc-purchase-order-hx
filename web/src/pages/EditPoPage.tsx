@@ -8,6 +8,7 @@ import {
   Button,
   Code,
   Collapse,
+  Grid,
   Group,
   Loader,
   Modal,
@@ -169,14 +170,14 @@ export function EditPoPage() {
   const crumbs = [{ label: "Reconcile", to: "/reconcile" }, { label: "Purchase order" }];
 
   if (isLoading) {
-    return <PageLayout title="Purchase order" breadcrumbs={crumbs} width="form" loading />;
+    return <PageLayout title="Purchase order" breadcrumbs={crumbs} width="full" loading />;
   }
   if (error || !data) {
     return (
       <PageLayout
         title="Purchase order"
         breadcrumbs={crumbs}
-        width="form"
+        width="full"
         error={error ?? new Error("Not found")}
         onRetry={() => void refetch()}
       >
@@ -218,7 +219,7 @@ export function EditPoPage() {
       title={`PO ${data.header.po_number ?? poId}`}
       description={data.header.source_file}
       breadcrumbs={[{ label: "Reconcile", to: "/reconcile" }, { label: `PO ${data.header.po_number ?? poId}` }]}
-      width="form"
+      width="full"
       actions={
         <Button component={Link} to="/po/new" size="sm" variant="light" leftSection={<IconPlus size={15} />}>
           New PO
@@ -267,6 +268,11 @@ export function EditPoPage() {
             </Group>
           </Alert>
         )}
+
+        <Grid gutter="lg" align="flex-start">
+        {/* left — what you edit */}
+        <Grid.Col span={{ base: 12, lg: 7 }}>
+        <Stack gap="lg">
 
         <SectionCard title="Order details">
           <PoHeaderFields
@@ -490,10 +496,21 @@ export function EditPoPage() {
           )}
         </SectionCard>
 
+        </Stack>
+        </Grid.Col>
+
+        {/* right — related & history */}
+        <Grid.Col span={{ base: 12, lg: 5 }}>
+        <Stack gap="lg">
+
         <RevisionsPanel poId={poId} revisions={data.revisions ?? []} />
         <LinksPanel poId={poId} links={data.links ?? []} />
         <DocumentsPanel poId={poId} sources={data.sources} />
         <AuditPanel entries={data.audit ?? []} />
+
+        </Stack>
+        </Grid.Col>
+        </Grid>
       </Stack>
     </PageLayout>
   );
