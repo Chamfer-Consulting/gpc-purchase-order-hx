@@ -107,8 +107,8 @@ export function ReconcilePage() {
   ]);
 
   return (
-    <PageLayout title={meta.title} description={meta.description} breadcrumbs={meta.breadcrumbs} width="wide">
-      <Box maw={940} mx="auto">
+    <PageLayout title={meta.title} description={meta.description} breadcrumbs={meta.breadcrumbs} width="full">
+      <Box>
         <Stack gap="md">
           <ReviewHeader
             position={idx >= 0 ? idx + 1 : 0}
