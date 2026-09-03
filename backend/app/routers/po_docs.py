@@ -71,7 +71,7 @@ def backfill(body: BackfillIn, user: AuthedUser = Depends(require_editor)) -> di
     with reused_conn() as conn:
         out = po_docs.backfill(
             conn, sources=body.sources, limit=limit,
-            captured_by=f"backfill:{_actor(user)}",
+            captured_by=f"backfill:{_actor(user)}", actor=_actor(user),
             gmail_client_id=s.gmail_client_id, gmail_client_secret=s.gmail_client_secret,
         )
     return {"ok": True, **out}

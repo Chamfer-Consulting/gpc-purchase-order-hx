@@ -26,7 +26,9 @@ def capture_gmail(conn, po_id: int, *, client_id: str, client_secret: str,
                    client_secret=client_secret, captured_by=captured_by)
     audit.log(conn, actor=captured_by, action="doc_capture", entity="purchase_order",
               entity_id=po_id, before=None,
-              after={"source": "gmail", "stored": [r["filename"] for r in result["stored"]]})
+              after={"source": "gmail", "stored": [r["filename"] for r in result["stored"]],
+                     # `note` lands in the /audit "Why" column via audit.derive_reason
+                     "note": result.get("note")})
     conn.commit()
     return result
 
@@ -35,7 +37,8 @@ def capture_qbo(conn, po_id: int, *, captured_by: str | None) -> dict:
     result = _wrap(core.capture_qbo, conn, po_id, captured_by=captured_by)
     audit.log(conn, actor=captured_by, action="doc_capture", entity="purchase_order",
               entity_id=po_id, before=None,
-              after={"source": "qbo", "stored": [r["filename"] for r in result["stored"]]})
+              after={"source": "qbo", "stored": [r["filename"] for r in result["stored"]],
+                     "note": result.get("note")})
     conn.commit()
     return result
 
@@ -58,7 +61,38 @@ def delete_document(conn, po_id: int, doc_id: int, actor: str | None) -> None:
 
 
 def backfill(conn, *, sources: list[str], limit: int, captured_by: str | None,
-             gmail_client_id: str, gmail_client_secret: str) -> dict:
-    return core.backfill(conn, sources=sources, limit=limit, captured_by=captured_by,
-                         gmail_client_id=gmail_client_id,
-                         gmail_client_secret=gmail_client_secret)
+             gmail_client_id: str, gmail_client_secret: str,
+             actor: str | None = None) -> dict:
+    out = core.backfill(conn, sources=sources, limit=limit, captured_by=captured_by,
+                        gmail_client_id=gmail_client_id,
+                        gmail_client_secret=gmail_client_secret)
+    # One audit row for the whole manual sweep — the per-PO capture_* helpers
+    # above log individually, but core.backfill calls the plain po_doc_capture
+    # functions, so without this a Settings → Document capture run leaves no
+    # trace in /audit. (The scheduled runner reports via pipeline_summary.)
+    parts = []
+    for src in ("gmail", "qbo"):
+        b = out.get(src)
+        if not b:
+            continue
+        parts.append(
+            f"{src}: {b['captured']}/{b['scanned']} captured"
+            + (f", {b['failed']} failed" if b.get("failed") else "")
+            + (f", {b['remaining']} still to do" if b.get("remaining") else "")
+        )
+    def _trim(b: dict) -> dict:
+        # keep the audit row lean — a full run can carry hundreds of error strings
+        errs = b.get("errors") or []
+        return {**b, "errors": errs[:10], **({"errors_truncated": len(errs) - 10} if len(errs) > 10 else {})}
+
+    audit.log(
+        conn, actor=actor or captured_by, action="doc_backfill", entity="po_documents",
+        entity_id=None, before=None,
+        after={
+            "sources": sources,
+            "note": " · ".join(parts) if parts else "nothing to capture",
+            **{k: _trim(v) for k, v in out.items() if k in ("gmail", "qbo")},
+        },
+    )
+    conn.commit()
+    return out

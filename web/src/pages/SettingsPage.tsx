@@ -555,16 +555,41 @@ function DocumentsCard() {
           QuickBooks only
         </Button>
       </Group>
+      {backfill.isError && (
+        <Text size="xs" c="red">
+          {backfill.error instanceof Error ? backfill.error.message : "Backfill failed."}
+        </Text>
+      )}
       {r && (
-        <Stack gap={2}>
-          {(["gmail", "qbo"] as const).map((k) =>
-            r[k] ? (
-              <Text key={k} size="xs" c="dimmed">
-                {k}: {r[k]!.captured} captured across {r[k]!.scanned} PO(s), {r[k]!.failed} failed,{" "}
-                {r[k]!.remaining} still to do.
-              </Text>
-            ) : null,
-          )}
+        <Stack gap={4}>
+          {(["gmail", "qbo"] as const).map((k) => {
+            const b = r[k];
+            if (!b) return null;
+            const line =
+              b.scanned === 0
+                ? `${k}: nothing missing — every eligible PO already has its PDF.`
+                : `${k}: ${b.captured} captured across ${b.scanned} PO(s)` +
+                  (b.failed ? `, ${b.failed} failed` : "") +
+                  (b.remaining ? `, ${b.remaining} still to do` : "") +
+                  ".";
+            return (
+              <div key={k}>
+                <Text size="xs" c={b.failed && !b.captured ? "red" : "dimmed"}>
+                  {line}
+                </Text>
+                {b.errors.slice(0, 3).map((e, i) => (
+                  <Text key={i} size="xs" c="dimmed" pl="sm" style={{ opacity: 0.8 }}>
+                    {e}
+                  </Text>
+                ))}
+                {b.errors.length > 3 && (
+                  <Text size="xs" c="dimmed" pl="sm" style={{ opacity: 0.8 }}>
+                    …and {b.errors.length - 3} more.
+                  </Text>
+                )}
+              </div>
+            );
+          })}
         </Stack>
       )}
     </SectionCard>
