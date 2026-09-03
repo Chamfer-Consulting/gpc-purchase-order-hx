@@ -45,19 +45,21 @@ def log(conn, *, actor: str | None, action: str, entity: str,
         )
 
 
-_AUTH_EVENTS = {"login": "12 hours", "logout": "2 minutes", "login_denied": "1 hour"}
+# Only a de-bounce, not a real cap: the SPA can fire the same event two or three
+# times in a burst (SIGNED_IN + the /auth/callback safety net + a quick reload),
+# so collapse repeats of the SAME event for the SAME email inside a short window.
+# A genuine sign-out→sign-in still lands two rows — the prior 'login' is older
+# than this.
+_AUTH_EVENTS = {"login": "2 minutes", "logout": "2 minutes", "login_denied": "1 hour"}
 
 
 def record_auth_event(conn, *, email: str, event: str,
                       session_id: str | None = None,
                       user_agent: str | None = None,
                       reason: str | None = None) -> bool:
-    """Write a 'login' / 'logout' / 'login_denied' row into audit_log. The SPA
-    fires SIGNED_IN on tab focus and token refresh as well as a real sign-in, so
-    this is idempotent per browser session: 'login' is recorded at most once per
-    (email, session_id) per 12h, 'logout' once per 2 min, 'login_denied' once per
-    hour. Returns True if a row was actually inserted. Does NOT commit — the
-    caller owns the transaction."""
+    """Write a 'login' / 'logout' / 'login_denied' row into audit_log, de-bounced
+    per (email, event) over a short window (see _AUTH_EVENTS). Returns True if a
+    row was actually inserted. Does NOT commit — the caller owns the transaction."""
     if event not in _AUTH_EVENTS:
         raise ValueError(f"bad auth event {event!r}")
     after = {
@@ -69,7 +71,6 @@ def record_auth_event(conn, *, email: str, event: str,
         )
         if v
     }
-    window = _AUTH_EVENTS[event]
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -81,17 +82,13 @@ def record_auth_event(conn, *, email: str, event: str,
                   AND entity = 'app_user'
                   AND entity_id = %(email)s
                   AND at > now() - %(window)s::interval
-                  AND (%(event)s = 'logout'
-                       OR %(sid)s IS NULL
-                       OR after->>'session_id' = %(sid)s)
             )
             """,
             {
                 "email": email,
                 "event": event,
                 "after": json.dumps(after) if after else None,
-                "sid": session_id,
-                "window": window,
+                "window": _AUTH_EVENTS[event],
             },
         )
         return cur.rowcount > 0

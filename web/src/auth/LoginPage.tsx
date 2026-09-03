@@ -12,7 +12,7 @@ import {
 } from "@mantine/core";
 import { Brand } from "@/components/Brand";
 import { supabase } from "@/lib/supabase";
-import { useAuth } from "./AuthProvider";
+import { pingLoginOnce, useAuth } from "./AuthProvider";
 
 function GoogleG() {
   return (
@@ -46,6 +46,7 @@ export function LoginPage() {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setBusy(false);
     if (error) setErr(error.message);
+    else pingLoginOnce();
   }
 
   async function google() {
