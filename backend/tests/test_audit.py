@@ -15,7 +15,7 @@ os.environ.setdefault("ALLOWED_EMAIL_DOMAINS", "example.com")
 
 import app.auth as _auth  # noqa: E402
 from app.main import app  # noqa: E402
-from app.services.audit import derive_reason  # noqa: E402
+from app.services.audit import derive_reason, record_auth_event  # noqa: E402
 
 client = TestClient(app, raise_server_exceptions=False)
 
@@ -50,6 +50,23 @@ def test_admin_gets_past_the_gate(roles):
     # accepted (not a 403).
     r = client.get("/api/audit", headers={"Authorization": f"Bearer {_tok('admin@example.com')}"})
     assert r.status_code != 403
+
+
+def test_activity_needs_a_token():
+    assert client.post("/api/activity", json={"event": "login"}).status_code == 403
+
+
+def test_activity_rejects_unknown_event(roles):
+    r = client.post(
+        "/api/activity", json={"event": "sneeze"},
+        headers={"Authorization": f"Bearer {_tok('editor@example.com')}"},
+    )
+    assert r.status_code == 422  # pydantic Literal["login", "logout"]
+
+
+def test_record_auth_event_rejects_bad_event():
+    with pytest.raises(ValueError):
+        record_auth_event(None, email="a@example.com", event="frobnicate")
 
 
 def test_derive_reason_prefers_after_and_known_keys():

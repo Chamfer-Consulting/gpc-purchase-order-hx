@@ -64,6 +64,19 @@ export async function apiSend<T>(
 }
 
 /**
+ * Best-effort: tell the backend a sign-in / sign-out happened so it lands in the
+ * audit trail. Never throws — the auth flow must not hinge on it. The backend is
+ * idempotent per browser session, so calling it more than once is harmless.
+ */
+export async function recordActivity(event: "login" | "logout"): Promise<void> {
+  try {
+    await apiSend("POST", "/api/activity", { event });
+  } catch {
+    /* the audit ping is not critical */
+  }
+}
+
+/**
  * Fetch a binary endpoint (e.g. a stored PDF) with the Supabase token and return
  * an object URL for it. Caller is responsible for URL.revokeObjectURL when done.
  */

@@ -9,6 +9,8 @@ import json
 
 import psycopg2.extras
 
+from . import audit
+
 
 def list_products(conn) -> list[dict]:
     """Every product name seen on an active PO (plus any still-hidden name that no
@@ -35,8 +37,9 @@ def list_products(conn) -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
 
 
-def set_product_hidden(conn, product_name: str, hidden: bool) -> None:
-    _set_hidden(conn, "hidden_products", "product_name", product_name, hidden)
+def set_product_hidden(conn, product_name: str, hidden: bool, *, actor: str | None = None) -> None:
+    _set_hidden(conn, "hidden_products", "product_name", product_name, hidden,
+                actor=actor, entity="product")
 
 
 def list_customers(conn) -> list[dict]:
@@ -63,12 +66,14 @@ def list_customers(conn) -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
 
 
-def set_customer_hidden(conn, customer_name: str, hidden: bool) -> None:
-    _set_hidden(conn, "hidden_customers", "customer_name", customer_name, hidden)
+def set_customer_hidden(conn, customer_name: str, hidden: bool, *, actor: str | None = None) -> None:
+    _set_hidden(conn, "hidden_customers", "customer_name", customer_name, hidden,
+                actor=actor, entity="customer")
 
 
 def _set_hidden(conn, table: str, col: str, value: str, hidden: bool,
-                *, reason: str | None = None) -> None:
+                *, reason: str | None = None,
+                actor: str | None = None, entity: str | None = None) -> None:
     with conn.cursor() as cur:
         if hidden:
             if reason is not None:
@@ -84,6 +89,15 @@ def _set_hidden(conn, table: str, col: str, value: str, hidden: bool,
                 )
         else:
             cur.execute(f"DELETE FROM {table} WHERE {col} = %s", (value,))
+    if entity is not None:
+        # "hide" / "unhide" against product | customer | invoice — these drop the
+        # row from every report, so they belong on the audit trail.
+        audit.log(
+            conn, actor=actor,
+            action="hide" if hidden else "unhide",
+            entity=entity, entity_id=value,
+            after={"reason": reason} if (hidden and reason) else None,
+        )
     conn.commit()
 
 
@@ -110,9 +124,9 @@ def list_hidden_invoices(conn) -> list[dict]:
 
 
 def set_invoice_hidden(conn, qbo_invoice_id: str, hidden: bool,
-                       reason: str | None = None) -> None:
+                       reason: str | None = None, *, actor: str | None = None) -> None:
     _set_hidden(conn, "hidden_invoices", "qbo_invoice_id", qbo_invoice_id, hidden,
-                reason=reason if hidden else None)
+                reason=reason if hidden else None, actor=actor, entity="invoice")
 
 
 # --- team / access control (app_users) -----------------------------------
@@ -192,7 +206,6 @@ def set_team_member(conn, actor: str | None, email: str, role: str, note: str | 
             """,
             (email, role, note or None),
         )
-    from . import audit
     audit.log(conn, actor=actor, action="team_set", entity="app_user", entity_id=email,
               after={"role": role, "note": note})
     conn.commit()
@@ -207,7 +220,6 @@ def remove_team_member(conn, actor: str | None, email: str) -> None:
         cur.execute("DELETE FROM app_users WHERE lower(email) = %s", (email,))
         removed = cur.rowcount
     if removed:
-        from . import audit
         audit.log(conn, actor=actor, action="team_remove", entity="app_user", entity_id=email)
     conn.commit()
 

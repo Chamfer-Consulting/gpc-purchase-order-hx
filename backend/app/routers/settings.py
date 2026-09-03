@@ -42,11 +42,11 @@ def hidden_products(_: AuthedUser = Depends(current_user)) -> list[dict]:
 
 
 @router.post("/hidden-products")
-def set_hidden(body: HideIn, _: AuthedUser = Depends(require_editor)) -> dict:
+def set_hidden(body: HideIn, user: AuthedUser = Depends(require_editor)) -> dict:
     if not body.name.strip():
         raise HTTPException(422, "name is required")
     with reused_conn() as conn:
-        svc.set_product_hidden(conn, body.name, body.hidden)
+        svc.set_product_hidden(conn, body.name, body.hidden, actor=_owner(user))
     clear_cache()  # analytics pages are cached by filter params only — rebuild them
     return {"ok": True}
 
@@ -58,11 +58,11 @@ def hidden_customers(_: AuthedUser = Depends(current_user)) -> list[dict]:
 
 
 @router.post("/hidden-customers")
-def set_customer_hidden(body: HideIn, _: AuthedUser = Depends(require_editor)) -> dict:
+def set_customer_hidden(body: HideIn, user: AuthedUser = Depends(require_editor)) -> dict:
     if not body.name.strip():
         raise HTTPException(422, "name is required")
     with reused_conn() as conn:
-        svc.set_customer_hidden(conn, body.name, body.hidden)
+        svc.set_customer_hidden(conn, body.name, body.hidden, actor=_owner(user))
     clear_cache()
     return {"ok": True}
 
@@ -80,12 +80,12 @@ def hidden_invoices(_: AuthedUser = Depends(current_user)) -> list[dict]:
 
 
 @router.post("/hidden-invoices")
-def set_invoice_hidden(body: HideInvoiceIn, _: AuthedUser = Depends(require_editor)) -> dict:
+def set_invoice_hidden(body: HideInvoiceIn, user: AuthedUser = Depends(require_editor)) -> dict:
     if not body.qbo_invoice_id.strip():
         raise HTTPException(422, "qbo_invoice_id is required")
     with reused_conn() as conn:
         svc.set_invoice_hidden(conn, body.qbo_invoice_id.strip(), body.hidden,
-                               (body.reason or "").strip() or None)
+                               (body.reason or "").strip() or None, actor=_owner(user))
     clear_cache()  # excludes/restores the invoice from every analytics page
     return {"ok": True}
 

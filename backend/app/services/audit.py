@@ -45,6 +45,52 @@ def log(conn, *, actor: str | None, action: str, entity: str,
         )
 
 
+def record_auth_event(conn, *, email: str, event: str,
+                      session_id: str | None = None,
+                      user_agent: str | None = None) -> bool:
+    """Write a 'login' / 'logout' row into audit_log. The SPA fires SIGNED_IN on
+    tab focus and token refresh as well as a real sign-in, so this is idempotent
+    per browser session: a 'login' is recorded at most once per (email,
+    session_id) per 12h, a 'logout' at most once per 2 min. Returns True if a row
+    was actually inserted. Does NOT commit — the caller owns the transaction."""
+    if event not in ("login", "logout"):
+        raise ValueError(f"bad auth event {event!r}")
+    after = {
+        k: v
+        for k, v in (
+            ("session_id", session_id),
+            ("user_agent", (user_agent or "").strip()[:300] or None),
+        )
+        if v
+    }
+    window = "12 hours" if event == "login" else "2 minutes"
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO audit_log (actor, action, entity, entity_id, after)
+            SELECT %(email)s, %(event)s, 'app_user', %(email)s, %(after)s::jsonb
+            WHERE NOT EXISTS (
+                SELECT 1 FROM audit_log
+                WHERE action = %(event)s
+                  AND entity = 'app_user'
+                  AND entity_id = %(email)s
+                  AND at > now() - %(window)s::interval
+                  AND (%(event)s = 'logout'
+                       OR %(sid)s IS NULL
+                       OR after->>'session_id' = %(sid)s)
+            )
+            """,
+            {
+                "email": email,
+                "event": event,
+                "after": json.dumps(after) if after else None,
+                "sid": session_id,
+                "window": window,
+            },
+        )
+        return cur.rowcount > 0
+
+
 def history(conn, entity: str, entity_id: str | int, limit: int = 100) -> list[dict]:
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
@@ -82,11 +128,13 @@ def derive_reason(before: dict | None, after: dict | None) -> str | None:
 
 
 # One shape across every source: admin mutations (audit_log) and extraction-review
-# decisions (extraction_reviews). Connection connect/disconnect/sync events are
-# written straight into audit_log, so they need no adapter here.
+# decisions (extraction_reviews). Connection connect/disconnect/sync and
+# login/logout events are written straight into audit_log; the CASE splits the
+# auth events out under their own 'auth' source so they can be filtered as a set.
 _FEED_CTE = """
 WITH feed AS (
-    SELECT 'admin'::text  AS source,
+    SELECT CASE WHEN action IN ('login', 'logout') THEN 'auth'
+                ELSE 'admin' END AS source,
            'a' || id::text AS id,
            at,
            actor,
@@ -183,5 +231,5 @@ def facets(conn) -> dict:
         "actors": list(row.get("actors") or []),
         "actions": list(row.get("actions") or []),
         "entities": list(row.get("entities") or []),
-        "sources": ["admin", "review"],
+        "sources": ["admin", "auth", "review"],
     }

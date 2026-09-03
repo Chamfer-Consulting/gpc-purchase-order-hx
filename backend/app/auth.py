@@ -34,6 +34,10 @@ class AuthedUser:
         self.id: str = claims.get("sub", "")
         self.email: str | None = claims.get("email")
         self.role: str | None = claims.get("role")
+        # Supabase stamps the auth-session id on every access token it mints for
+        # that session — stable across token refreshes, so the audit trail can
+        # dedupe repeated "login" pings from the same browser session.
+        self.session_id: str | None = claims.get("session_id")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"AuthedUser({self.email or self.id!r})"
