@@ -35,6 +35,9 @@ class CaptureIn(BaseModel):
 class BackfillIn(BaseModel):
     sources: list[str] = ["gmail", "qbo"]
     limit: int = 100
+    # the card drains the queue over several calls; True = a follow-up slice, so
+    # only add an audit row if it actually captured / failed something.
+    continued: bool = False
 
 
 class UploadIn(BaseModel):
@@ -73,6 +76,7 @@ def backfill(body: BackfillIn, user: AuthedUser = Depends(require_editor)) -> di
             conn, sources=body.sources, limit=limit,
             captured_by=f"backfill:{_actor(user)}", actor=_actor(user),
             gmail_client_id=s.gmail_client_id, gmail_client_secret=s.gmail_client_secret,
+            announce=not body.continued,
         )
     return {"ok": True, **out}
 

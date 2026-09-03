@@ -82,10 +82,11 @@ export interface BackfillResponse {
 export function useBackfillDocs() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { sources: ("gmail" | "qbo")[]; limit?: number }) =>
+    mutationFn: (body: { sources: ("gmail" | "qbo")[]; limit?: number; continued?: boolean }) =>
       apiSend<BackfillResponse>("POST", "/api/po/documents/backfill", {
         sources: body.sources,
         limit: body.limit ?? 200,
+        continued: body.continued ?? false,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["po-docs"] }),
   });

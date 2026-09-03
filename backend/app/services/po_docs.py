@@ -62,24 +62,28 @@ def delete_document(conn, po_id: int, doc_id: int, actor: str | None) -> None:
 
 def backfill(conn, *, sources: list[str], limit: int, captured_by: str | None,
              gmail_client_id: str, gmail_client_secret: str,
-             actor: str | None = None, max_seconds: float | None = 18.0) -> dict:
+             actor: str | None = None, max_seconds: float | None = 18.0,
+             announce: bool = True) -> dict:
     out = core.backfill(conn, sources=sources, limit=limit, captured_by=captured_by,
                         gmail_client_id=gmail_client_id,
                         gmail_client_secret=gmail_client_secret, max_seconds=max_seconds)
     # Audit the sweep — the per-PO capture_* helpers above log individually, but
     # core.backfill calls the plain po_doc_capture functions, so without this a
-    # Settings → Document capture run leaves no trace in /audit. The card drives
-    # this in a loop (one HTTP call can't outrun the request timeout), so only
-    # log a slice that actually did something — skip the no-op tail calls.
-    # (The scheduled runner reports separately, via pipeline_summary.)
+    # Settings → Document capture run leaves no trace in /audit. The card drains
+    # the queue over several calls (one can't outrun the request timeout): log
+    # the first one unconditionally so "someone ran it" is on record, and add a
+    # row for any later slice that captured / failed something — but skip the
+    # no-op continuation calls. (The scheduled runner reports via pipeline_summary.)
     buckets = {k: v for k, v in out.items() if k in ("gmail", "qbo")}
-    if any(b["captured"] or b["failed"] for b in buckets.values()):
+    touched = any(b["captured"] or b["failed"] or b["scanned"] for b in buckets.values())
+    if announce or any(b["captured"] or b["failed"] for b in buckets.values()):
         parts = [
             f"{src}: {b['captured']}/{b['scanned']} captured"
             + (f", {b['failed']} failed" if b.get("failed") else "")
             + (f", {b['remaining']} still to do" if b.get("remaining") else "")
             for src, b in buckets.items()
         ]
+        note = " · ".join(parts) if touched else "nothing to capture — every eligible PO already has its PDF"
 
         def _trim(b: dict) -> dict:
             errs = b.get("errors") or []
@@ -89,7 +93,7 @@ def backfill(conn, *, sources: list[str], limit: int, captured_by: str | None,
         audit.log(
             conn, actor=actor or captured_by, action="doc_backfill", entity="po_documents",
             entity_id=None, before=None,
-            after={"sources": sources, "note": " · ".join(parts),
+            after={"sources": sources, "note": note,
                    **{k: _trim(v) for k, v in buckets.items()}},
         )
         conn.commit()

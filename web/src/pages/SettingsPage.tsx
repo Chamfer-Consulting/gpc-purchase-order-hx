@@ -552,7 +552,7 @@ function DocumentsCard() {
     let prevRemaining = Infinity;
     try {
       for (let pass = 0; pass < 40; pass++) {
-        const res = await backfill.mutateAsync({ sources, limit: 100 });
+        const res = await backfill.mutateAsync({ sources, limit: 100, continued: pass > 0 });
         let more = false;
         let capturedThisPass = 0;
         for (const s of sources) {
