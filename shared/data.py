@@ -756,6 +756,17 @@ def load_matched_line_items() -> pd.DataFrame:
             JOIN purchase_orders po ON po.id = l.po_id
             LEFT JOIN qbo_invoices inv ON inv.id = l.invoice_id
             WHERE l.confirmed = TRUE
+              -- a human-excluded invoice (Settings -> Visibility -> Invoices —
+              -- phantom recurring auto-invoices) drops out of every other revenue
+              -- page (load_invoice_data below, and the shared context.py pipeline
+              -- Overview/Products/Explore/Customers all use); this is the
+              -- requested-vs-shipped basis for /lifecycle AND Overview's own
+              -- "Requested"/"Under-shipped" KPIs, so it needs the same exclusion
+              -- or a hidden invoice that happens to be PO-matched would keep
+              -- counting as "shipped" here while contributing nothing everywhere
+              -- else.
+              AND (inv.qbo_invoice_id IS NULL
+                   OR inv.qbo_invoice_id NOT IN (SELECT qbo_invoice_id FROM hidden_invoices))
             """,
             conn,
         )
