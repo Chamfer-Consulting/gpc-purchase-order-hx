@@ -174,7 +174,7 @@ export function PageRenderer({
       ];
     }
 
-    if (rows.some((r) => "po_id" in r && "line_id" in r && "math_mismatch" in r)) {
+    if (rows.some((r) => "po_id" in r && "error" in r)) {
       return [
         {
           label: "Retry",
