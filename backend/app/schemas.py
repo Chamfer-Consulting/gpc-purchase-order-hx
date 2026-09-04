@@ -59,6 +59,9 @@ class Chart(BaseModel):
     breakdowns: list[ChartBreakdown] | None = None
     width: Literal["half", "full"] | None = None  # None => the SPA auto-picks by shape
     point_notes: list[str | None] | None = None   # one extra tooltip line per x point
+    # day-granularity x (ISO dates) where a "show US holidays" toggle makes sense —
+    # the SPA computes the actual holiday dates client-side (see lib/usHolidays.ts).
+    holidays: bool = False
 
 
 class TableColumn(BaseModel):

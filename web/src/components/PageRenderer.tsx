@@ -1,15 +1,18 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Alert, SimpleGrid, Stack, Text, useComputedColorScheme } from "@mantine/core";
+import { Alert, Group, SimpleGrid, Stack, Switch, Text, useComputedColorScheme } from "@mantine/core";
 import { Chart } from "@/charts/Chart";
 import {
   barOption,
   horizontalBarOption,
   lineOption,
   stackedBarOption,
+  type HolidayMark,
 } from "@/charts/options";
 import { paletteFor } from "@/charts/theme";
 import type { Palette } from "@/charts/palette";
 import { useFilters } from "@/filters/useFilters";
+import { usHolidaysInRange } from "@/lib/usHolidays";
 import { AttentionList } from "./AttentionList";
 import { ChartExportMenu } from "./ChartExportMenu";
 import { DataGrid, type Column, type RowAction } from "./DataGrid";
@@ -40,8 +43,14 @@ function kpiValue(k: Kpi): string {
   return typeof k.value === "number" ? formatCell(k.value, k.format === "text" ? "text" : k.format) : String(k.value);
 }
 
-function chartOption(c: ChartSpec, palette: Palette) {
+// A day-granularity chart (the "show US holidays" toggle) can span years —
+// open already scrolled to roughly the most recent 4 months rather than a wall
+// of thousands of bars; the full history is still there via the zoom slider.
+const DAILY_ZOOM_WINDOW: [number, number] = [90, 100];
+
+function chartOption(c: ChartSpec, palette: Palette, holidayMarks?: HolidayMark[]) {
   const fmt = c.y_format;
+  const zoomWindow = c.holidays ? DAILY_ZOOM_WINDOW : undefined;
   switch (c.kind) {
     case "bar":
       return barOption(c.x, c.series, {
@@ -49,6 +58,9 @@ function chartOption(c: ChartSpec, palette: Palette) {
         breakdowns: c.breakdowns,
         palette,
         pointNotes: c.point_notes,
+        zoom: c.holidays || c.x.length > 24,
+        zoomWindow,
+        markX: holidayMarks,
       });
     case "stacked_bar":
       return stackedBarOption(c.x, c.series, { fmt });
@@ -65,14 +77,18 @@ function chartOption(c: ChartSpec, palette: Palette) {
         palette,
         fmt,
         zoom: c.x.length > 24,
+        zoomWindow,
         breakdowns: c.breakdowns,
+        markX: holidayMarks,
       });
     default:
       return lineOption(c.x, c.series, {
         palette,
         fmt,
         zoom: c.x.length > 24,
+        zoomWindow,
         breakdowns: c.breakdowns,
+        markX: holidayMarks,
       });
   }
 }
@@ -133,6 +149,18 @@ export function PageRenderer({
   const ackMath = useAckLineMathAny();
   const setInvHidden = useSetInvoiceHidden();
   const nav = useNavigate();
+
+  // Per-chart "show US holidays" toggle (only offered on charts the backend
+  // marks `holidays: true` — day-granularity ones). Off by default: this is an
+  // opt-in overlay for spotting a correlation, not a default annotation.
+  const [holidayCharts, setHolidayCharts] = useState<Set<string>>(new Set());
+  const toggleHolidays = (id: string) =>
+    setHolidayCharts((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   // Opens the PO in Reconcile — the one place a line item actually gets edited
   // (its "What we extracted" section is the same PoLineItemsEditor + math/price/
@@ -306,17 +334,33 @@ export function PageRenderer({
               (c.width == null &&
                 (c.kind === "stacked_bar" || tallHbar || (c.kind !== "hbar" && c.x.length > 18)));
             const h = tallHbar ? Math.min(560, c.x.length * 26 + 48) : 300;
-            const opt = chartOption(c, palette);
             const drawable = c.series.length > 0 && c.x.length > 0;
+            const showHolidays = c.holidays && holidayCharts.has(c.id);
+            const marks =
+              showHolidays && drawable
+                ? usHolidaysInRange(String(c.x[0]), String(c.x[c.x.length - 1]))
+                    .map((h) => ({ x: h.date, name: h.name }))
+                : undefined;
+            const opt = chartOption(c, palette, marks);
             return (
               <SectionCard
                 key={c.id}
                 title={c.title || undefined}
                 style={full ? { gridColumn: "1 / -1" } : undefined}
                 actions={
-                  drawable && c.title ? (
-                    <ChartExportMenu option={opt} title={c.title} scope={exportScope} />
-                  ) : undefined
+                  <Group gap="sm" wrap="nowrap">
+                    {c.holidays && (
+                      <Switch
+                        size="xs"
+                        label="US holidays"
+                        checked={holidayCharts.has(c.id)}
+                        onChange={() => toggleHolidays(c.id)}
+                      />
+                    )}
+                    {drawable && c.title && (
+                      <ChartExportMenu option={opt} title={c.title} scope={exportScope} />
+                    )}
+                  </Group>
                 }
               >
                 <Chart option={opt} empty={!drawable} height={h} />

@@ -25,8 +25,21 @@ interface LineOpts {
   fmt?: NumFormat;
   /** add a range slider under the plot (for long series). */
   zoom?: boolean;
+  /** with `zoom`, the slider's initial window as [startPct, endPct] of the full
+   *  series (e.g. [90, 100] to open already scrolled to the most recent ~10%) —
+   *  the rest of the history is still there, one drag away. Default: fully zoomed
+   *  out (0–100). */
+  zoomWindow?: [number, number];
   /** per-x constituent rows (top products / customers) shown in the tooltip. */
   breakdowns?: ChartBreakdown[] | null;
+  /** vertical reference lines (e.g. "show US holidays" toggle) — x must match a
+   *  value in the chart's own `x` category array (an ISO date for a daily chart). */
+  markX?: HolidayMark[];
+}
+
+export interface HolidayMark {
+  x: string;
+  name: string;
 }
 
 const compactUsd = new Intl.NumberFormat("en-US", {
@@ -190,14 +203,41 @@ function crosshair(fmt: NumFormat, timeAxis = false) {
   };
 }
 
-function zoomBits(enable: boolean) {
+function zoomBits(enable: boolean, window?: [number, number]) {
   if (!enable) return {};
+  const [start, end] = window ?? [0, 100];
   return {
     grid: { left: 8, right: 16, top: 40, bottom: 44, containLabel: true },
     dataZoom: [
-      { type: "inside" as const },
-      { type: "slider" as const, height: 16, bottom: 12, borderColor: "transparent" },
+      { type: "inside" as const, start, end },
+      { type: "slider" as const, start, end, height: 16, bottom: 12, borderColor: "transparent" },
     ],
+  };
+}
+
+/** Vertical dashed reference lines for a "show US holidays" toggle — attach to
+ *  one series only (index 0); ECharts draws a markLine chart-wide regardless of
+ *  which series owns it. `x` values must match entries in the chart's own
+ *  category axis data (an ISO date for a daily chart). */
+function holidayMarkLine(marks?: HolidayMark[]) {
+  if (!marks?.length) return undefined;
+  return {
+    silent: true,
+    symbol: "none" as const,
+    animation: false,
+    lineStyle: { type: "dashed" as const, color: "var(--mantine-color-orange-5)", opacity: 0.55, width: 1 },
+    label: {
+      // "{b}" = the data point's own `name` (set below) — a template string
+      // sidesteps ECharts' markLine label formatter-callback typing entirely.
+      formatter: "{b}",
+      position: "insideEndTop" as const,
+      rotate: 90,
+      fontSize: 10,
+      color: "var(--mantine-color-orange-6)",
+      textBorderWidth: 0,
+      textShadowBlur: 0,
+    },
+    data: marks.map((m) => ({ xAxis: m.x, name: m.name })),
   };
 }
 
@@ -229,8 +269,8 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: Line
     // honest zero baseline — a revenue/count line zoomed to its own min..max
     // makes routine variation look like a cliff. (Price history keeps scale:true.)
     yAxis: { type: "value", axisLabel: { formatter: axisFormatter(fmt) }, ...ch.yAxis },
-    ...zoomBits(!!opts?.zoom),
-    series: series.map((s) => ({
+    ...zoomBits(!!opts?.zoom, opts?.zoomWindow),
+    series: series.map((s, i) => ({
       type: "line",
       name: s.name,
       data: s.data,
@@ -238,6 +278,7 @@ export function lineOption(x: (string | number)[], series: Series[], opts?: Line
       lineStyle: accent ? { color: accent } : undefined,
       itemStyle: accent ? { color: accent } : undefined,
       areaStyle: wantArea ? (accent ? areaGradient(accent) : { opacity: 0.08 }) : undefined,
+      markLine: i === 0 ? holidayMarkLine(opts?.markX) : undefined,
     })),
   };
 }
@@ -384,6 +425,13 @@ interface BarOpts {
   palette?: Palette;
   /** one extra tooltip line per x point (e.g. the absolute count behind a delta). */
   pointNotes?: (string | null)[] | null;
+  /** add a range slider under the plot (for long series — e.g. a daily chart). */
+  zoom?: boolean;
+  /** with `zoom`, the slider's initial window as [startPct, endPct]. Default:
+   *  fully zoomed out (0–100). */
+  zoomWindow?: [number, number];
+  /** vertical reference lines (e.g. "show US holidays" toggle). */
+  markX?: HolidayMark[];
 }
 
 type TipParam = { axisValueLabel?: string; axisValue?: string | number; seriesName?: string; value?: unknown; marker?: unknown; dataIndex?: number };
@@ -436,13 +484,15 @@ export function barOption(x: (string | number)[], series: Series[], opts?: BarOp
     legend: series.length > 1 ? {} : { show: false },
     xAxis: { type: "category", data: x },
     yAxis: { type: "value", scale: diverging, axisLabel: { formatter: axisFormatter(fmt) } },
-    series: series.map((s) => ({
+    ...zoomBits(!!opts?.zoom, opts?.zoomWindow),
+    series: series.map((s, i) => ({
       type: "bar",
       name: s.name,
       data:
         diverging
           ? s.data.map((v) => (v == null ? v : { value: v, itemStyle: { color: v >= 0 ? up : down } }))
           : s.data,
+      markLine: i === 0 ? holidayMarkLine(opts?.markX) : undefined,
     })),
   };
 }

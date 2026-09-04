@@ -45,6 +45,9 @@ export interface ChartSpec {
   width?: "half" | "full";
   /** one extra tooltip line per x point, aligned to `x` */
   point_notes?: (string | null)[] | null;
+  /** day-granularity x (ISO dates) — offers a "show US holidays" toggle, off by
+   *  default. Holiday dates are computed client-side (lib/usHolidays.ts). */
+  holidays?: boolean;
 }
 
 export interface TableColumnSpec {

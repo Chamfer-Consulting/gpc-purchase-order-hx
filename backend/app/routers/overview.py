@@ -1,16 +1,19 @@
 """GET /api/overview — PageResponse shape, same as the other analytics pages.
 Scoped KPIs + monthly and year-over-year charts come from services/overview.py;
-the "needs attention" digest is assembled here (it needs a live conn)."""
+the "needs attention" digest and the daily orders chart are assembled here
+(both need a live conn)."""
 
 import time
+from datetime import date as _date
 
 import qbo_client  # shared/, via app.reuse
+import qbo_matcher  # shared/, via app.reuse
 from fastapi import APIRouter, Depends
 
 from ..auth import AuthedUser, current_user
 from ..deps import FilterParams, filter_params
 from ..reused_db import reused_conn
-from ..schemas import AttentionItem, PageResponse
+from ..schemas import AttentionItem, Chart, ChartSeries, PageResponse
 from ..services import reconcile, review_queue
 from ..services.overview import overview_page
 
@@ -104,6 +107,44 @@ def _compute_attention(conn) -> list[AttentionItem]:
     return items
 
 
+def _orders_by_day_chart(conn, fp: FilterParams) -> Chart | None:
+    """Daily count of distinct orders — POs deduped to each order's latest
+    revision (qbo_matcher.get_latest_pos, the same "one order" identity used
+    everywhere else) — by the day they were placed. Every other chart on this
+    page buckets by month, which averages a single day's effect away entirely;
+    this is day-granularity specifically so the opt-in "US holidays" toggle
+    (web/src/lib/usHolidays.ts — off by default) can show something meaningful:
+    was there actually a dip in orders placed around a given holiday, not just
+    "was the month with Thanksgiving in it a bit quieter". Counts *placement*
+    (po_date / sent_date), not shipment — a demand signal, not a fulfilment one."""
+    pos = qbo_matcher.get_latest_pos(conn)
+    start = _date.fromisoformat(fp.start) if fp.start else None
+    end = _date.fromisoformat(fp.end) if fp.end else None
+    counts: dict[str, int] = {}
+    for po in pos:
+        d = po.get("_effective_date")
+        if not d:
+            continue
+        if start and d < start:
+            continue
+        if end and d > end:
+            continue
+        if fp.customers and not any(
+            qbo_matcher.customers_match(po.get("customer_name"), c) for c in fp.customers
+        ):
+            continue
+        key = d.isoformat()
+        counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return None
+    x = sorted(counts)
+    return Chart(
+        id="orders_by_day", title="Orders by day", kind="bar", width="full",
+        x=x, series=[ChartSeries(name="Orders", data=[counts[d] for d in x])],
+        y_format="int", holidays=True,
+    )
+
+
 def _attention(conn) -> list[AttentionItem]:
     """_compute_attention with a short process-wide TTL — the digest is global and
     slow-moving, so a burst of landings shares one computation."""
@@ -126,4 +167,6 @@ def overview(
     resp = overview_page(fp)
     with reused_conn() as conn:
         resp.attention = _attention(conn)
+        if (daily := _orders_by_day_chart(conn, fp)) is not None:
+            resp.charts.append(daily)
     return resp
