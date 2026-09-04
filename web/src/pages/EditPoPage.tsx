@@ -22,25 +22,21 @@ import { useHotkeys } from "@mantine/hooks";
 import { IconArrowsDiff, IconDeviceFloppy, IconPlus } from "@tabler/icons-react";
 import {
   PO_STATUSES,
-  useInvoiceSearch,
-  useLinkInvoice,
-  usePo,
   useRegroup,
   useRevisionDiff,
   useSavePo,
   useSetStatus,
   useSoftDelete,
-  useUnlinkInvoice,
   useVoidLine,
   STATUS_COLOR,
   type AuditEntry,
   type PoHeader,
-  type PoLink,
   type PoRevision,
   type PoSources,
   type PoStatus,
   type RevisionDiff,
 } from "@/api/poEdit";
+import { useReconcilePo } from "@/api/reconcile";
 import {
   openDocument,
   useCaptureDocs,
@@ -64,6 +60,7 @@ import { SectionCard } from "@/components/SectionCard";
 import { ExtractionFailureCard } from "@/components/po/ExtractionFailureCard";
 import { PoHeaderFields, headerErrors } from "@/components/po/PoHeaderFields";
 import { PoLineItemsEditor } from "@/components/po/PoLineItemsEditor";
+import { MatchList } from "@/components/reconcile/MatchList";
 import { NUMERIC_STYLE } from "@/theme/tokens";
 
 const DOC_KIND_LABEL: Record<PoDocument["kind"], string> = {
@@ -77,7 +74,11 @@ const DOC_KIND_LABEL: Record<PoDocument["kind"], string> = {
 export function EditPoPage() {
   const { id } = useParams();
   const poId = Number(id);
-  const { data, isLoading, error, refetch } = usePo(poId);
+  // The reconcile endpoint's shape is a strict superset of the plain PO detail
+  // (header/items/revisions/links/sources/audit, plus match candidates + line
+  // diffs) — using it here too means "Invoice links" can render the exact same
+  // MatchList component Reconcile does, not a second, plainer implementation.
+  const { data, isLoading, error, refetch } = useReconcilePo(poId);
   const { canEdit, canAdmin, roleKnown } = useMe();
   const save = useSavePo(poId);
   const setStatus = useSetStatus(poId);
@@ -431,7 +432,9 @@ export function EditPoPage() {
         </SectionCard>
 
         <RevisionsPanel poId={poId} revisions={data.revisions ?? []} />
-        <LinksPanel poId={poId} links={data.links ?? []} />
+        <SectionCard title="Invoice links">
+          <MatchList view={data} />
+        </SectionCard>
         <DocumentsPanel poId={poId} sources={data.sources} />
         <AuditPanel entries={data.audit ?? []} />
       </Stack>
@@ -736,122 +739,6 @@ function PdfModal({
           />
         ))}
     </Modal>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-
-function LinksPanel({ poId, links }: { poId: number; links: PoLink[] }) {
-  const [search, setSearch] = useState("");
-  const hits = useInvoiceSearch(search);
-  const link = useLinkInvoice(poId);
-  const unlink = useUnlinkInvoice(poId);
-
-  return (
-    <SectionCard title="Invoice links">
-      {links.length === 0 ? (
-        <Text size="sm" c="dimmed">
-          No invoice linked to this PO yet.
-        </Text>
-      ) : (
-        <Table.ScrollContainer minWidth={640} type="native">
-          <Table>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Invoice</Table.Th>
-                <Table.Th>Date</Table.Th>
-                <Table.Th ta="right">Amount</Table.Th>
-                <Table.Th>State</Table.Th>
-                <Table.Th />
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {links.map((l) => (
-                <Table.Tr key={l.invoice_id}>
-                  <Table.Td>{l.doc_number ?? l.invoice_id}</Table.Td>
-                  <Table.Td>{l.txn_date}</Table.Td>
-                  <Table.Td ta="right" style={NUMERIC_STYLE}>
-                    {l.total_amt != null ? fmtCurrency(l.total_amt) : "—"}
-                  </Table.Td>
-                  <Table.Td>
-                    <Badge
-                      size="xs"
-                      color={l.confirmed ? "gpGreen" : l.rejected ? "gray" : "gpGold"}
-                      variant="light"
-                    >
-                      {l.confirmed ? l.match_method : l.rejected ? "rejected" : "pending"}
-                    </Badge>
-                  </Table.Td>
-                  <Table.Td>
-                    <Group gap={4} wrap="nowrap">
-                      {l.qbo_url && (
-                        <Anchor href={l.qbo_url} target="_blank" rel="noopener" size="xs">
-                          Open in QuickBooks ↗
-                        </Anchor>
-                      )}
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        color="red"
-                        loading={unlink.isPending}
-                        onClick={() => unlink.mutate(l.invoice_id)}
-                      >
-                        Unlink
-                      </Button>
-                    </Group>
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-      )}
-
-      <TextInput
-        label="Link another invoice"
-        placeholder="invoice number or customer"
-        value={search}
-        onChange={(e) => setSearch(e.currentTarget.value)}
-      />
-      {hits.data && hits.data.length > 0 && (
-        <Table.ScrollContainer minWidth={560} type="native">
-          <Table>
-            <Table.Tbody>
-              {hits.data.map((h) => (
-                <Table.Tr key={h.invoice_id}>
-                  <Table.Td>{h.doc_number ?? h.invoice_id}</Table.Td>
-                  <Table.Td>{h.customer_name}</Table.Td>
-                  <Table.Td>{h.txn_date}</Table.Td>
-                  <Table.Td style={NUMERIC_STYLE}>
-                    {h.total_amt != null ? fmtCurrency(h.total_amt) : "—"}
-                  </Table.Td>
-                  <Table.Td>
-                    {h.linked && (
-                      <Badge size="xs" color="gray" variant="light" mr="xs">
-                        already linked
-                      </Badge>
-                    )}
-                    <Button
-                      size="xs"
-                      variant="light"
-                      loading={link.isPending}
-                      onClick={() => link.mutate({ invoice_id: h.invoice_id })}
-                    >
-                      Link
-                    </Button>
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-      )}
-      {link.error && (
-        <Text size="xs" c="red">
-          {(link.error as Error).message}
-        </Text>
-      )}
-    </SectionCard>
   );
 }
 
