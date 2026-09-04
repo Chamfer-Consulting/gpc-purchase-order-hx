@@ -130,3 +130,41 @@ def test_choose_revision_single_candidate_group_is_left_alone():
     ])
     out = _dash._choose_revision(links, cand_pos, {10: "n:1"})
     assert list(out["po_id"]) == [10]
+
+
+# ── _lifecycle_rows ──────────────────────────────────────────────────────────
+# The per-order waterfall (Order Lifecycle's "First ask -> Revised -> Shipped"
+# table) must pick "latest revision" the same way the rest of the page
+# (_choose_revision, prepare()'s own latest_po dedup) does — by `_recency`
+# (po_recency()), not by the coarser date-only `effective_date`.
+
+def test_lifecycle_rows_orders_by_recency_not_just_effective_date():
+    # Both rows share the same effective_date (same calendar day) — only
+    # `_recency` (a precise received-at timestamp on the second row) tells them
+    # apart. Sorting by effective_date alone (the old behavior) would fall back
+    # to `id`, picking the SMALLER, earlier-created row as "latest" — backwards.
+    vp = _df([
+        {"po_key": "n:1", "id": 27307, "po_number": "1", "source_file": "o.pdf",
+         "customer_name": "Acme", "effective_date": pd.Timestamp("2024-06-27"),
+         "total": 100.0, "_recency": pd.Timestamp("2024-06-27 10:57:00")},
+        {"po_key": "n:1", "id": 465, "po_number": "1", "source_file": "r.pdf",
+         "customer_name": "Acme", "effective_date": pd.Timestamp("2024-06-27"),
+         "total": 200.0, "_recency": pd.Timestamp("2024-06-28 13:49:00")},
+    ])
+    out = _dash._lifecycle_rows(vp, pd.DataFrame())
+    row = out.iloc[0]
+    assert row["requested_amount"] == 100.0  # first by recency
+    assert row["revised_amount"] == 200.0    # last by recency — the real revision
+    assert row["po_id"] == 465
+
+
+def test_lifecycle_rows_falls_back_to_effective_date_without_recency():
+    vp = _df([
+        {"po_key": "n:1", "id": 10, "po_number": "1", "source_file": "o.pdf",
+         "customer_name": "Acme", "effective_date": pd.Timestamp("2024-06-27"), "total": 100.0},
+        {"po_key": "n:1", "id": 11, "po_number": "1", "source_file": "r.pdf",
+         "customer_name": "Acme", "effective_date": pd.Timestamp("2024-06-28"), "total": 200.0},
+    ])
+    out = _dash._lifecycle_rows(vp, pd.DataFrame())
+    row = out.iloc[0]
+    assert row["revised_amount"] == 200.0

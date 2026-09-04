@@ -1033,11 +1033,22 @@ _LIFECYCLE_COLS = [
 def _lifecycle_rows(vp: pd.DataFrame, matched_items: pd.DataFrame) -> pd.DataFrame:
     """One row per PO (po_key) in `vp`, valued at each stage: requested = the first
     version's header total, revised = the latest version's total, shipped = sum of
-    matched invoice line items for that PO. fulfillment_pct = shipped / revised."""
+    matched invoice line items for that PO. fulfillment_pct = shipped / revised.
+
+    "First"/"last" are ordered by `_recency` (po_recency() — document_printed_at
+    > source_received_at > sent_date > po_date) when the caller's frame carries
+    it (prepare()'s valid_po always does), the same precise signal both
+    prepare()'s own latest_po dedup and _choose_revision() use to pick "the
+    latest revision" everywhere else on this page. Previously sorted by
+    `effective_date` (sent_date/po_date only — no time-of-day), which for two
+    same-day revisions could pick a different "latest" one than the rest of the
+    page agrees on — this table's Revised total silently disagreeing with the
+    Requested KPI above it for the same order."""
     if vp.empty:
         return pd.DataFrame(columns=_LIFECYCLE_COLS)
+    sort_col = "_recency" if "_recency" in vp.columns else "effective_date"
     rows = []
-    for po_key, grp in vp.sort_values(["po_key", "effective_date", "id"]).groupby("po_key"):
+    for po_key, grp in vp.sort_values(["po_key", sort_col, "id"]).groupby("po_key"):
         first, last = grp.iloc[0], grp.iloc[-1]
         rows.append({
             "po_key": po_key, "po_number": last.get("po_number"),
