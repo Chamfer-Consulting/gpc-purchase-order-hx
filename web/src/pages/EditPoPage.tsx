@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   Alert,
@@ -35,7 +35,6 @@ import {
   STATUS_COLOR,
   type AuditEntry,
   type PoHeader,
-  type PoLineItem,
   type PoLink,
   type PoRevision,
   type PoSources,
@@ -59,32 +58,13 @@ import { notifySuccess } from "@/lib/notify";
 import { conflictInfo, errorMessage, fieldErrors, isConflict } from "@/lib/errors";
 import { useUnsavedGuard } from "@/hooks/useUnsavedGuard";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { usePoEditForm } from "@/hooks/usePoEditForm";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
 import { ExtractionFailureCard } from "@/components/po/ExtractionFailureCard";
 import { PoHeaderFields, headerErrors } from "@/components/po/PoHeaderFields";
-import { EMPTY_LINE, PoLineItemsEditor, type EditableLine } from "@/components/po/PoLineItemsEditor";
+import { PoLineItemsEditor } from "@/components/po/PoLineItemsEditor";
 import { NUMERIC_STYLE } from "@/theme/tokens";
-
-/** Compare the editable slice of the form to the server copy. */
-function formEqual(header: Partial<PoHeader>, items: EditableLine[], data: {
-  header: PoHeader;
-  items: PoLineItem[];
-}): boolean {
-  const hk: (keyof PoHeader)[] = [
-    "po_number", "customer_name", "po_date", "delivery_date", "subtotal", "tax", "total", "notes",
-  ];
-  for (const k of hk) if ((header[k] ?? null) !== (data.header[k] ?? null)) return false;
-  if (items.length !== data.items.length) return false;
-  const ik: (keyof PoLineItem)[] = [
-    "id", "product_name", "container_size", "quantity", "unit_price", "line_total",
-    "additional_cost", "voided",
-  ];
-  for (let i = 0; i < items.length; i++) {
-    for (const k of ik) if ((items[i][k] ?? null) !== (data.items[i][k] ?? null)) return false;
-  }
-  return true;
-}
 
 const DOC_KIND_LABEL: Record<PoDocument["kind"], string> = {
   po_pdf: "PO PDF",
@@ -104,54 +84,15 @@ export function EditPoPage() {
   const softDelete = useSoftDelete(poId);
   const voidLine = useVoidLine(poId);
 
-  const [header, setHeader] = useState<Partial<PoHeader>>({});
-  // Each row carries a stable client key (_rk) so React doesn't reattach an input's
-  // state to the wrong line when a middle row is deleted.
-  const [items, setItems] = useState<EditableLine[]>([]);
-  const rk = useRef(0);
-  const makeRow = (seed?: Partial<PoLineItem>): EditableLine => ({
-    ...EMPTY_LINE,
-    ...seed,
-    _rk: `r${rk.current++}`,
-  });
-
   const [statusDraft, setStatusDraft] = useState<PoStatus>("active");
   const [statusReason, setStatusReason] = useState("");
   const [pendingReactivate, setPendingReactivate] = useState(false);
-  // the lock_version we last seeded the form from — if the server's moves past
-  // this while the form is dirty, someone else saved.
-  const [seededVersion, setSeededVersion] = useState<number | undefined>(undefined);
 
-  // Which PO's data is currently loaded into the form. Until the first payload
-  // for a PO lands, the form is "not seeded" — an empty form vs. real data must
-  // NOT read as a dirty edit.
-  const seededPoIdRef = useRef<number | null>(null);
-  const seeded = data != null && seededPoIdRef.current === data.header.id;
-
-  const isDirty = useMemo(
-    () => (data && seeded ? !formEqual(header, items, data) : false),
-    [header, items, data, seeded],
-  );
-  const dirtyRef = useRef(false);
-  dirtyRef.current = isDirty;
-
-  function reseed(d: NonNullable<typeof data>) {
-    setHeader(d.header);
-    setItems(d.items.map((it) => makeRow(it)));
-    setStatusDraft(d.header.status ?? "active");
-    setStatusReason(d.header.status_reason ?? "");
-    setSeededVersion(d.header.lock_version);
-    seededPoIdRef.current = d.header.id;
-  }
-
-  useEffect(() => {
-    if (!data) return;
-    // Seed on first load / when the route switched to a different PO; on a
-    // background refetch of the SAME PO, only take the server copy if the form
-    // is clean (a void / status / link mutation on this page must not wipe edits).
-    if (seededPoIdRef.current !== data.header.id || !dirtyRef.current) reseed(data);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  const { header, setHeader, items, setItems, makeRow, isDirty, seededVersion, serverMovedAhead, reseed } =
+    usePoEditForm(poId, data, (d) => {
+      setStatusDraft(d.header.status ?? "active");
+      setStatusReason(d.header.status_reason ?? "");
+    });
 
   useUnsavedGuard(isDirty);
   useHotkeys(
@@ -199,8 +140,6 @@ export function EditPoPage() {
   const set = (k: keyof PoHeader, v: unknown) => setHeader((h) => ({ ...h, [k]: v }));
 
   const errors = { ...headerErrors(header), ...fieldErrors(save.error) };
-  const serverMovedAhead =
-    isDirty && seededVersion != null && data.header.lock_version !== seededVersion;
 
   function doSave() {
     save.mutate(

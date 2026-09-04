@@ -9,7 +9,10 @@ import {
   useReconcileReject,
 } from "@/api/reconcile";
 import { useMe } from "@/api/me";
+import { usePoEditForm } from "@/hooks/usePoEditForm";
+import { useUnsavedGuard } from "@/hooks/useUnsavedGuard";
 import { useRealtimeInvalidate } from "@/lib/realtime";
+import { confirmAction } from "@/lib/modals";
 import { PageLayout } from "@/components/PageLayout";
 import { ErrorState } from "@/components/ErrorState";
 import { pageMeta } from "@/nav";
@@ -58,16 +61,51 @@ export function ReconcilePage() {
 
   const ext = useExtractionDecision(view.data);
 
-  // advance once the current PO leaves the queue (resolved), or lands off-filter
+  // The line-item editor embedded in OrderSource — lifted up here (not owned by
+  // OrderSource itself) so keyboard/queue navigation can check `form.isDirty`
+  // before sweeping an in-progress edit away, and the browser tab-close guard
+  // covers it too. `poId ?? -1` is a harmless placeholder id while nothing is
+  // selected yet — `view.data` is undefined then anyway (useReconcilePo only
+  // enables once poId is set), so the form just stays clean.
+  const form = usePoEditForm(poId ?? -1, view.data);
+  useUnsavedGuard(form.isDirty);
+
+  /** Everywhere this page moves off the current PO (hotkeys, prev/next, queue
+   *  jump, "open full editor") funnels through here — a dirty line-item edit
+   *  gets a chance to be kept before it's silently discarded by navigating away.
+   *  Unlike EditPoPage (where losing dirty <Link> navigation is an accepted gap
+   *  — see useUnsavedGuard), Reconcile's whole point is rapid keyboard-driven
+   *  movement between orders, so an unguarded "j" mid-edit is a real footgun. */
+  function guardedNav(go_: () => void) {
+    if (!form.isDirty) {
+      go_();
+      return;
+    }
+    confirmAction({
+      title: "Discard unsaved changes?",
+      body: "This order's line items were edited but not saved. Leaving now discards the edit.",
+      confirmLabel: "Discard & continue",
+      onConfirm: go_,
+    });
+  }
+
+  // advance once the current PO leaves the queue (resolved), or lands off-filter.
+  // Never auto-advance out from under a dirty edit — it'll fire again once the
+  // form clears (save or discard). A po_id that was never IN `items` to begin
+  // with (a direct link — e.g. Data Quality's "Fix" action landing on a PO whose
+  // only open issue is a data-quality one, not an extraction/match one) is NOT
+  // "resolved": `everSeen` only ever gains ids that were actually queue items,
+  // so this correctly leaves a deep-linked PO alone instead of bouncing to
+  // whatever's first in the queue.
   useEffect(() => {
-    if (queue.isLoading || items.length === 0) return;
-    const resolved = poId != null && !items.some((i) => i.po_id === poId);
+    if (queue.isLoading || items.length === 0 || form.isDirty) return;
+    const resolved = poId != null && everSeen.current.has(poId) && !items.some((i) => i.po_id === poId);
     if (resolved || poId == null) {
       const next = (filtered[0] ?? items[0])?.po_id;
       if (next != null && next !== poId) nav(`/reconcile/${next}`, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poId, items, queue.isLoading]);
+  }, [poId, items, queue.isLoading, form.isDirty]);
 
   useEffect(() => {
     if (filter === "all" || filtered.length === 0) return;
@@ -77,11 +115,12 @@ export function ReconcilePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
 
-  const go = (delta: number) => {
-    if (!filtered.length) return;
-    const at = idx < 0 ? 0 : Math.min(Math.max(idx + delta, 0), filtered.length - 1);
-    nav(`/reconcile/${filtered[at].po_id}`);
-  };
+  const go = (delta: number) =>
+    guardedNav(() => {
+      if (!filtered.length) return;
+      const at = idx < 0 ? 0 : Math.min(Math.max(idx + delta, 0), filtered.length - 1);
+      nav(`/reconcile/${filtered[at].po_id}`);
+    });
   const bestInvoice = () => view.data?.candidates[0]?.invoice_id ?? null;
 
   useHotkeys([
@@ -90,7 +129,7 @@ export function ReconcilePage() {
     ["ArrowRight", () => go(1)],
     ["ArrowLeft", () => go(-1)],
     ["s", () => go(1)],
-    ["e", () => poId != null && nav(`/po/${poId}`)],
+    ["e", () => poId != null && guardedNav(() => nav(`/po/${poId}`))],
     ["mod+k", () => jump.open()],
     ["1", () => canEdit && ext.pick("is_po" as Verdict)],
     ["2", () => canEdit && ext.pick("not_po" as Verdict)],
@@ -129,21 +168,28 @@ export function ReconcilePage() {
             <Loader m="xl" />
           ) : queue.error ? (
             <ErrorState error={queue.error} onRetry={() => void queue.refetch()} />
+          ) : poId != null ? (
+            // A specific PO is selected — show it regardless of whether the queue
+            // itself is empty. A direct link (e.g. Data Quality's "Fix" action) can
+            // land on a PO whose only open issue isn't an extraction/match one, so
+            // it's never IN `items` at all; "Nothing needs reconciling" below is
+            // only for the bare /reconcile landing with no PO picked.
+            view.isLoading ? (
+              <Loader m="xl" />
+            ) : view.error ? (
+              <ErrorState error={view.error} onRetry={() => void view.refetch()} />
+            ) : view.data ? (
+              <ReviewStream view={view.data} ext={ext} form={form} />
+            ) : null
           ) : items.length === 0 ? (
             <Text c="dimmed" p="xl" ta="center">
               Nothing needs reconciling. 🎉
             </Text>
-          ) : poId == null ? (
+          ) : (
             <Text c="dimmed" p="xl" ta="center">
               Loading the first order…
             </Text>
-          ) : view.isLoading ? (
-            <Loader m="xl" />
-          ) : view.error ? (
-            <ErrorState error={view.error} onRetry={() => void view.refetch()} />
-          ) : view.data ? (
-            <ReviewStream view={view.data} ext={ext} />
-          ) : null}
+          )}
         </Stack>
       </Box>
 
@@ -152,7 +198,7 @@ export function ReconcilePage() {
         onClose={jump.close}
         items={items}
         selected={poId}
-        onSelect={(id) => nav(`/reconcile/${id}`)}
+        onSelect={(id) => guardedNav(() => nav(`/reconcile/${id}`))}
       />
     </PageLayout>
   );

@@ -1,5 +1,6 @@
 import { Divider, Paper, Stack } from "@mantine/core";
 import type { ReconcilePoView } from "@/api/reconcile";
+import type { usePoEditForm } from "@/hooks/usePoEditForm";
 import { ExtractionFailureCard } from "@/components/po/ExtractionFailureCard";
 import { useMe } from "@/api/me";
 import { OrderSource } from "./OrderSource";
@@ -12,9 +13,13 @@ import type { useExtractionDecision } from "./extraction";
 export function ReviewStream({
   view,
   ext,
+  form,
 }: {
   view: ReconcilePoView;
   ext: ReturnType<typeof useExtractionDecision>;
+  /** the line-items editor state, owned by ReconcilePage (not OrderSource) so
+   *  page-level navigation can guard against discarding a dirty edit */
+  form: ReturnType<typeof usePoEditForm>;
 }) {
   const { canEdit } = useMe();
 
@@ -25,7 +30,7 @@ export function ReviewStream({
           <ExtractionFailureCard poId={view.header.id} error={view.header.error} canEdit={canEdit} />
         )}
 
-        <OrderSource view={view} ext={ext} />
+        <OrderSource view={view} ext={ext} form={form} />
 
         <Divider />
         <MatchList view={view} />

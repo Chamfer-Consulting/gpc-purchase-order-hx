@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Alert, SimpleGrid, Stack, Text, useComputedColorScheme } from "@mantine/core";
 import { Chart } from "@/charts/Chart";
 import {
@@ -21,7 +21,6 @@ import { notifyError, notifySuccess } from "@/lib/notify";
 import { promptReason } from "@/lib/modals";
 import { useAckLineMathAny, useRetryExtractionAny } from "@/api/poEdit";
 import { useSetInvoiceHidden } from "@/api/settings";
-import { PoFixModal } from "./po/PoFixModal";
 import type { ChartSpec, Kpi, PageResponse, TableSpec } from "@/api/schema";
 
 type AnyRow = Record<string, unknown>;
@@ -133,17 +132,22 @@ export function PageRenderer({
   const retry = useRetryExtractionAny();
   const ackMath = useAckLineMathAny();
   const setInvHidden = useSetInvoiceHidden();
-  const [fixPoId, setFixPoId] = useState<number | null>(null);
+  const nav = useNavigate();
 
+  // Opens the PO in Reconcile — the one place a line item actually gets edited
+  // (its "What we extracted" section is the same PoLineItemsEditor + math/price/
+  // size warnings this page's own rows come from). Previously a separate modal
+  // (PoFixModal) duplicated a slice of that editor; now Data Quality just hands
+  // off to the one editor everywhere else already uses.
   const fixAction: RowAction<AnyRow> = {
     label: "Fix",
-    onClick: (r) => setFixPoId(Number(r.po_id)),
+    onClick: (r) => nav(`/reconcile/${r.po_id}`),
   };
 
   /** Inline row actions for the Data Quality tables:
    *  - "Retry" when a row carries po_id + error  (extraction-failures)
-   *  - "Fix" when a row carries po_id + line_id  (math / price / no-size) — opens
-   *    an editor modal for that PO's line items
+   *  - "Fix" when a row carries po_id + line_id  (math / price / no-size) —
+   *    opens that PO in Reconcile, positioned to edit its line items
    *  - "Acknowledge" additionally when the row is a math mismatch
    *  - "Exclude" when a row carries qbo_invoice_id + confidence (unsent invoices) */
   function rowActionsFor(rows: AnyRow[]): RowAction<AnyRow>[] | undefined {
@@ -332,8 +336,6 @@ export function PageRenderer({
           />
         </SectionCard>
       ))}
-
-      <PoFixModal poId={fixPoId} onClose={() => setFixPoId(null)} />
     </Stack>
   );
 }

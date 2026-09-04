@@ -45,6 +45,25 @@ export function sumLineTotals(items: PoLineItem[]): number {
   return items.reduce((s, it) => (it.voided ? s : s + (n(it.line_total) ?? 0)), 0);
 }
 
+/** Every open issue on a line — the same three categories Data Quality's math /
+ *  price / no-size tables flag, surfaced right here so fixing a line in place
+ *  (Reconcile or the full editor) shows exactly what's wrong with it, not just
+ *  that something is. Math is recomputed live from the fields on screen; price
+ *  anomaly is the server's last-computed flag (clears on save — the pipeline
+ *  re-evaluates it against reference prices on the next sync); no-size is
+ *  skipped for samples, matching the backend's _NO_SIZE_PO predicate. */
+export function lineIssues(it: PoLineItem): string[] {
+  if (it.voided) return [];
+  const issues: string[] = [];
+  const math = lineMathOff(it);
+  if (math) issues.push(math);
+  if (it.price_anomaly) issues.push(it.price_anomaly);
+  if (!it.is_sample && !(it.container_size ?? "").trim() && (it.product_name ?? it.product_raw)) {
+    issues.push("no container size set");
+  }
+  return issues;
+}
+
 interface Props {
   items: EditableLine[];
   onChange: (items: EditableLine[]) => void;
@@ -107,15 +126,15 @@ export function PoLineItemsEditor({
           </Table.Thead>
           <Table.Tbody>
             {items.map((it, i) => {
-              const off = lineMathOff(it);
+              const issues = lineIssues(it);
               const cell = it.voided
                 ? { style: { opacity: 0.45, textDecoration: "line-through" as const } }
                 : {};
               return (
                 <Table.Tr key={it._rk} onKeyDown={(e) => onLastRowEnter(e, i)}>
                   <Table.Td w={22}>
-                    {off && (
-                      <Tooltip label={off} multiline w={260}>
+                    {issues.length > 0 && (
+                      <Tooltip label={issues.join(" · ")} multiline w={260}>
                         <IconAlertTriangle size={14} color="var(--gp-status-warning)" />
                       </Tooltip>
                     )}
