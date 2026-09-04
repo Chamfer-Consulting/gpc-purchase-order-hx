@@ -366,6 +366,24 @@ def sync_items(conn) -> int:
     return len(items)
 
 
+def _flatten_group_lines(lines: list | None) -> list:
+    """A QuickBooks "Bundle"/Group line (DetailType 'GroupLineDetail') carries its
+    real product content one level down, in GroupLineDetail.Line[] — the line
+    itself has no SalesItemLineDetail, so the naive per-line scan below silently
+    saw zero items for it. Seen live: 8 invoices (all 2017, all bundled "N oz.
+    <product>" containers built from a Group item) synced with SOME or ALL of
+    their product lines missing, showing as "no extracted data" in Reconcile even
+    though the invoice plainly has a total and QuickBooks has the real lines.
+    Flattens one level so the existing SalesItemLineDetail scan sees them."""
+    out = []
+    for line in lines or []:
+        if line.get("DetailType") == "GroupLineDetail":
+            out.extend((line.get("GroupLineDetail") or {}).get("Line") or [])
+        else:
+            out.append(line)
+    return out
+
+
 def sync_invoices(conn, full_resync: bool = False) -> dict:
     """Pulls invoices from QuickBooks and upserts them into qbo_invoices.
 
@@ -454,7 +472,7 @@ def sync_invoices(conn, full_resync: bool = False) -> dict:
                 if invoice_id is None:
                     continue
                 invoice_ids.append(invoice_id)
-                for line in inv.get("Line") or []:
+                for line in _flatten_group_lines(inv.get("Line")):
                     detail = line.get("SalesItemLineDetail")
                     if not detail:
                         continue
