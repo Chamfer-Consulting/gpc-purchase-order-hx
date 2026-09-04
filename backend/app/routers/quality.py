@@ -322,7 +322,11 @@ def data_quality(
             if reasons:
                 r["reason"] = ", ".join(reasons)
                 qm_flagged.append(r)
-        qm_flagged.sort(key=lambda r: (r["day_gap"] is None, -(r["day_gap"] or 0)))
+        # A double-linked invoice is actively double-counting revenue between two
+        # orders — worse than a merely-suspicious date gap — so it sorts first.
+        qm_flagged.sort(key=lambda r: (
+            r["invoice_linked_to_n_pos"] <= 1, r["day_gap"] is None, -(r["day_gap"] or 0),
+        ))
         qm_total = len(qm_flagged)
         qm_rows = _jsonify(qm_flagged[:_ROW_CAP])
 
@@ -395,6 +399,11 @@ def data_quality(
             delta=(f"+{not_po} classified 'not a PO'" if not_po else None)),
         Kpi(label="Math-check failures", value=math_pos),
         Kpi(label="Price anomalies", value=price_pos),
+        Kpi(label="Questionable confirmed matches", value=qm_total,
+            help="A confirmed PO↔invoice link whose customer doesn't corroborate, whose "
+                 f"dates are {_DATE_FAR_DAYS}+ days apart, or where the invoice is also "
+                 "confirmed to a different PO (double-counting its revenue) — review on "
+                 "Reconcile."),
         Kpi(label="PO revenue · no size", value=nosize_po_money, format="currency",
             delta=(f"{nosize_po_lines} line(s) · {nosize_po_pos} PO(s)" if nosize_po_lines else None),
             help="Active PO line items with no container size — set it in the PO editor "

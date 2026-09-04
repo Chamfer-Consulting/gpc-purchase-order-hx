@@ -167,14 +167,23 @@ def _is_voided(row: dict) -> bool:
 
 
 def get_latest_pos(conn) -> list[dict]:
-    """The current (most recent) version of every successfully-extracted PO —
+    """The current (most recent) version of every successfully-extracted, ACTIVE PO —
     grouped by po_number (falling back to source_file), keeping the row with the
     latest po_recency() (document_printed_at > source_received_at > sent_date >
-    po_date). Same dedup the analytics pages' prepare() does."""
+    po_date). Same dedup the analytics pages' prepare() does.
+
+    The status filter is applied AFTER picking the latest revision per po_key, not
+    in the WHERE clause — so a PO withdrawn/cancelled/voided/deleted after being
+    superseded doesn't resurrect an older, active-but-stale revision as "the
+    latest" (a withdrawn *latest* revision means this order isn't a live thing
+    needing an invoice match at all, not "fall back to what it looked like before
+    the last edit"). Data Quality / Overview / Reconcile all otherwise scope to
+    status='active' — matching needs the same scope or it disagrees with them
+    about which POs even exist to reconcile."""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT id, po_number, source_file, customer_name, po_date, sent_date, "
-            "delivery_date, total, document_printed_at, source_received_at "
+            "delivery_date, total, document_printed_at, source_received_at, status "
             "FROM purchase_orders WHERE error IS NULL"
         )
         cols = [d[0] for d in cur.description]
@@ -189,7 +198,7 @@ def get_latest_pos(conn) -> list[dict]:
     latest = {}
     for r in rows:
         latest[r["_po_key"]] = r  # ascending sort -> last write per key is the latest version
-    return list(latest.values())
+    return [r for r in latest.values() if (r.get("status") or "active") == "active"]
 
 
 def search_pos(conn, query: str = "", limit: int = 50, include_matched: bool = False) -> list[dict]:
@@ -887,11 +896,12 @@ class InvoiceAlreadyLinked(ValueError):
 
 
 def get_unlinked_pos(conn) -> list[dict]:
-    """Latest-version POs with no CONFIRMED link — either no candidate was ever proposed,
-    or every proposed candidate got rejected. Both cases need the manual-link fallback to
-    find them; keying this off "has any link row at all" (the earlier version) missed the
-    second case entirely — a PO whose every candidate was rejected would silently vanish
-    from both the review queue and this fallback, with no way left to resolve it."""
+    """Latest-version, ACTIVE POs (see get_latest_pos) with no CONFIRMED link — either
+    no candidate was ever proposed, or every proposed candidate got rejected. Both cases
+    need the manual-link fallback to find them; keying this off "has any link row at
+    all" (the earlier version) missed the second case entirely — a PO whose every
+    candidate was rejected would silently vanish from both the review queue and this
+    fallback, with no way left to resolve it."""
     pos = get_latest_pos(conn)
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT po_id FROM po_invoice_links WHERE confirmed = TRUE")
