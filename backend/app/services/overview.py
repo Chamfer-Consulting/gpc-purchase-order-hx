@@ -268,8 +268,9 @@ def overview_page(fp: FilterParams) -> PageResponse:
     if not gap.m.empty:
         notes.append(
             "“Requested vs shipped” and Under-shipped / Fulfilment cover only orders "
-            "matched to a confirmed invoice; each order is counted once (its best-"
-            "matching revision), never once per revision. Full breakdown on Order Lifecycle."
+            "matched to a confirmed invoice; each order is counted once, using its "
+            "latest revision actually received — never once per revision. Full "
+            "breakdown on Order Lifecycle."
         )
 
     return PageResponse(

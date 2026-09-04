@@ -80,31 +80,45 @@ def test_no_number_no_thread_falls_back_to_source_file():
 
 
 # ── _choose_revision ─────────────────────────────────────────────────────────
+# "Requested" is the LATEST revision actually received, full stop — never
+# whichever revision's own quantities happen to fit what was shipped (that was
+# the previous, circular behavior: a revision resembling the invoice always
+# looked like a clean fulfilment, which is backwards).
 
-def test_choose_revision_picks_one_per_group_against_combined_invoices():
+def test_choose_revision_picks_the_latest_even_when_an_earlier_one_fits_better():
     links = _df([{"po_id": 10, "invoice_id": 100}, {"po_id": 10, "invoice_id": 101}])
     cand_pos = _df([
+        # po 10: earlier, and its total (30) happens to match what shipped —
+        # under the old quantity-matching logic this would have won.
         {"po_id": 10, "po_number": "1", "gmail_thread_id": None, "source_file": "o.pdf",
          "document_printed_at": None, "source_received_at": None,
          "sent_date": "2026-01-01", "po_date": "2026-01-01"},
+        # po 11: later, revised up — the real final ask, per the customer's own
+        # timeline, regardless of how far it is from what actually shipped.
         {"po_id": 11, "po_number": "1", "gmail_thread_id": None, "source_file": "r.pdf",
          "document_printed_at": None, "source_received_at": None,
          "sent_date": "2026-01-05", "po_date": "2026-01-05"},
     ])
-    po_items = _df([
-        {"po_id": 10, "product_name": "Arugula", "quantity": 100},  # original ask
-        {"po_id": 11, "product_name": "Arugula", "quantity": 60},   # revised down
-    ])
-    po_items["_pk"] = po_items["product_name"].map(_dash._norm_product)
-    inv_items = _df([
-        {"invoice_id": 100, "product_name": "Arugula", "quantity": 30},
-        {"invoice_id": 101, "product_name": "Arugula", "quantity": 30},  # 60 total -> matches rev
-    ])
-    inv_items["_pk"] = inv_items["product_name"].map(_dash._norm_product)
-
-    out = _dash._choose_revision(links, cand_pos, po_items, inv_items, {10: "n:1", 11: "n:1"})
+    out = _dash._choose_revision(links, cand_pos, {10: "n:1", 11: "n:1"})
     assert set(out["po_id"]) == {11}
     assert list(out["_group"]) == ["n:1", "n:1"]
+
+
+def test_choose_revision_ties_fall_back_to_the_originally_linked_row():
+    # Both candidates lack any recency signal (po_recency() -> datetime.min for
+    # both) — a real case: missing document_printed_at / source_received_at, the
+    # majority of this dataset's rows. The tie must not raise or pick arbitrarily.
+    links = _df([{"po_id": 10, "invoice_id": 100}])
+    cand_pos = _df([
+        {"po_id": 10, "po_number": "1", "gmail_thread_id": None, "source_file": "o.pdf",
+         "document_printed_at": None, "source_received_at": None,
+         "sent_date": None, "po_date": None},
+        {"po_id": 11, "po_number": "1", "gmail_thread_id": None, "source_file": "r.pdf",
+         "document_printed_at": None, "source_received_at": None,
+         "sent_date": None, "po_date": None},
+    ])
+    out = _dash._choose_revision(links, cand_pos, {10: "n:1", 11: "n:1"})
+    assert list(out["po_id"]) == [10]
 
 
 def test_choose_revision_single_candidate_group_is_left_alone():
@@ -114,7 +128,5 @@ def test_choose_revision_single_candidate_group_is_left_alone():
          "document_printed_at": None, "source_received_at": None,
          "sent_date": "2026-01-01", "po_date": "2026-01-01"},
     ])
-    po_items = _df([{"po_id": 10, "product_name": "Arugula", "quantity": 100, "_pk": "arugula"}])
-    inv_items = _df([{"invoice_id": 100, "product_name": "Arugula", "quantity": 40, "_pk": "arugula"}])
-    out = _dash._choose_revision(links, cand_pos, po_items, inv_items, {10: "n:1"})
+    out = _dash._choose_revision(links, cand_pos, {10: "n:1"})
     assert list(out["po_id"]) == [10]

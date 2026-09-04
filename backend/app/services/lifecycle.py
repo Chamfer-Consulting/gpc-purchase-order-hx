@@ -340,11 +340,12 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
                 help="Σ shipped ÷ Σ requested across matched order lines (over-ships mask "
                      "under-ships here — see Under-shipped for the per-order view)."),
             Kpi(label="Requested", value=round(requested, 2), format="currency",
-                help="Σ of the matched order lines' requested value, taken from the PO "
-                     "revision that best fits each linked invoice — the customer's FINAL "
-                     "agreed ask, not their first. (The per-order table below shows the "
-                     "first ask separately.) Covers only orders with a confirmed invoice "
-                     "match; fully-withdrawn orders are not included."),
+                help="Σ of the matched order lines' requested value, taken from the LATEST "
+                     "PO revision actually received — the customer's final agreed ask, not "
+                     "their first and not whichever revision happens to match what shipped. "
+                     "(The per-order table below shows the first ask separately.) Covers "
+                     "only orders with a confirmed invoice match; fully-withdrawn orders are "
+                     "not included."),
             Kpi(label="Shipped", value=round(shipped, 2), format="currency"),
         ],
         charts=charts,
@@ -354,10 +355,11 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
             "requested but never linked to an invoice (e.g. fully withdrawn) contributes "
             "nothing to Requested or Shipped.",
             "Matched PO ⇄ invoice lines are aligned by product name (sizes and the two "
-            "sides' spellings vary); the requested side is taken from whichever PO "
-            "revision best matches each invoice. $ figures cover only lines the PO priced. "
-            "Every extracted version of one order (revisions, thread updates, a human "
-            "“revision of X”) is treated as a single order, counted once.",
+            "sides' spellings vary); the requested side is taken from the LATEST revision "
+            "of the PO actually received, not whichever revision happens to match what "
+            "shipped. $ figures cover only lines the PO priced. Every extracted version of "
+            "one order (revisions, thread updates, a human “revision of X”) is treated as "
+            "a single order, counted once.",
             "“Under-shipped” counts only order lines invoiced for less than the customer's "
             "final request; an over-ship elsewhere doesn't offset it. Per row: "
             "Requested − Delivered = Under − Over.",

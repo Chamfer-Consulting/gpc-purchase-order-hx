@@ -625,13 +625,6 @@ def _norm_product(name) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(name or "").lower()).strip()
 
 
-def _qty_overlap(a: dict, b: dict) -> float:
-    keys = set(a) | set(b)
-    inter = sum(min(a.get(k, 0.0), b.get(k, 0.0)) for k in keys)
-    union = sum(max(a.get(k, 0.0), b.get(k, 0.0)) for k in keys)
-    return inter / union if union else 0.0
-
-
 # ── Revision grouping (shared identity of "one order" across its versions) ─────
 # Mirrors extract_pos.annotate_revisions so the analytics group revisions the way
 # the pipeline does: a human "revision of X" / "standalone" review decision is
@@ -698,26 +691,22 @@ def revision_group_keys(po_df: pd.DataFrame, overrides: dict) -> dict:
     return key
 
 
-def _choose_revision(links, cand_pos, po_items, inv_items, group_of):
-    """For each order group with more than one candidate revision, pick the ONE
-    revision whose line items best match the COMBINED profile of all that group's
-    linked invoices — closest total quantity, then most product overlap, then most
-    recent, then an originally-linked row. Every link in the group then takes the
-    requested side from that one revision, so a PO number split across two invoices
-    (or two revision rows) counts its request once. Groups with a single candidate
-    keep each link's own row.
+def _choose_revision(links, cand_pos, group_of):
+    """For each order group with more than one candidate revision, "requested" is
+    the LATEST revision actually received — po_recency() (document_printed_at >
+    source_received_at > sent_date > po_date) — full stop, never whichever
+    revision's own numbers happen to fit what was actually shipped. That
+    quantity-matching approach (the previous version of this function) was
+    circular: a revision that resembles the invoice always LOOKS like a clean
+    fulfilment, which is exactly backwards when the real, later revision is the
+    one that should be compared against what shipped to see whether it was
+    actually honoured. Ties (identical recency, e.g. two rows missing a precise
+    timestamp) fall back to the originally-linked row. Every link in the group
+    then takes the requested side from that one revision, so a PO number split
+    across two invoices (or two revision rows) counts its request once. Groups
+    with a single candidate keep each link's own row.
 
     `group_of`: {po_id -> group key} from revision_group_keys()."""
-    def _profile(df, id_col):
-        out = {}
-        for pid, grp in df.groupby(id_col):
-            out[pid] = grp.groupby("_pk")["quantity"].sum().apply(float).to_dict()
-        return out
-
-    po_map = _profile(po_items, "po_id")
-    inv_map = _profile(inv_items, "invoice_id")
-    po_tot = {k: sum(v.values()) for k, v in po_map.items()}
-    inv_tot = {k: sum(v.values()) for k, v in inv_map.items()}
     rec = {r.po_id: po_recency(r._asdict()) for r in cand_pos.itertuples(index=False)}
 
     cands_by_group: dict = {}
@@ -732,19 +721,8 @@ def _choose_revision(links, cand_pos, po_items, inv_items, group_of):
         cands = cands_by_group.get(grp) or list(grp_links["po_id"].unique())
         if len(cands) <= 1:
             continue
-        inv_ids = grp_links["invoice_id"].unique().tolist()
-        target = sum(inv_tot.get(i, 0.0) for i in inv_ids)
-        iprof: dict = {}
-        for i in inv_ids:
-            for k, v in inv_map.get(i, {}).items():
-                iprof[k] = iprof.get(k, 0.0) + v
         orig = set(grp_links["po_id"])
-        best = max(cands, key=lambda pid: (
-            -abs(po_tot.get(pid, 0.0) - target),
-            _qty_overlap(po_map.get(pid, {}), iprof),
-            rec.get(pid, po_recency({})),
-            pid in orig,
-        ))
+        best = max(cands, key=lambda pid: (rec.get(pid, po_recency({})), pid in orig))
         chosen_for_group[grp] = best
 
     out["po_id"] = [
@@ -787,7 +765,8 @@ def load_matched_line_items() -> pd.DataFrame:
         invoice_ids = links["invoice_id"].unique().tolist()
         # ALL revisions of the linked PO numbers (+ the linked rows themselves for
         # NULL-po_number / conversational orders) — the requested side is taken from
-        # whichever revision best matches each invoice, not blindly the linked row.
+        # the LATEST revision actually received (_choose_revision), not blindly
+        # whichever row a PO-number match happened to link.
         po_numbers = [n for n in links["po_number"].dropna().unique().tolist()]
         po_ids = links["po_id"].unique().tolist()
         thread_ids = links["gmail_thread_id"].dropna().unique().tolist() if "gmail_thread_id" in links.columns else []
@@ -824,7 +803,7 @@ def load_matched_line_items() -> pd.DataFrame:
     inv_items["_pk"] = inv_items["product_name"].map(_norm_product)
 
     group_of = revision_group_keys(cand_pos, _load_revision_overrides())
-    links = _choose_revision(links, cand_pos, po_items, inv_items, group_of)
+    links = _choose_revision(links, cand_pos, group_of)
     # `customer_canonical` = the linked QBO invoice's customer — the single real
     # entity behind the many PO-side spellings ("Get Fresh", "Get Fresh Produce,
     # LLC.", …). Group customer views on this, not the raw extracted name.
