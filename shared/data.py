@@ -47,6 +47,7 @@ except ModuleNotFoundError:  # headless: the FastAPI backend / CLI scripts impor
     st = _NoStreamlit()
 
 import extraction_reviews
+from business_tz import business_now
 from math_check import validate_math
 from qbo_matcher import customers_match, po_recency
 
@@ -198,7 +199,7 @@ def month_over_month_movers(df: pd.DataFrame, date_col: str, group_col: str, val
     if len(months) < 2:
         return None
     skipped_partial = (
-        skip_partial_current and len(months) >= 3 and months[-1] == pd.Timestamp.now().to_period("M")
+        skip_partial_current and len(months) >= 3 and months[-1] == pd.Timestamp(business_now()).to_period("M")
     )
     if skipped_partial:
         months = months[:-1]

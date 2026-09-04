@@ -6,6 +6,7 @@ import { PageLayout } from "@/components/PageLayout";
 import { QueryBoundary } from "@/components/ErrorState";
 import { SectionCard } from "@/components/SectionCard";
 import { EmptyState } from "@/components/EmptyState";
+import { fmtDateTime } from "@/lib/datetime";
 import { fmtCurrency } from "@/lib/format";
 import { NUMERIC_STYLE } from "@/theme/tokens";
 import { pageMeta } from "@/nav";
@@ -67,7 +68,7 @@ function ArchiveTable({ rows }: { rows: ArchivedPo[] }) {
                 {r.total != null ? fmtCurrency(r.total) : "—"}
               </Table.Td>
               <Table.Td>{r.status_reason ?? "—"}</Table.Td>
-              <Table.Td>{(r.status_at ?? r.deleted_at)?.slice(0, 16).replace("T", " ") ?? "—"}</Table.Td>
+              <Table.Td>{fmtDateTime(r.status_at ?? r.deleted_at)}</Table.Td>
               <Table.Td>{r.edited_by ?? "—"}</Table.Td>
             </Table.Tr>
           ))}

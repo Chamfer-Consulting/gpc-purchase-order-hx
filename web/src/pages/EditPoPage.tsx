@@ -51,6 +51,7 @@ import {
   type PoDocument,
 } from "@/api/poDocs";
 import { fetchBlobUrl } from "@/lib/api";
+import { fmtDateTime } from "@/lib/datetime";
 import { fmtCurrency } from "@/lib/format";
 import { promptReason } from "@/lib/modals";
 import { useMe } from "@/api/me";
@@ -239,7 +240,7 @@ export function EditPoPage() {
           {data.header.edited && <Badge variant="light">edited — protected from sync</Badge>}
           {data.header.status_at && (
             <Text size="xs" c="dimmed">
-              status set {data.header.status_at.slice(0, 16).replace("T", " ")}
+              status set {fmtDateTime(data.header.status_at)}
             </Text>
           )}
         </Group>
@@ -334,7 +335,7 @@ export function EditPoPage() {
                 return (
                   <Text size="sm">
                     {c.editedBy ? `${c.editedBy} saved a newer version` : "A newer version was saved"}
-                    {c.editedAt ? ` at ${c.editedAt.slice(0, 16).replace("T", " ")}` : ""}. Reload to
+                    {c.editedAt ? ` at ${fmtDateTime(c.editedAt)}` : ""}. Reload to
                     pick up their changes, then re-apply yours.
                   </Text>
                 );
@@ -1007,7 +1008,7 @@ function DocumentsPanel({ poId, sources }: { poId: number; sources?: PoSources }
                   <Table.Td ta="right" style={NUMERIC_STYLE}>
                     {(d.byte_size / 1024).toFixed(0)} KB
                   </Table.Td>
-                  <Table.Td>{d.captured_at?.slice(0, 16).replace("T", " ") ?? "—"}</Table.Td>
+                  <Table.Td>{fmtDateTime(d.captured_at)}</Table.Td>
                   <Table.Td>
                     <Group gap={4} wrap="nowrap">
                       <Button size="xs" variant="subtle" onClick={() => setViewDoc(d)}>
@@ -1082,7 +1083,7 @@ function AuditPanel({ entries }: { entries: AuditEntry[] }) {
               <Table.Tbody>
                 {summary.map((e) => (
                   <Table.Tr key={e.id}>
-                    <Table.Td>{e.at?.slice(0, 16).replace("T", " ")}</Table.Td>
+                    <Table.Td>{fmtDateTime(e.at)}</Table.Td>
                     <Table.Td>{e.actor ?? "—"}</Table.Td>
                     <Table.Td>
                       <Badge size="xs" variant="light">

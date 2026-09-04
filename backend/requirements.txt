@@ -14,6 +14,10 @@ PyJWT==2.10.1
 # key model). PyJWT needs this for anything other than HS256.
 cryptography==44.0.0
 python-dateutil==2.9.0.post0
+# zoneinfo (stdlib) needs an IANA tz database on disk — some minimal container
+# images don't ship one. This vendors it so business_tz.BUSINESS_TIMEZONE always
+# resolves regardless of host image.
+tzdata==2024.2
 pandas==2.2.3
 plotly==5.24.1
 cachetools==5.5.0

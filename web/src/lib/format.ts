@@ -1,5 +1,7 @@
 /** Display formatters — the column-formatting counterpart to dashboard/labels.py. */
 
+import { fmtDateOnly } from "./datetime";
+
 const usd0 = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -44,7 +46,11 @@ export function formatCell(value: unknown, kind: ColumnKind): string {
     case "percent":
       return fmtPercent(Number(value));
     case "date":
-      return String(value).slice(0, 10);
+      // Business-timezone calendar date. A plain DATE column (po_date, txn_date —
+      // no time-of-day) passes through unchanged; a TIMESTAMPTZ column shown as a
+      // bare date (extracted_at, delivered_at) converts first so an early-UTC-
+      // morning timestamp doesn't read as the wrong day.
+      return fmtDateOnly(String(value));
     default:
       return String(value);
   }

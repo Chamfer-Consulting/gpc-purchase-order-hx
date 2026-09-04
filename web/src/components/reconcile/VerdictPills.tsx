@@ -1,6 +1,7 @@
 import { Button, Group, Text } from "@mantine/core";
 import type { ReconcilePoView } from "@/api/reconcile";
 import { useMe } from "@/api/me";
+import { fmtDateOnly } from "@/lib/datetime";
 import { RevisionOfInput, useExtractionDecision, type Verdict } from "./extraction";
 
 const PILLS: { v: Verdict; label: string; key: string }[] = [
@@ -45,7 +46,7 @@ export function VerdictPills({ ctl, view }: { ctl: ReturnType<typeof useExtracti
           <Text size="xs" c="dimmed" ml={4}>
             saved
             {ext.revision_of ? `: revision of ${ext.revision_of}` : ext.verdict ? `: ${ext.verdict}` : ""}
-            {ext.decided_at ? ` · ${ext.decided_at.slice(0, 10)}` : ""}
+            {ext.decided_at ? ` · ${fmtDateOnly(ext.decided_at)}` : ""}
           </Text>
         )}
       </Group>

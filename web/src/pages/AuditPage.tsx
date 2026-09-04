@@ -25,6 +25,7 @@ import { PageLayout } from "@/components/PageLayout";
 import { QueryBoundary } from "@/components/ErrorState";
 import { SectionCard } from "@/components/SectionCard";
 import { EmptyState } from "@/components/EmptyState";
+import { fmtDateTime } from "@/lib/datetime";
 import { pageMeta } from "@/nav";
 
 const iso = (d: Date | null) => (d ? dayjs(d).format("YYYY-MM-DD") : undefined);
@@ -134,7 +135,7 @@ function AuditTable({ rows }: { rows: AuditRow[] }) {
             return (
               <Fragment key={r.id}>
                 <Table.Tr style={{ cursor: "pointer" }} onClick={() => toggle(r.id)}>
-                  <Table.Td>{r.at?.slice(0, 16).replace("T", " ") ?? "—"}</Table.Td>
+                  <Table.Td>{fmtDateTime(r.at)}</Table.Td>
                   <Table.Td>
                     <Text size="xs" truncate maw={190} title={r.actor ?? undefined}>
                       {r.actor ?? "—"}

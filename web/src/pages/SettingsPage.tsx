@@ -32,6 +32,7 @@ import {
 } from "@/api/settings";
 import { useMe, type Role } from "@/api/me";
 import { useRemoveTeamMember, useSetTeamMember, useTeam } from "@/api/team";
+import { fmtDateOnly, fmtDateTime } from "@/lib/datetime";
 import { confirmAction } from "@/lib/modals";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { PageLayout } from "@/components/PageLayout";
@@ -150,7 +151,7 @@ function whenText(m: {
   has_account: boolean;
   has_role: boolean;
 }): string {
-  if (m.last_sign_in_at) return `last sign-in ${m.last_sign_in_at.slice(0, 10)}`;
+  if (m.last_sign_in_at) return `last sign-in ${fmtDateOnly(m.last_sign_in_at)}`;
   if (m.has_account) return "signed up, no sign-in yet";
   return "invited — hasn't signed in";
 }
@@ -711,9 +712,7 @@ function QboCard({ qbo }: { qbo: ConnectionsStatus["qbo"] }) {
                 {" · "}
               </>
             )}
-            {qbo.last_synced_at
-              ? `last sync ${qbo.last_synced_at.slice(0, 16).replace("T", " ")}`
-              : "never synced"}
+            {qbo.last_synced_at ? `last sync ${fmtDateTime(qbo.last_synced_at)}` : "never synced"}
           </Text>
           {qbo.auto_sync_error && (
             <Alert color="red" variant="light">
@@ -722,7 +721,7 @@ function QboCard({ qbo }: { qbo: ConnectionsStatus["qbo"] }) {
           )}
           {qbo.auto_synced_at && !qbo.auto_sync_error && (
             <Text size="xs" c="dimmed">
-              Auto-sync last ran {qbo.auto_synced_at.slice(0, 16).replace("T", " ")} UTC
+              Auto-sync last ran {fmtDateTime(qbo.auto_synced_at)}
             </Text>
           )}
           <Group mt="xs">
@@ -797,9 +796,7 @@ function GmailCard({ gmail }: { gmail: ConnectionsStatus["gmail"] }) {
         <Stack gap={6}>
           <Text size="sm" c="dimmed">
             {gmail.email_address}
-            {gmail.last_synced_at
-              ? ` · last scan ${gmail.last_synced_at.slice(0, 16).replace("T", " ")}`
-              : " · never scanned"}
+            {gmail.last_synced_at ? ` · last scan ${fmtDateTime(gmail.last_synced_at)}` : " · never scanned"}
           </Text>
           <Text size="xs" c="dimmed">
             Extraction runs on a schedule (GitHub Actions). This just holds the mailbox token.

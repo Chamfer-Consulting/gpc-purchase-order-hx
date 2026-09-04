@@ -14,6 +14,8 @@ import math
 
 import pandas as pd
 
+from business_tz import business_now  # shared/, via app.reuse
+
 from ..deps import FilterParams
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope
 from ._util import finite as _finite
@@ -205,7 +207,7 @@ def overview_page(fp: FilterParams) -> PageResponse:
     # month vs a full one isn't a real "change" (mirrors month_over_month_movers).
     partial_last = (
         len(month_ix) >= 3
-        and month_ix[-1] == pd.Timestamp.now().strftime("%Y-%m")
+        and month_ix[-1] == business_now().strftime("%Y-%m")
     )
     inv_change: list[float | None] = [None]
     inv_change_notes: list[str | None] = [
