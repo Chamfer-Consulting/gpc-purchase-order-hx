@@ -58,6 +58,9 @@ export interface ReconcileCandidate {
   /** invoice's PO number vs this order's, normalised — null if the invoice has none */
   po_number_match: boolean | null;
   diff: LineDiff;
+  /** set when this invoice is already confirmed to a DIFFERENT PO — confirming here
+   *  would violate one-invoice-one-PO and is rejected server-side; unlink there first */
+  other_confirmed_po?: { po_id: number; po_number: string | null } | null;
 }
 
 export interface ReconcileExtraction {

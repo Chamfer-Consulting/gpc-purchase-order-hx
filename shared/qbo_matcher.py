@@ -558,7 +558,14 @@ def run_matching(conn) -> dict:
     new_links = []  # (po_id, invoice_id, match_method, match_score, confirmed)
     auto_matched = ambiguous = customer_mismatch = 0
     unmatched_pos = []
-    decisive_winners = []  # (po_id, winner_invoice_id) — their losing siblings get rejected post-insert
+    # Every (po_id, winner_invoice_id) this run auto-confirmed — by an exact single
+    # po_number match or a decisive line-item disambiguation. Their losing/leftover
+    # pending siblings get rejected post-insert, the same cleanup confirm_link() and
+    # manual_link() do for a human's confirm — otherwise a PO auto-resolved here
+    # keeps showing "needs a match decision" forever because an older, lower-quality
+    # fuzzy candidate from a previous run (before the exact match existed) is still
+    # sitting pending against it (seen live: 48 POs, 81 stale rows).
+    newly_confirmed = []
 
     for po in pos:
         norm = normalize_po_number(po.get("po_number"))
@@ -571,6 +578,7 @@ def run_matching(conn) -> dict:
 
         if len(candidates) == 1:
             new_links.append((po["id"], candidates[0]["id"], "po_number", 1.0, True))
+            newly_confirmed.append((po["id"], candidates[0]["id"]))
             auto_matched += 1
         elif len(candidates) > 1:
             # Same PO number on multiple invoices for this customer (revisions/
@@ -591,7 +599,7 @@ def run_matching(conn) -> dict:
                 new_links.append((po["id"], best_inv["id"], "po_number_items", best_sim, True))
                 for sim, c in scored[1:]:
                     new_links.append((po["id"], c["id"], "po_number_ambiguous", round(sim, 3), False))
-                decisive_winners.append((po["id"], best_inv["id"]))
+                newly_confirmed.append((po["id"], best_inv["id"]))
                 auto_matched += 1
             else:
                 # A real tie — keep every candidate for the reviewer, but as
@@ -641,10 +649,11 @@ def run_matching(conn) -> dict:
                 """,
                 new_links,
             )
-            # A PO auto-resolved by line-item disambiguation is done — reject its
-            # losing same-number siblings (and any stale pending fuzzy rows) so they
-            # don't linger in the review queue.
-            for po_id, winner_inv in decisive_winners:
+            # A PO auto-resolved this run is done — reject its other still-pending
+            # candidates (losing same-number siblings, and any stale lower-confidence
+            # fuzzy rows left over from before the exact match existed) so they don't
+            # linger in the review queue pointing at a PO that's already matched.
+            for po_id, winner_inv in newly_confirmed:
                 cur.execute(
                     "UPDATE po_invoice_links SET rejected = TRUE "
                     "WHERE po_id = %s AND invoice_id <> %s AND confirmed = FALSE AND rejected = FALSE",
@@ -669,7 +678,16 @@ def run_matching(conn) -> dict:
 
 def get_needs_review(conn) -> list[dict]:
     """Full header detail for both sides (not just a summary) — the review UI needs
-    enough here to render a real side-by-side comparison, not a one-line guess."""
+    enough here to render a real side-by-side comparison, not a one-line guess.
+
+    Excludes a PO that already has a CONFIRMED link — such a row is stale by
+    definition (the decision is already made) and should never resurface as
+    "awaiting a decision". This is normally prevented at the source (run_matching's
+    sibling-rejection, confirm_link/manual_link rejecting the PO's other pending
+    candidates); the filter here is the defensive backstop so any other path that
+    manages to leave a stale pending row behind can't turn into a PO that's stuck
+    showing in the review queue / reconcile screen with no matching UI to resolve it
+    (it already reads as "Matched")."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -684,6 +702,10 @@ def get_needs_review(conn) -> list[dict]:
             JOIN purchase_orders po ON po.id = l.po_id
             JOIN qbo_invoices inv ON inv.id = l.invoice_id
             WHERE l.confirmed = FALSE AND l.rejected = FALSE
+              AND NOT EXISTS (
+                  SELECT 1 FROM po_invoice_links c
+                  WHERE c.po_id = l.po_id AND c.confirmed = TRUE
+              )
             ORDER BY po.po_number, l.match_score DESC NULLS LAST
             """
         )
@@ -844,6 +866,26 @@ def get_confirmed_po_for_invoice(conn, invoice_id: int) -> dict | None:
     return {"id": row[0], "po_number": row[1], "source_file": row[2]}
 
 
+class InvoiceAlreadyLinked(ValueError):
+    """Raised by confirm_link/manual_link when confirming would give one invoice two
+    different confirmed POs — the matching invariant documented at the top of this
+    module ("one invoice should back at most one PO"). Seen live: a stale pending
+    fuzzy candidate confirmed by a reviewer well after the same invoice had already
+    been correctly confirmed to a different PO by an exact PO-number match, silently
+    double-counting that invoice's revenue across two orders. Callers should surface
+    `.other_po_id` / `.other_po_number` so a human can unlink there first (or, for
+    manual_link, pass replace_existing=True to force the reassignment deliberately)."""
+
+    def __init__(self, invoice_id: int, other_po_id: int, other_po_number: str | None):
+        self.invoice_id = invoice_id
+        self.other_po_id = other_po_id
+        self.other_po_number = other_po_number
+        super().__init__(
+            f"invoice {invoice_id} is already confirmed to PO "
+            f"{other_po_number or other_po_id} — unlink it there first"
+        )
+
+
 def get_unlinked_pos(conn) -> list[dict]:
     """Latest-version POs with no CONFIRMED link — either no candidate was ever proposed,
     or every proposed candidate got rejected. Both cases need the manual-link fallback to
@@ -859,7 +901,12 @@ def get_unlinked_pos(conn) -> list[dict]:
 
 def confirm_link(conn, po_id: int, invoice_id: int, *, commit: bool = True) -> bool:
     """Returns False if no (po_id, invoice_id) link row exists — the caller should
-    404 rather than report a silent success."""
+    404 rather than report a silent success. Raises InvoiceAlreadyLinked if this
+    invoice is already confirmed to a *different* PO — a one-click Confirm has no
+    way to mean "reassign it", so this always blocks; unlink the other PO first."""
+    other = get_confirmed_po_for_invoice(conn, invoice_id)
+    if other and other["id"] != po_id:
+        raise InvoiceAlreadyLinked(invoice_id, other["id"], other["po_number"])
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE po_invoice_links SET confirmed = TRUE, rejected = FALSE "
@@ -898,7 +945,15 @@ def manual_link(conn, po_id: int, invoice_id: int, replace_existing: bool = Fals
     a decision has been made, they're no longer relevant. A PO that already has a
     *confirmed* link is left alone by default (multiple invoices per PO is sometimes
     correct — partial shipments) unless replace_existing=True, in which case its other
-    confirmed link(s) are rejected first so this becomes the sole one."""
+    confirmed link(s) are rejected first so this becomes the sole one.
+
+    Symmetrically, if `invoice_id` is already confirmed to a *different* PO, raises
+    InvoiceAlreadyLinked unless replace_existing=True — in which case that other PO's
+    link on this invoice is rejected too, so one invoice can never end up confirmed
+    to two POs even under an explicit override (see InvoiceAlreadyLinked)."""
+    other_po = get_confirmed_po_for_invoice(conn, invoice_id)
+    if other_po and other_po["id"] != po_id and not replace_existing:
+        raise InvoiceAlreadyLinked(invoice_id, other_po["id"], other_po["po_number"])
     with conn.cursor() as cur:
         if replace_existing:
             cur.execute(
@@ -906,6 +961,12 @@ def manual_link(conn, po_id: int, invoice_id: int, replace_existing: bool = Fals
                 "WHERE po_id = %s AND invoice_id != %s AND confirmed = TRUE",
                 (po_id, invoice_id),
             )
+            if other_po and other_po["id"] != po_id:
+                cur.execute(
+                    "UPDATE po_invoice_links SET confirmed = FALSE, rejected = TRUE "
+                    "WHERE invoice_id = %s AND po_id != %s AND confirmed = TRUE",
+                    (invoice_id, po_id),
+                )
         cur.execute(
             """
             INSERT INTO po_invoice_links (po_id, invoice_id, match_method, match_score, confirmed)

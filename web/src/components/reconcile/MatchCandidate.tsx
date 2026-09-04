@@ -1,5 +1,6 @@
-import { Anchor, Badge, Button, Group, Paper, Text } from "@mantine/core";
-import { IconCheck, IconExternalLink, IconX } from "@tabler/icons-react";
+import { Anchor, Badge, Button, Group, Paper, Text, Tooltip } from "@mantine/core";
+import { IconAlertTriangle, IconCheck, IconExternalLink, IconX } from "@tabler/icons-react";
+import { Link } from "react-router-dom";
 import type { ReconcileCandidate } from "@/api/reconcile";
 import { fmtCurrency } from "@/lib/format";
 import { NUMERIC_STYLE } from "@/theme/tokens";
@@ -100,6 +101,18 @@ export function MatchCandidate({
           <Group mt={2}>
             <InvoicePoNumber invPoNumber={c.inv_po_number} match={c.po_number_match} orderPo={orderPo} />
           </Group>
+          {c.other_confirmed_po && (
+            <Group gap={4} mt={4}>
+              <IconAlertTriangle size={13} color="var(--mantine-color-red-6)" />
+              <Text size="xs" c="red">
+                Already confirmed to{" "}
+                <Anchor component={Link} to={`/reconcile/${c.other_confirmed_po.po_id}`} c="red" fw={600}>
+                  PO {c.other_confirmed_po.po_number ?? c.other_confirmed_po.po_id}
+                </Anchor>{" "}
+                — unlink it there first.
+              </Text>
+            </Group>
+          )}
         </div>
         <Badge color={confColor(c.confidence)} variant="light">
           {c.confidence}
@@ -110,16 +123,21 @@ export function MatchCandidate({
       <LineDiffTable diff={c.diff} />
 
       <Group mt="sm" gap="xs">
-        <Button
-          size="xs"
-          variant={best ? "filled" : "light"}
-          leftSection={<IconCheck size={14} />}
-          onClick={onConfirm}
-          loading={busy}
-          disabled={!canEdit}
+        <Tooltip
+          disabled={!c.other_confirmed_po}
+          label={`Already confirmed to PO ${c.other_confirmed_po?.po_number ?? c.other_confirmed_po?.po_id} — unlink it there first`}
         >
-          Confirm{best ? " match" : ""}
-        </Button>
+          <Button
+            size="xs"
+            variant={best ? "filled" : "light"}
+            leftSection={<IconCheck size={14} />}
+            onClick={onConfirm}
+            loading={busy}
+            disabled={!canEdit || !!c.other_confirmed_po}
+          >
+            Confirm{best ? " match" : ""}
+          </Button>
+        </Tooltip>
         <Button
           size="xs"
           variant="default"

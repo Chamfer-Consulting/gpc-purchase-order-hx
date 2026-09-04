@@ -230,6 +230,30 @@ def _po_num_match(po_number, inv_po_number):
     return qbo_matcher.normalize_po_number(po_number) == qbo_matcher.normalize_po_number(inv_po_number)
 
 
+def _other_confirmed_pos(conn, inv_ids, exclude_po_id: int) -> dict[int, dict]:
+    """invoice_id -> the OTHER PO (not this view's) it's already confirmed to, if
+    any — so a candidate that would violate the one-invoice-one-PO invariant
+    (qbo_matcher.InvoiceAlreadyLinked) shows a warning before a reviewer clicks
+    Confirm and gets a rejected mutation instead."""
+    ids = list(inv_ids)
+    if not ids:
+        return {}
+    out: dict[int, dict] = {}
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT l.invoice_id, po.id AS po_id, po.po_number
+            FROM po_invoice_links l
+            JOIN purchase_orders po ON po.id = l.po_id
+            WHERE l.invoice_id = ANY(%s) AND l.confirmed = TRUE AND l.po_id <> %s
+            """,
+            (ids, exclude_po_id),
+        )
+        for r in cur.fetchall():
+            out[r["invoice_id"]] = {"po_id": r["po_id"], "po_number": r["po_number"]}
+    return out
+
+
 def _invoice_meta(conn, inv_ids) -> dict[int, dict]:
     """Per-invoice QBO extras the Match stage needs: a deep link into QuickBooks'
     own UI and the PO number recorded on the invoice itself (QBO 'PO Number'
@@ -304,6 +328,7 @@ def po_view(conn, po_id: int) -> dict | None:
     inv_ids = sorted({*(c["invoice_id"] for c in pending), *link_inv_ids})
     _, inv_items_map = qbo_matcher.get_line_items_for_review(conn, [], inv_ids)
     inv_meta = _invoice_meta(conn, inv_ids)
+    other_po = _other_confirmed_pos(conn, inv_ids, po_id)
 
     base["candidates"] = [
         {
@@ -320,6 +345,7 @@ def po_view(conn, po_id: int) -> dict | None:
                 c.get("po_number"), inv_meta.get(c["invoice_id"], {}).get("inv_po_number")
             ),
             "diff": line_diff(po_items, inv_items_map.get(c["invoice_id"], [])),
+            "other_confirmed_po": other_po.get(c["invoice_id"]),
         }
         for c in pending
     ]

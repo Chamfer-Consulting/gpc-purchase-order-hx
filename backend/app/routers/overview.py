@@ -5,14 +5,13 @@ the "needs attention" digest is assembled here (it needs a live conn)."""
 import time
 
 import qbo_client  # shared/, via app.reuse
-import qbo_matcher  # shared/, via app.reuse
 from fastapi import APIRouter, Depends
 
 from ..auth import AuthedUser, current_user
 from ..deps import FilterParams, filter_params
 from ..reused_db import reused_conn
 from ..schemas import AttentionItem, PageResponse
-from ..services import review_queue
+from ..services import reconcile, review_queue
 from ..services.overview import overview_page
 
 router = APIRouter(prefix="/api", tags=["overview"])
@@ -80,12 +79,21 @@ def _compute_attention(conn) -> list[AttentionItem]:
         items.append(AttentionItem(severity="warning", count=len(q) - stale, href="/reconcile",
                                    title=f"{len(q) - stale} extraction(s) flagged for review"))
 
-    if (unlinked := qbo_matcher.get_unlinked_pos(conn)):
-        items.append(AttentionItem(severity="warning", count=len(unlinked), href="/reconcile",
-                                   title=f"{len(unlinked)} PO(s) with no confirmed invoice match"))
-    if (needs := qbo_matcher.get_needs_review(conn)):
-        items.append(AttentionItem(severity="warning", count=len(needs), href="/reconcile",
-                                   title=f"{len(needs)} match candidate(s) awaiting a decision"))
+    # Same counts /reconcile itself shows — reconcile.queue() groups by distinct PO
+    # (one PO with 3 fuzzy candidates is one item to review, not three) and already
+    # excludes a PO that has a confirmed link from "awaiting a decision". Computing
+    # these independently here used to disagree with /reconcile badly: raw candidate
+    # ROWS instead of POs, and "no confirmed match" double-counting POs that DO have
+    # pending candidates (so already counted in the line below) — e.g. one snapshot
+    # showed 695 "match candidates" / 901 "no confirmed match" here vs. 283 / 667
+    # actually queued on /reconcile.
+    rq = reconcile.queue(conn)
+    if (n := rq["counts"]["match"]):
+        items.append(AttentionItem(severity="warning", count=n, href="/reconcile",
+                                   title=f"{n} order(s) with a match candidate awaiting a decision"))
+    if (n := rq["counts"]["unlinked_no_candidate"]):
+        items.append(AttentionItem(severity="warning", count=n, href="/reconcile",
+                                   title=f"{n} PO(s) with no confirmed invoice match or candidate"))
 
     qc = qbo_client.get_connection(conn)
     if qc and qc.get("auto_sync_error"):

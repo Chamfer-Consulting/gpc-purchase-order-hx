@@ -283,6 +283,12 @@ def data_quality(
         unsent_money = float(unsent_money or 0)
 
         # -- questionable confirmed matches ---------------------------
+        # Also flags an invoice confirmed to more than one PO at once — the matching
+        # invariant documented in shared/qbo_matcher.py ("one invoice should back at
+        # most one PO") — via `dup`. run_matching() and confirm_link()/manual_link()
+        # now block creating a new one of these (qbo_matcher.InvoiceAlreadyLinked),
+        # but this still surfaces any that already exist so a human decides which
+        # link is real instead of the double-counted revenue going unnoticed.
         qm_scope, qm_p = _scope(fp, "inv.txn_date", "inv.customer_name")
         dcur.execute(
             f"""
@@ -290,10 +296,15 @@ def data_quality(
                    COALESCE(po.po_date, po.sent_date::date) AS po_date, po.total AS po_total,
                    inv.doc_number, inv.customer_name AS invoice_customer,
                    inv.txn_date AS invoice_date, inv.total_amt AS invoice_total,
-                   abs(COALESCE(po.po_date, po.sent_date::date) - inv.txn_date) AS day_gap
+                   abs(COALESCE(po.po_date, po.sent_date::date) - inv.txn_date) AS day_gap,
+                   dup.n_pos AS invoice_linked_to_n_pos
             FROM po_invoice_links l
             JOIN purchase_orders po ON po.id = l.po_id
             JOIN qbo_invoices inv ON inv.id = l.invoice_id
+            JOIN (
+                SELECT invoice_id, count(DISTINCT po_id) AS n_pos
+                FROM po_invoice_links WHERE confirmed = TRUE GROUP BY invoice_id
+            ) dup ON dup.invoice_id = l.invoice_id
             WHERE l.confirmed = TRUE{qm_scope}
             """,
             qm_p,
@@ -306,6 +317,8 @@ def data_quality(
                 reasons.append("customer")
             if r["day_gap"] is not None and r["day_gap"] > _DATE_FAR_DAYS:
                 reasons.append("date gap")
+            if r["invoice_linked_to_n_pos"] > 1:
+                reasons.append(f"invoice also confirmed to {r['invoice_linked_to_n_pos'] - 1} other PO(s)")
             if reasons:
                 r["reason"] = ", ".join(reasons)
                 qm_flagged.append(r)

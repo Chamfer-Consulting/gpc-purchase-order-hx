@@ -646,8 +646,11 @@ def link_invoice(conn, actor: str | None, po_id: int, invoice_id: int,
         if cur.fetchone() is None:
             raise AdminError("invoice not found")
     # One transaction: link rows + audit row + commit together.
-    qbo_matcher.manual_link(conn, po_id, invoice_id, replace_existing=replace_existing,
-                            commit=False)
+    try:
+        qbo_matcher.manual_link(conn, po_id, invoice_id, replace_existing=replace_existing,
+                                commit=False)
+    except qbo_matcher.InvoiceAlreadyLinked as exc:
+        raise AdminError(str(exc)) from exc
     audit.log(conn, actor=actor, action="link", entity="purchase_order",
               entity_id=po_id, before=None,
               after={"invoice_id": invoice_id, "replace_existing": replace_existing})

@@ -9,8 +9,18 @@ from . import audit
 from .po_admin import AdminError
 
 
+def _confirm_link(conn, po_id: int, invoice_id: int) -> bool:
+    """qbo_matcher.confirm_link, with InvoiceAlreadyLinked turned into the same
+    typed AdminError every other admin-surface rejection uses — a one-click Confirm
+    must never silently give one invoice two confirmed POs (see InvoiceAlreadyLinked)."""
+    try:
+        return qbo_matcher.confirm_link(conn, po_id, invoice_id, commit=False)
+    except qbo_matcher.InvoiceAlreadyLinked as exc:
+        raise AdminError(str(exc)) from exc
+
+
 def confirm(conn, actor: str | None, po_id: int, invoice_id: int) -> None:
-    hit = qbo_matcher.confirm_link(conn, po_id, invoice_id, commit=False)
+    hit = _confirm_link(conn, po_id, invoice_id)
     if not hit:
         raise AdminError("no candidate link for that PO / invoice")
     audit.log(conn, actor=actor, action="link_confirm", entity="purchase_order",
@@ -33,7 +43,7 @@ def confirm_batch(conn, actor: str | None, pairs: list[tuple[int, int]]) -> dict
     seen: list[tuple[int, int]] = list(dict.fromkeys(pairs))
     missing: list[dict] = []
     for po_id, invoice_id in seen:
-        if not qbo_matcher.confirm_link(conn, po_id, invoice_id, commit=False):
+        if not _confirm_link(conn, po_id, invoice_id):
             missing.append({"po_id": po_id, "invoice_id": invoice_id})
     if missing:
         raise AdminError(f"{len(missing)} pair(s) had no candidate link; nothing confirmed")

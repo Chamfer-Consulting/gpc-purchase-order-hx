@@ -1,10 +1,29 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Group, Loader, Modal, Stack, Text } from "@mantine/core";
-import { usePo, useSavePo, type PoHeader, type PoLineItem } from "@/api/poEdit";
+import { usePo, useSavePo, type PoDetail, type PoHeader, type PoLineItem } from "@/api/poEdit";
 import { useMe } from "@/api/me";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { notifySuccess } from "@/lib/notify";
 import { EMPTY_LINE, PoLineItemsEditor, type EditableLine } from "./PoLineItemsEditor";
+
+const HEADER_KEYS: (keyof PoHeader)[] = [
+  "po_number", "customer_name", "po_date", "delivery_date", "subtotal", "tax", "total", "notes",
+];
+const ITEM_KEYS: (keyof PoLineItem)[] = [
+  "id", "product_name", "container_size", "quantity", "unit_price", "line_total",
+  "additional_cost", "voided",
+];
+
+/** Compare the editable slice of the form to the server copy — same shape as
+ *  EditPoPage's formEqual, so both editors agree on what counts as "unsaved". */
+function formEqual(header: Partial<PoHeader>, items: EditableLine[], data: PoDetail): boolean {
+  for (const k of HEADER_KEYS) if ((header[k] ?? null) !== (data.header[k] ?? null)) return false;
+  if (items.length !== data.items.length) return false;
+  for (let i = 0; i < items.length; i++) {
+    for (const k of ITEM_KEYS) if ((items[i][k] ?? null) !== (data.items[i][k] ?? null)) return false;
+  }
+  return true;
+}
 
 /** Edit one PO's line items in a modal — the fast path from a Data Quality row
  *  (math check / price anomaly / no-size) so a person can correct the flagged
@@ -40,14 +59,33 @@ function Body({ poId, onClose }: { poId: number; onClose: () => void }) {
   const [items, setItems] = useState<EditableLine[]>([]);
   const [header, setHeader] = useState<Partial<PoHeader>>({});
   const [saveErr, setSaveErr] = useState<string | null>(null);
+  // Seeded once per PO open, not on every background refetch of `data` — otherwise
+  // a query invalidation while the person is mid-edit (another tab, a realtime
+  // update elsewhere on the page) silently wipes what they just typed. Mirrors
+  // EditPoPage's dirty-guarded reseed.
+  const seededRef = useRef<number | null>(null);
+  // The lock_version the form was actually built from — sent as expected_version so
+  // a save still 409s correctly if the PO changed on the server while dirty (the
+  // dirty-guarded reseed above means `data.header.lock_version` itself can already
+  // have moved past what's on screen).
+  const [seededVersion, setSeededVersion] = useState<number | undefined>(undefined);
+  const isDirty = useMemo(
+    () => (data && seededRef.current === poId ? !formEqual(header, items, data) : false),
+    [header, items, data, poId],
+  );
+  const dirtyRef = useRef(false);
+  dirtyRef.current = isDirty;
 
   useEffect(() => {
     if (!data) return;
+    if (seededRef.current === poId && dirtyRef.current) return;
     setItems(data.items.map((it) => makeRow(it)));
     setHeader(data.header);
     setSaveErr(null);
+    seededRef.current = poId;
+    setSeededVersion(data.header.lock_version);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, poId]);
 
   if (isLoading) return <Loader size="sm" />;
   if (error)
@@ -66,7 +104,7 @@ function Body({ poId, onClose }: { poId: number; onClose: () => void }) {
         header,
         items: clean,
         removed_items: data!.removed_items,
-        expected_version: data!.header.lock_version,
+        expected_version: seededVersion ?? data!.header.lock_version,
       },
       {
         onSuccess: () => {
