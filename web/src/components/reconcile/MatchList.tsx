@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import {
+  Anchor,
   Badge,
   Button,
+  Collapse,
   Divider,
   Group,
   Paper,
@@ -10,16 +12,112 @@ import {
   Text,
   TextInput,
 } from "@mantine/core";
-import type { ReconcilePoView } from "@/api/reconcile";
+import { IconExternalLink } from "@tabler/icons-react";
+import type { LineDiff, ReconcilePoView } from "@/api/reconcile";
 import { useConfirmBatch, useReconcileConfirm, useReconcileReject } from "@/api/reconcile";
-import { useInvoiceSearch, useLinkInvoice, useUnlinkInvoice } from "@/api/poEdit";
+import { useInvoiceSearch, useLinkInvoice, useUnlinkInvoice, type PoLink } from "@/api/poEdit";
 import { useMe } from "@/api/me";
 import { fmtCurrency } from "@/lib/format";
+import { fmtDateOnly } from "@/lib/datetime";
 import { notifySuccess } from "@/lib/notify";
 import { NUMERIC_STYLE } from "@/theme/tokens";
 import { EmptyState } from "@/components/EmptyState";
-import { DiffSummary } from "./LineDiff";
+import { DiffSummary, LineDiffTable } from "./LineDiff";
 import { CONF_RANK, InvoicePoNumber, MatchCandidate } from "./MatchCandidate";
+
+type MatchedLink = PoLink & {
+  diff?: LineDiff;
+  inv_po_number?: string | null;
+  po_number_match?: boolean | null;
+};
+
+/** A confirmed PO⇄invoice link. Keeps the full line-by-line PO vs invoice
+ *  comparison visible (collapsible) after confirming — the same `LineDiffTable`
+ *  a pending candidate shows, so confirming a match doesn't hide the detail you
+ *  used to decide it. Open by default when it's the sole match or the lines
+ *  don't cleanly reconcile (the case you most want to keep looking at);
+ *  collapsed by default for extra clean matches on a multi-invoice PO. */
+function MatchedInvoice({
+  l,
+  orderPo,
+  canEdit,
+  soleMatch,
+  onUnlink,
+  unlinking,
+}: {
+  l: MatchedLink;
+  orderPo: string | null;
+  canEdit: boolean;
+  soleMatch: boolean;
+  onUnlink: () => void;
+  unlinking: boolean;
+}) {
+  const [open, setOpen] = useState(soleMatch || (l.diff ? !l.diff.clean : false));
+
+  return (
+    <Paper withBorder radius="md" p="md" bg="var(--mantine-color-gpGreen-light)">
+      <Group justify="space-between" wrap="wrap" align="flex-start">
+        <div style={{ minWidth: 0 }}>
+          <Group gap={8} wrap="wrap">
+            <Text size="sm" fw={600}>
+              Invoice {l.doc_number ?? l.invoice_id}
+            </Text>
+            <Badge size="xs" variant="light" color="gpGreen">
+              {l.match_method}
+            </Badge>
+            {l.qbo_url && (
+              <Anchor href={l.qbo_url} target="_blank" rel="noreferrer" size="xs">
+                <Group gap={3} wrap="nowrap">
+                  Open in QuickBooks <IconExternalLink size={11} />
+                </Group>
+              </Anchor>
+            )}
+          </Group>
+          <Text size="xs" c="dimmed">
+            {l.customer_name ?? "—"} · {l.txn_date ? fmtDateOnly(l.txn_date) : "—"} ·{" "}
+            <span style={NUMERIC_STYLE}>{fmtCurrency(l.total_amt)}</span>
+          </Text>
+          <Group mt={2}>
+            <InvoicePoNumber invPoNumber={l.inv_po_number} match={l.po_number_match} orderPo={orderPo} />
+          </Group>
+          {l.diff && (
+            <Group mt={4}>
+              <DiffSummary diff={l.diff} />
+            </Group>
+          )}
+        </div>
+        <Button
+          size="xs"
+          variant="subtle"
+          color="red"
+          disabled={!canEdit}
+          loading={unlinking}
+          onClick={onUnlink}
+        >
+          Unlink
+        </Button>
+      </Group>
+
+      {l.diff && l.diff.rows.length > 0 && (
+        <>
+          <Button
+            size="compact-xs"
+            variant="subtle"
+            mt="xs"
+            onClick={() => setOpen((o) => !o)}
+          >
+            {open ? "Hide line detail" : "Show line detail"}
+          </Button>
+          <Collapse in={open}>
+            <div style={{ marginTop: 8 }}>
+              <LineDiffTable diff={l.diff} />
+            </div>
+          </Collapse>
+        </>
+      )}
+    </Paper>
+  );
+}
 
 /** ③ Potential invoices — below the source. Best-first, confirm one. Also the
  *  one invoice-linking UI in the app — EditPoPage's "Invoice links" section
@@ -65,36 +163,17 @@ export function MatchList({ view }: { view: ReconcilePoView }) {
             Matched
           </Text>
           {links.map((l) => (
-            <Paper key={l.invoice_id} withBorder radius="md" p="md" bg="var(--mantine-color-gpGreen-light)">
-              <Group justify="space-between" wrap="wrap" align="flex-start">
-                <div>
-                  <Text size="sm" fw={600}>
-                    Invoice {l.doc_number ?? l.invoice_id} · {l.match_method} ·{" "}
-                    <span style={NUMERIC_STYLE}>{fmtCurrency(l.total_amt)}</span>
-                  </Text>
-                  <Group mt={2}>
-                    <InvoicePoNumber invPoNumber={l.inv_po_number} match={l.po_number_match} orderPo={orderPo} />
-                  </Group>
-                  {l.diff && (
-                    <Group mt={4}>
-                      <DiffSummary diff={l.diff} />
-                    </Group>
-                  )}
-                </div>
-                <Button
-                  size="xs"
-                  variant="subtle"
-                  color="red"
-                  disabled={!canEdit}
-                  loading={unlink.isPending}
-                  onClick={() =>
-                    unlink.mutate(l.invoice_id, { onSuccess: () => notifySuccess("Unlinked.") })
-                  }
-                >
-                  Unlink
-                </Button>
-              </Group>
-            </Paper>
+            <MatchedInvoice
+              key={l.invoice_id}
+              l={l}
+              orderPo={orderPo}
+              canEdit={canEdit}
+              soleMatch={links.length === 1}
+              unlinking={unlink.isPending}
+              onUnlink={() =>
+                unlink.mutate(l.invoice_id, { onSuccess: () => notifySuccess("Unlinked.") })
+              }
+            />
           ))}
         </>
       )}
