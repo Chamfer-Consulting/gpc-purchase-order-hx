@@ -5,10 +5,13 @@ import {
   Alert,
   Badge,
   Button,
+  CloseButton,
   Code,
+  Divider,
   Group,
   ScrollArea,
   SegmentedControl,
+  Select,
   Stack,
   Switch,
   Table,
@@ -24,7 +27,11 @@ import {
 } from "@/api/connections";
 import { useBackfillDocs, useDocStorageStatus, type BackfillBucket } from "@/api/poDocs";
 import {
+  useCustomerAliases,
+  useDeleteCustomerAlias,
   useHiddenInvoices,
+  useRenameCustomerCanonical,
+  useSetCustomerAlias,
   useSetInvoiceHidden,
   useSetVisible,
   useVisibility,
@@ -33,7 +40,7 @@ import {
 import { useMe, type Role } from "@/api/me";
 import { useRemoveTeamMember, useSetTeamMember, useTeam } from "@/api/team";
 import { fmtDateOnly, fmtDateTime } from "@/lib/datetime";
-import { confirmAction } from "@/lib/modals";
+import { confirmAction, promptReason } from "@/lib/modals";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { PageLayout } from "@/components/PageLayout";
 import { QueryBoundary } from "@/components/ErrorState";
@@ -339,10 +346,176 @@ function VisibilityCard() {
     >
       {dim === "invoices" ? (
         <HiddenInvoicesList />
+      ) : dim === "customers" ? (
+        <Stack gap="md">
+          <CustomerAliasPanel />
+          <Divider label="Hide / show from analytics" labelPosition="left" />
+          <VisibilityList key="customers" dim="customers" />
+        </Stack>
       ) : (
         <VisibilityList key={dim} dim={dim} />
       )}
     </SectionCard>
+  );
+}
+
+/** One canonical company name per customer — buyer spellings folded. Sits in
+ *  Settings → Visibility → Customers so all "who is this customer" controls are
+ *  in one place. */
+function CustomerAliasPanel() {
+  const { data, isLoading, error, refetch } = useCustomerAliases();
+  const { canEdit } = useMe();
+  const setAlias = useSetCustomerAlias();
+  const del = useDeleteCustomerAlias();
+  const rename = useRenameCustomerCanonical();
+
+  const [spelling, setSpelling] = useState<string | null>(null);
+  const [company, setCompany] = useState<string | null>(null);
+
+  const groups = data?.groups ?? [];
+  const unaliased = data?.unaliased ?? [];
+  const canonicals = data?.canonicals ?? [];
+
+  const doRename = (from: string) =>
+    promptReason({
+      title: "Rename company",
+      description:
+        "Every spelling mapped to this company follows the new name. Renaming to a name that already exists merges the two.",
+      label: "Company name",
+      placeholder: from,
+      confirmLabel: "Rename",
+      required: true,
+      onSubmit: (v) => {
+        const to = (v ?? "").trim();
+        if (to && to !== from) {
+          rename.mutate(
+            { from_canonical: from, to_canonical: to },
+            { onSuccess: () => notifySuccess(`Renamed to “${to}”.`), onError: (e) => notifyError(e) },
+          );
+        }
+      },
+    });
+
+  return (
+    <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
+      <Stack gap="xs">
+        <Text size="xs" c="dimmed">
+          A PO is often emailed by a buyer — a person, not the customer. Map every spelling (buyer
+          names included) to the one company it belongs to. The company name is what shows across the
+          app, and what an invoice is matched against.
+        </Text>
+
+        {groups.length === 0 ? (
+          <Text size="sm" c="dimmed" py="xs">
+            No customers fold to a shared name yet. Map one below.
+          </Text>
+        ) : (
+          <Stack gap={2}>
+            {groups.map((g) => (
+              <div
+                key={g.canonical}
+                style={{
+                  borderTop: "1px solid var(--mantine-color-default-border)",
+                  paddingTop: 6,
+                  paddingBottom: 4,
+                }}
+              >
+                <Group justify="space-between" wrap="nowrap" gap="xs">
+                  <Text size="sm" fw={600} truncate>
+                    {g.canonical}
+                  </Text>
+                  <Group gap={4} wrap="nowrap" style={{ flex: "none" }}>
+                    <Text size="xs" c="dimmed">
+                      {g.aliases.length} spelling{g.aliases.length === 1 ? "" : "s"}
+                    </Text>
+                    <Button
+                      size="compact-xs"
+                      variant="subtle"
+                      disabled={!canEdit}
+                      onClick={() => doRename(g.canonical)}
+                    >
+                      Rename
+                    </Button>
+                  </Group>
+                </Group>
+                <Group gap={4} mt={4}>
+                  {g.aliases.map((a) => (
+                    <Badge
+                      key={a.name}
+                      size="sm"
+                      variant="light"
+                      color={a.source === "manual" ? "gpGreen" : "gray"}
+                      rightSection={
+                        canEdit ? (
+                          <CloseButton
+                            size="xs"
+                            aria-label={`Unmap ${a.name}`}
+                            onClick={() =>
+                              del.mutate(a.name, {
+                                onSuccess: () => notifySuccess(`Unmapped “${a.name}”.`),
+                                onError: (e) => notifyError(e),
+                              })
+                            }
+                          />
+                        ) : undefined
+                      }
+                    >
+                      {a.name}
+                    </Badge>
+                  ))}
+                </Group>
+              </div>
+            ))}
+          </Stack>
+        )}
+
+        <Group gap="xs" align="flex-end" wrap="wrap" mt={4}>
+          <Select
+            label="Spelling"
+            size="xs"
+            w={220}
+            searchable
+            placeholder="a name seen on a PO / invoice"
+            data={unaliased}
+            value={spelling}
+            onChange={setSpelling}
+            disabled={!canEdit}
+            nothingFoundMessage="Every seen spelling is already mapped"
+          />
+          <Select
+            label="means company"
+            size="xs"
+            w={220}
+            searchable
+            placeholder="canonical company"
+            data={canonicals}
+            value={company}
+            onChange={setCompany}
+            disabled={!canEdit}
+          />
+          <Button
+            size="xs"
+            loading={setAlias.isPending}
+            disabled={!canEdit || !spelling || !company}
+            onClick={() =>
+              setAlias.mutate(
+                { alias_name: spelling as string, canonical_name: company as string },
+                {
+                  onSuccess: () => {
+                    notifySuccess("Mapped.");
+                    setSpelling(null);
+                    setCompany(null);
+                  },
+                  onError: (e) => notifyError(e),
+                },
+              )
+            }
+          >
+            Map
+          </Button>
+        </Group>
+      </Stack>
+    </QueryBoundary>
   );
 }
 

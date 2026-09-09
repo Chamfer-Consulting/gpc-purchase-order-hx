@@ -4,7 +4,7 @@ routers/po_docs.py.)"""
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from ..auth import AuthedUser, clear_role_cache, current_user, require_admin, require_editor
@@ -63,6 +63,63 @@ def set_customer_hidden(body: HideIn, user: AuthedUser = Depends(require_editor)
         raise HTTPException(422, "name is required")
     with reused_conn() as conn:
         svc.set_customer_hidden(conn, body.name, body.hidden, actor=_owner(user))
+    clear_cache()
+    return {"ok": True}
+
+
+# --- customer aliasing (one canonical company name, buyer spellings folded) ---
+
+
+class AliasIn(BaseModel):
+    alias_name: str
+    canonical_name: str
+
+
+class AliasRenameIn(BaseModel):
+    from_canonical: str
+    to_canonical: str
+
+
+@router.get("/customer-aliases")
+def customer_aliases(_: AuthedUser = Depends(current_user)) -> dict:
+    with reused_conn() as conn:
+        return svc.list_customer_aliases(conn)
+
+
+@router.post("/customer-aliases")
+def set_customer_alias(body: AliasIn, user: AuthedUser = Depends(require_editor)) -> dict:
+    a, c = body.alias_name.strip(), body.canonical_name.strip()
+    if not a or not c:
+        raise HTTPException(422, "alias_name and canonical_name are required")
+    with reused_conn() as conn:
+        svc.set_customer_alias(conn, a, c, actor=_owner(user))
+    clear_cache()
+    return {"ok": True}
+
+
+@router.delete("/customer-aliases")
+def delete_customer_alias(
+    alias_name: str = Query(...), user: AuthedUser = Depends(require_editor)
+) -> dict:
+    if not alias_name.strip():
+        raise HTTPException(422, "alias_name is required")
+    with reused_conn() as conn:
+        svc.delete_customer_alias(conn, alias_name.strip(), actor=_owner(user))
+    clear_cache()
+    return {"ok": True}
+
+
+@router.post("/customer-aliases/rename")
+def rename_customer_canonical(
+    body: AliasRenameIn, user: AuthedUser = Depends(require_editor)
+) -> dict:
+    f, t = body.from_canonical.strip(), body.to_canonical.strip()
+    if not f or not t:
+        raise HTTPException(422, "both names are required")
+    if f == t:
+        return {"ok": True}
+    with reused_conn() as conn:
+        svc.rename_customer_canonical(conn, f, t, actor=_owner(user))
     clear_cache()
     return {"ok": True}
 

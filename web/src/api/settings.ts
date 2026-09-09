@@ -90,6 +90,70 @@ export function useSetInvoiceHidden() {
   });
 }
 
+// --- customer aliasing -----------------------------------------------------
+
+export interface CustomerAliasGroup {
+  canonical: string;
+  aliases: { name: string; source: "auto" | "manual" }[];
+  manual: boolean;
+}
+export interface CustomerAliasData {
+  groups: CustomerAliasGroup[];
+  /** spellings seen on an active PO / invoice with no mapping yet */
+  unaliased: string[];
+  /** every canonical name — the target list when mapping a spelling */
+  canonicals: string[];
+}
+
+export function useCustomerAliases() {
+  return useQuery({
+    queryKey: ["customer-aliases"],
+    queryFn: () => apiGet<CustomerAliasData>("/api/settings/customer-aliases"),
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** An alias change shifts the canonical name shown on Reconcile and (once a sync
+ *  re-runs matching) which invoices corroborate. */
+function invalidateAfterAlias(qc: ReturnType<typeof useQueryClient>) {
+  for (const k of [
+    "customer-aliases", "reconcile-queue", "reconcile-po",
+    "customers", "lifecycle", "overview", "explore", "pricing", "filter-options",
+  ]) {
+    qc.invalidateQueries({ queryKey: [k] });
+  }
+}
+
+export function useSetCustomerAlias() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { alias_name: string; canonical_name: string }) =>
+      apiSend<{ ok: boolean }>("POST", "/api/settings/customer-aliases", body),
+    onSuccess: () => invalidateAfterAlias(qc),
+  });
+}
+
+export function useDeleteCustomerAlias() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (alias_name: string) =>
+      apiSend<{ ok: boolean }>(
+        "DELETE",
+        `/api/settings/customer-aliases?alias_name=${encodeURIComponent(alias_name)}`,
+      ),
+    onSuccess: () => invalidateAfterAlias(qc),
+  });
+}
+
+export function useRenameCustomerCanonical() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { from_canonical: string; to_canonical: string }) =>
+      apiSend<{ ok: boolean }>("POST", "/api/settings/customer-aliases/rename", body),
+    onSuccess: () => invalidateAfterAlias(qc),
+  });
+}
+
 export interface SavedView<C = Record<string, unknown>> {
   name: string;
   config: C;

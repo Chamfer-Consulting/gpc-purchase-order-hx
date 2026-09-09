@@ -87,6 +87,119 @@ def set_customer_hidden(conn, customer_name: str, hidden: bool, *, actor: str | 
                 actor=actor, entity="customer")
 
 
+# --- customer aliasing --------------------------------------------------------
+# customer_aliases(alias_name PK -> canonical_name). The emailer of a PO is a
+# buyer at the company; canonical_name is always the company. See customer_alias.py
+# (the resolver) and migration 0013.
+
+
+def list_customer_aliases(conn) -> dict:
+    """`groups` = canonicals that fold >=1 other spelling (or were hand-set),
+    each with its alias chips; `unaliased` = spellings seen on an active PO or an
+    invoice that have no mapping yet; `canonicals` = every canonical name (all QBO
+    customers + any manual), the target list when mapping a spelling."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT alias_name, canonical_name, source FROM customer_aliases "
+            "ORDER BY canonical_name, alias_name"
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        cur.execute(
+            """
+            WITH seen AS (
+                SELECT DISTINCT customer_name AS name FROM purchase_orders
+                WHERE status = 'active'
+                  AND customer_name IS NOT NULL AND btrim(customer_name) <> ''
+                UNION
+                SELECT DISTINCT customer_name FROM qbo_invoices
+                WHERE customer_name IS NOT NULL AND btrim(customer_name) <> ''
+            )
+            SELECT s.name FROM seen s
+            LEFT JOIN customer_aliases a ON a.alias_name = s.name
+            WHERE a.alias_name IS NULL
+            ORDER BY s.name
+            """
+        )
+        unaliased = [r["name"] for r in cur.fetchall()]
+
+    groups: dict[str, dict] = {}
+    for r in rows:
+        g = groups.setdefault(
+            r["canonical_name"], {"canonical": r["canonical_name"], "aliases": [], "manual": False}
+        )
+        if r["alias_name"] != r["canonical_name"]:  # the self-row is implied, not a chip
+            g["aliases"].append({"name": r["alias_name"], "source": r["source"]})
+        if r["source"] == "manual":
+            g["manual"] = True
+
+    interesting = sorted(
+        (g for g in groups.values() if g["aliases"] or g["manual"]),
+        key=lambda g: (-len(g["aliases"]), g["canonical"].lower()),
+    )
+    return {
+        "groups": interesting,
+        "unaliased": unaliased,
+        "canonicals": sorted(groups.keys(), key=str.lower),
+    }
+
+
+def set_customer_alias(conn, alias_name: str, canonical_name: str, *, actor: str | None = None) -> None:
+    """Map one spelling -> a company (source='manual'). Ensures the company has a
+    self-row so the resolver always terminates."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO customer_aliases (alias_name, canonical_name, source) "
+            "VALUES (%s, %s, 'manual') ON CONFLICT (alias_name) DO NOTHING",
+            (canonical_name, canonical_name),
+        )
+        cur.execute(
+            "INSERT INTO customer_aliases (alias_name, canonical_name, source, updated_at) "
+            "VALUES (%s, %s, 'manual', now()) "
+            "ON CONFLICT (alias_name) DO UPDATE SET "
+            "  canonical_name = EXCLUDED.canonical_name, source = 'manual', updated_at = now()",
+            (alias_name, canonical_name),
+        )
+    audit.log(conn, actor=actor, action="customer_alias", entity="customer",
+              entity_id=alias_name, after={"canonical": canonical_name})
+    conn.commit()
+
+
+def delete_customer_alias(conn, alias_name: str, *, actor: str | None = None) -> None:
+    """Detach a spelling — it resolves to itself again. A self-row (the canonical
+    itself) can't be detached this way."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM customer_aliases WHERE alias_name = %s AND alias_name <> canonical_name",
+            (alias_name,),
+        )
+        gone = cur.rowcount
+    if gone:
+        audit.log(conn, actor=actor, action="customer_alias_remove", entity="customer",
+                  entity_id=alias_name, after=None)
+    conn.commit()
+
+
+def rename_customer_canonical(conn, from_name: str, to_name: str, *, actor: str | None = None) -> None:
+    """Rename a company — every spelling that pointed at `from_name` (its own
+    self-row included) now points at `to_name`. If `to_name` already exists as a
+    canonical this is a merge."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO customer_aliases (alias_name, canonical_name, source) "
+            "VALUES (%s, %s, 'manual') ON CONFLICT (alias_name) DO NOTHING",
+            (to_name, to_name),
+        )
+        cur.execute(
+            "UPDATE customer_aliases SET canonical_name = %s, source = 'manual', updated_at = now() "
+            "WHERE canonical_name = %s",
+            (to_name, from_name),
+        )
+        n = cur.rowcount
+    audit.log(conn, actor=actor, action="customer_alias_rename", entity="customer",
+              entity_id=from_name, after={"to": to_name, "rows": n})
+    conn.commit()
+
+
 def _set_hidden(conn, table: str, col: str, value: str, hidden: bool,
                 *, reason: str | None = None,
                 actor: str | None = None, entity: str | None = None) -> None:
