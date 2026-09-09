@@ -584,6 +584,31 @@ def _release_voided_links(conn, *, commit: bool = True) -> dict:
     return {"released": released, "pruned": pruned}
 
 
+def _reject_pending_for_confirmed_invoices(conn, *, commit: bool = True) -> int:
+    """A still-pending po_invoice_links row whose invoice is already CONFIRMED to
+    some other PO is dead — one invoice backs at most one PO. run_matching never
+    generates these (already_confirmed_invoice_ids), and confirm_link/manual_link
+    reject a PO's own siblings, but a candidate created *before* the invoice was
+    confirmed elsewhere (or against a different revision row of a po_number) can
+    linger and show up as a bogus "potential match". Reject them so they leave
+    the review queue and every count that reads it."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE po_invoice_links l SET rejected = TRUE
+            WHERE l.confirmed = FALSE AND l.rejected = FALSE
+              AND EXISTS (
+                  SELECT 1 FROM po_invoice_links c
+                  WHERE c.invoice_id = l.invoice_id AND c.confirmed = TRUE
+              )
+            """
+        )
+        n = cur.rowcount
+    if commit:
+        conn.commit()
+    return n
+
+
 def run_matching(conn) -> dict:
     """Populates po_invoice_links. Idempotent — never re-proposes a (po_id, invoice_id)
     pair that's already confirmed/rejected, and never searches for *new* candidates for
@@ -604,6 +629,7 @@ def run_matching(conn) -> dict:
     sibling rejection all commit together in one transaction at the end — a crash
     mid-run leaves the DB untouched rather than half-applied."""
     voided_summary = _release_voided_links(conn, commit=False)
+    stale_invoice_pending = _reject_pending_for_confirmed_invoices(conn, commit=False)
 
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT po_id FROM po_invoice_links WHERE confirmed = TRUE")
@@ -757,6 +783,7 @@ def run_matching(conn) -> dict:
         "date_window_days": date_window,
         "voided_released": voided_summary["released"],
         "voided_pruned": voided_summary["pruned"],
+        "stale_invoice_pending_rejected": stale_invoice_pending,
     }
 
 
@@ -764,14 +791,15 @@ def get_needs_review(conn) -> list[dict]:
     """Full header detail for both sides (not just a summary) — the review UI needs
     enough here to render a real side-by-side comparison, not a one-line guess.
 
-    Excludes a PO that already has a CONFIRMED link — such a row is stale by
-    definition (the decision is already made) and should never resurface as
-    "awaiting a decision". This is normally prevented at the source (run_matching's
-    sibling-rejection, confirm_link/manual_link rejecting the PO's other pending
-    candidates); the filter here is the defensive backstop so any other path that
-    manages to leave a stale pending row behind can't turn into a PO that's stuck
-    showing in the review queue / reconcile screen with no matching UI to resolve it
-    (it already reads as "Matched")."""
+    Two stale-row exclusions, both defensive backstops for a pending row that
+    run_matching's own cleanup / confirm_link / manual_link should already have
+    rejected:
+      * the PO already has a CONFIRMED link — the decision's made; it reads as
+        "Matched" and any leftover pending row has no UI to resolve it;
+      * the INVOICE is already confirmed to some (other) PO — one invoice backs
+        at most one PO, so it isn't a candidate for anything else. Seen live: an
+        invoice confirmed to PO 403395 was still listed as a "potential match"
+        under PO 402966 and half a dozen of its neighbours."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -789,6 +817,10 @@ def get_needs_review(conn) -> list[dict]:
               AND NOT EXISTS (
                   SELECT 1 FROM po_invoice_links c
                   WHERE c.po_id = l.po_id AND c.confirmed = TRUE
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM po_invoice_links c
+                  WHERE c.invoice_id = l.invoice_id AND c.confirmed = TRUE
               )
             ORDER BY po.po_number, l.match_score DESC NULLS LAST
             """
