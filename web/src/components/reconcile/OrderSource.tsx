@@ -104,6 +104,15 @@ export function OrderSource({
         </Anchor>
       </Group>
 
+      {view.reasons.length > 0 && (
+        <Text size="xs" c="dimmed" mt={4}>
+          <Text span fw={600} tt="uppercase" fz={10} mr={6}>
+            Why
+          </Text>
+          {view.reasons.join(" · ")}
+        </Text>
+      )}
+
       <Divider my="sm" />
 
       {/* What the customer sent */}

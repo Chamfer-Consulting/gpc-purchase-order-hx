@@ -296,6 +296,7 @@ def _invoice_meta(conn, inv_ids) -> dict[int, dict]:
 _EXTRACTION_SQL = """
 SELECT s.content AS snapshot, s.content_hash AS snapshot_hash,
        r.verdict, r.revision_of, r.standalone, r.note, r.updated_at,
+       r.content_hash AS decided_hash,
        m.url AS gmail_url, m.subject
 FROM purchase_orders po
 LEFT JOIN gmail_thread_meta m ON m.thread_id = po.gmail_thread_id
@@ -314,6 +315,43 @@ def _target(source_file: str | None, thread_id: str | None) -> tuple[str, str]:
     if (source_file or "").startswith("gmail-thread:") and thread_id:
         return "thread", thread_id
     return "file", source_file or ""
+
+
+def _po_reasons(hdr: dict, items: list[dict], ext: dict, n_pending: int) -> list[str]:
+    """Why this PO is in the reconcile queue, in the SAME wording the queue list
+    (services/review_queue.py + services/reconcile.queue) uses — so the ⌘K row and
+    the open order agree on what's being asked. Empty when nothing is outstanding
+    (a PO opened by direct link with no flags)."""
+    reasons: list[str] = []
+    err = str(hdr.get("error") or "")
+    if err.startswith("modification"):
+        reasons.append("unresolved modification — link it to a PO")
+
+    decided = bool(ext.get("verdict") or ext.get("revision_of"))
+    stale = bool(
+        decided and ext.get("decided_hash") and ext["decided_hash"] != ext.get("snapshot_hash")
+    )
+    if not decided:
+        reasons.append("needs a verdict")
+    elif stale:
+        reasons.append("decision is stale (content changed)")
+
+    if not items:
+        reasons.append("0 line items")
+    if not hdr.get("customer_name"):
+        reasons.append("no customer")
+    n_math = sum(
+        1 for it in items
+        if it.get("math_mismatch") and not it.get("math_ack") and not it.get("voided")
+    )
+    if n_math:
+        reasons.append("math mismatch")
+
+    if n_pending:
+        reasons.append(
+            f"{n_pending} invoice candidate{'s' if n_pending != 1 else ''} to review"
+        )
+    return reasons
 
 
 def po_view(conn, po_id: int) -> dict | None:
@@ -342,6 +380,16 @@ def po_view(conn, po_id: int) -> dict | None:
 
     po_items = base["items"]
     pending = [c for c in qbo_matcher.get_needs_review(conn) if c["po_id"] == po_id]
+    base["reasons"] = _po_reasons(
+        hdr, po_items,
+        {
+            "verdict": ext["verdict"] if ext else None,
+            "revision_of": ext["revision_of"] if ext else None,
+            "decided_hash": ext["decided_hash"] if ext else None,
+            "snapshot_hash": ext["snapshot_hash"] if ext else None,
+        },
+        len(pending),
+    )
     link_inv_ids = [l["invoice_id"] for l in base.get("links", [])]
     inv_ids = sorted({*(c["invoice_id"] for c in pending), *link_inv_ids})
     _, inv_items_map = qbo_matcher.get_line_items_for_review(conn, [], inv_ids)

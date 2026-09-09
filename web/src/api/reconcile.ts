@@ -85,6 +85,9 @@ export interface ReconcilePoView extends PoDetail {
     inv_po_number?: string | null;
     po_number_match?: boolean | null;
   })[];
+  /** why this PO is in the queue — same wording as the ⌘K list. Empty when
+   *  nothing is outstanding (opened by direct link). */
+  reasons: string[];
 }
 
 export type Stage = "extraction" | "lifecycle" | "match";

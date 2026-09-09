@@ -4,9 +4,11 @@ Matches PO requests (purchase_orders) to QuickBooks invoices (qbo_invoices), so
 
 Primary key: normalized PO number, exact match — confirmed against real production data
 (1,124 of 1,188 real PO numbers, 94.6%, have an exact match after normalization against
-QBO's "PO Number" custom field). Falls back to a customer+date+amount+line-item score for
-the remainder, surfaced for manual review rather than auto-decided — some invoices
-genuinely have no PO (verbal/standing orders), and some POs genuinely have no invoice yet.
+QBO's "PO Number" custom field). Falls back to a weighted score (SCORE_WEIGHTS:
+line-item overlap, exact requested-delivery-date hit, embedded-PO-number hint, then
+date/amount proximity) for the remainder, surfaced for manual review rather than
+auto-decided — some invoices genuinely have no PO (verbal/standing orders), and some
+POs genuinely have no invoice yet.
 
 A PO-number match alone is not treated as absolute certainty: it's corroborated against
 customer name (a coincidental PO-number collision across two different customers should
@@ -355,10 +357,16 @@ def _best_date_delta(effective_date, delivery_date, txn_date):
 
 def _calibrated_date_window(conn) -> int:
     """The ~P95 best observed date gap (see _best_date_delta) across confirmed,
-    customer-corroborated PO-number matches, clamped to [14, 90] days — a data-driven
+    customer-corroborated PO-number matches, clamped to [7, 90] days — a data-driven
     fuzzy window instead of a guess. Falls back to the default until there are enough
-    confirmed matches to trust. For this dataset invoices land the same day as the PO
-    (P95 = 0), so the 14-day floor is what actually applies."""
+    confirmed matches to trust.
+
+    The 7-day floor (was 14): an invoice is created on the ship day and the ship
+    day is the PO's requested delivery date — across 1,150 confirmed matches the
+    best date delta is P95=0, P99=1, max=3. 14 days let candidates a full extra
+    shipping cycle away survive the exclusion for no reason; 7 keeps generous
+    headroom for the ~1% of POs with no delivery_date (scored off the placement
+    date, avg gap ~2.4d) while cutting the far noise."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -381,7 +389,28 @@ def _calibrated_date_window(conn) -> int:
     # Interpolated P95 (statistics.quantiles), not deltas[int(n*0.95)] — the latter
     # degenerates to the single max value at small sample counts.
     p95 = statistics.quantiles(deltas, n=100, method="inclusive")[94] if len(deltas) >= 2 else deltas[0]
-    return int(round(max(14, min(90, p95))))
+    return int(round(max(7, min(90, p95))))
+
+
+def _delivery_date_score(po, inv) -> float:
+    """Near-deterministic corroborator: the invoice's date vs the PO's requested
+    *delivery* date. Garfield ships on a fixed weekly cadence and cuts the invoice
+    on the ship day, and the customer's requested-for date IS that ship day — so
+    across 1,150 confirmed matches inv.txn_date == po.delivery_date 95% of the
+    time and within a day 98%. This is a stronger single signal than the fuzzy
+    _best_date_delta window score treats it as, so it gets its own weighted term.
+    0.0 when either date is missing (no penalty — ~1% of POs have no
+    delivery_date; they still score fine on the other terms)."""
+    d1 = _parse_date(po.get("delivery_date"))
+    d2 = _parse_date(inv.get("txn_date"))
+    if not d1 or not d2:
+        return 0.0
+    gap = abs((d2 - d1).days)
+    if gap <= 1:
+        return 1.0
+    if gap <= 3:  # one shipping cycle of slack
+        return 0.5
+    return 0.0
 
 
 MIN_PO_DIGITS_FOR_HINT = 6
@@ -400,11 +429,18 @@ def _po_number_hint_score(po, inv) -> float:
     return 1.0 if po_norm in inv_norm else 0.0
 
 
+SCORE_WEIGHTS = {"date": 0.20, "amount": 0.22, "item": 0.28, "hint": 0.15, "delivery": 0.15}
+
+
 def _score_candidate(po, inv, po_items_map, inv_items_map, date_window, inv_subtotals=None):
     """None means the candidate is outside the acceptable date range — excluded entirely.
-    Line-item content and a possible embedded-PO-number hint are weighted highest
-    (0.3, 0.2) since they're the most specific independent signals available once an
-    exact PO-number match isn't; date/amount proximity (0.25 each) corroborate."""
+    Weights (SCORE_WEIGHTS): line-item content 0.28 (the most specific independent
+    signal once an exact PO-number match isn't), then an exact requested-delivery-
+    date hit 0.15 and an embedded-PO-number hint 0.15 (both near-deterministic
+    binary corroborators), then continuous date/amount proximity 0.20 / 0.22.
+    A genuine match hits the delivery date ~98% of the time, so this shape lifts
+    real pairs and pushes down candidates that merely share a customer + rough
+    timeframe."""
     delta_days = _best_date_delta(po.get("_effective_date"), po.get("delivery_date"), inv.get("txn_date"))
     if delta_days is None:
         date_score = 0.3
@@ -417,8 +453,14 @@ def _score_candidate(po, inv, po_items_map, inv_items_map, date_window, inv_subt
     amount_score = _amount_score(po.get("total"), inv_amount)
     item_score = _line_item_similarity(po_items_map.get(po["id"], {}), inv_items_map.get(inv["id"], {}))
     hint_score = _po_number_hint_score(po, inv)
+    delivery_score = _delivery_date_score(po, inv)
 
-    return round(0.25 * date_score + 0.25 * amount_score + 0.3 * item_score + 0.2 * hint_score, 3)
+    w = SCORE_WEIGHTS
+    return round(
+        w["date"] * date_score + w["amount"] * amount_score + w["item"] * item_score
+        + w["hint"] * hint_score + w["delivery"] * delivery_score,
+        3,
+    )
 
 
 def explain_candidate(conn, po_id: int, invoice_id: int) -> dict | None:
@@ -443,7 +485,8 @@ def explain_candidate(conn, po_id: int, invoice_id: int) -> dict | None:
         po["_effective_date"] = _parse_date(po.get("sent_date")) or po.get("po_date")
 
         cur.execute(
-            "SELECT id, customer_name, txn_date, total_amt, raw_json FROM qbo_invoices WHERE id = %s",
+            "SELECT id, customer_name, txn_date, ship_date, total_amt, raw_json "
+            "FROM qbo_invoices WHERE id = %s",
             (invoice_id,),
         )
         row = cur.fetchone()
@@ -471,7 +514,9 @@ def explain_candidate(conn, po_id: int, invoice_id: int) -> dict | None:
     amount_score = _amount_score(po.get("total"), _invoice_amount_for_scoring(inv, inv_subtotals))
     item_score = _line_item_similarity(po_items_map.get(po_id, {}), inv_items_map.get(invoice_id, {}))
     hint_score = _po_number_hint_score(po, inv)
+    delivery_score = _delivery_date_score(po, inv)
 
+    w = SCORE_WEIGHTS
     return {
         "date_score": round(date_score, 3),
         "date_delta_days": delta_days,
@@ -480,7 +525,12 @@ def explain_candidate(conn, po_id: int, invoice_id: int) -> dict | None:
         "amount_score": round(amount_score, 3),
         "item_score": round(item_score, 3),
         "hint_score": round(hint_score, 3),
-        "weighted_total": round(0.25 * date_score + 0.25 * amount_score + 0.3 * item_score + 0.2 * hint_score, 3),
+        "delivery_score": round(delivery_score, 3),
+        "weighted_total": round(
+            w["date"] * date_score + w["amount"] * amount_score + w["item"] * item_score
+            + w["hint"] * hint_score + w["delivery"] * delivery_score,
+            3,
+        ),
     }
 
 
