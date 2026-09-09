@@ -11,12 +11,17 @@ WITH li AS (
            count(*) FILTER (
                WHERE math_mismatch IS NOT NULL AND NOT is_removed
                  AND NOT COALESCE(voided, FALSE) AND NOT COALESCE(math_ack, FALSE)
-           ) AS n_math
+           ) AS n_math,
+           sum(line_total) FILTER (WHERE NOT is_removed AND NOT COALESCE(voided, FALSE)) AS line_sum
     FROM line_items GROUP BY po_id
 )
 SELECT po.id AS po_id,
        po.gmail_thread_id, po.source_file, po.error, po.customer_name, po.po_date,
-       po.total,
+       -- ~18% of active thread-extracted POs have a NULL header total but real
+       -- line items; fall back to the line sum so the queue / ⌘K jump list shows
+       -- the same order value the reconcile detail card does (which now does the
+       -- same fallback) instead of a blank.
+       COALESCE(po.total, li.line_sum) AS total,
        COALESCE(li.n_items, 0) AS n_items,
        COALESCE(li.n_math, 0)  AS n_math,
        po.math_check_failed,

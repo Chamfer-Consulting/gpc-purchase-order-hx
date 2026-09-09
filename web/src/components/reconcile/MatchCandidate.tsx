@@ -2,6 +2,7 @@ import { Anchor, Badge, Button, Group, Paper, Text, Tooltip } from "@mantine/cor
 import { IconAlertTriangle, IconCheck, IconExternalLink, IconX } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 import type { ReconcileCandidate } from "@/api/reconcile";
+import { fmtDateOnly } from "@/lib/datetime";
 import { fmtCurrency } from "@/lib/format";
 import { NUMERIC_STYLE } from "@/theme/tokens";
 import { LineDiffTable, DiffSummary } from "./LineDiff";
@@ -95,7 +96,7 @@ export function MatchCandidate({
             <QboLink url={c.qbo_url} />
           </Group>
           <Text size="xs" c="dimmed">
-            {c.inv_customer ?? "—"} · {c.txn_date?.slice(0, 10) ?? "—"} ·{" "}
+            {c.inv_customer ?? "—"} · {c.txn_date ? fmtDateOnly(c.txn_date) : "—"} ·{" "}
             <span style={NUMERIC_STYLE}>{fmtCurrency(c.total_amt)}</span>
           </Text>
           <Group mt={2}>

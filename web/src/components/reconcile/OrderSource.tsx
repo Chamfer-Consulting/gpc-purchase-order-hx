@@ -17,13 +17,13 @@ import type { ReconcilePoView } from "@/api/reconcile";
 import { useSavePo, useVoidLine, type PoStatus } from "@/api/poEdit";
 import { useMe } from "@/api/me";
 import type { usePoEditForm } from "@/hooks/usePoEditForm";
-import { fmtDateTime } from "@/lib/datetime";
+import { fmtDateOnly, fmtDateTime } from "@/lib/datetime";
 import { fmtCurrency } from "@/lib/format";
 import { conflictInfo, errorMessage, isConflict } from "@/lib/errors";
 import { promptReason } from "@/lib/modals";
 import { notifySuccess } from "@/lib/notify";
 import { NUMERIC_STYLE, STATUS_COLOR } from "@/theme/tokens";
-import { PoLineItemsEditor } from "@/components/po/PoLineItemsEditor";
+import { PoLineItemsEditor, sumLineTotals } from "@/components/po/PoLineItemsEditor";
 import { VerdictPills } from "./VerdictPills";
 import type { useExtractionDecision } from "./extraction";
 
@@ -45,6 +45,12 @@ export function OrderSource({
   const status = (h.status ?? "active") as PoStatus;
   const decided = !!(e.verdict || e.revision_of);
   const { canEdit } = useMe();
+
+  // ~18% of thread-extracted POs have no header total but real line items —
+  // show the line sum rather than a blank, so this headline matches both the
+  // "What we extracted" editor footer below and the queue / ⌘K value.
+  const orderTotal = h.total ?? (view.items.length ? sumLineTotals(view.items) : null);
+  const totalFromLines = h.total == null && orderTotal != null;
 
   const [showSnap, setShowSnap] = useState(!decided);
   useEffect(() => setShowSnap(!decided), [h.id, decided]);
@@ -75,11 +81,16 @@ export function OrderSource({
             {h.customer_name ?? "—"}
           </Text>
           <Text c="dimmed" style={NUMERIC_STYLE}>
-            {fmtCurrency(h.total)}
+            {fmtCurrency(orderTotal)}
+            {totalFromLines && (
+              <Text span size="xs" c="dimmed" ml={4} style={{ fontFamily: "inherit" }}>
+                from lines
+              </Text>
+            )}
           </Text>
           {h.po_date && (
             <Text c="dimmed" size="sm">
-              {h.po_date}
+              {fmtDateOnly(h.po_date)}
             </Text>
           )}
           {status !== "active" && (

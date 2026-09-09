@@ -72,7 +72,9 @@ export function QueueJump({
               <Group justify="space-between" wrap="nowrap" gap="xs">
                 <Group gap={8} wrap="nowrap" style={{ minWidth: 0 }}>
                   <Text size="sm" fw={600}>
-                    {it.po_number ?? `PO ${it.po_id}`}
+                    {/* same label shape as OrderSource / the reactivate alert:
+                        always "PO <n>", falling back to the id */}
+                    PO {it.po_number ?? it.po_id}
                   </Text>
                   <Text size="sm" c="dimmed" truncate>
                     {it.customer_name ?? "—"}

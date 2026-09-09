@@ -4,6 +4,7 @@ import type { ReconcilePoView } from "@/api/reconcile";
 import { usePoSearch } from "@/api/poEdit";
 import { useUpsertDecision } from "@/api/review";
 import { notifySuccess } from "@/lib/notify";
+import { fmtDateOnly } from "@/lib/datetime";
 import { fmtCurrency } from "@/lib/format";
 import { NUMERIC_STYLE } from "@/theme/tokens";
 
@@ -75,7 +76,7 @@ export function RevisionOfInput({
             {o && (
               <Text size="xs" c="dimmed" style={NUMERIC_STYLE}>
                 {o.customer ?? "—"}
-                {o.date ? ` · ${o.date}` : ""}
+                {o.date ? ` · ${fmtDateOnly(o.date)}` : ""}
                 {o.total != null ? ` · ${fmtCurrency(o.total)}` : ""}
               </Text>
             )}

@@ -203,6 +203,24 @@ def queue(conn) -> dict:
         if po["id"] not in items and po["id"] not in by_po:
             unlinked_no_candidate += 1
 
+    # A thread-extracted PO often has a NULL header total but real line items
+    # (~18% of active POs). review_queue already coalesces to the line sum; do the
+    # same for the match branch (get_needs_review carries po.total raw) so every
+    # queue item — and the ⌘K jump list — shows the same order value the reconcile
+    # detail card does, never a blank where line data exists.
+    missing_total = [pid for pid, it in items.items() if it.get("total") in (None, "")]
+    if missing_total:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT po_id, sum(line_total) FROM line_items "
+                "WHERE po_id = ANY(%s) AND NOT is_removed AND NOT COALESCE(voided, FALSE) "
+                "GROUP BY po_id",
+                (missing_total,),
+            )
+            for pid, line_sum in cur.fetchall():
+                if line_sum is not None:
+                    items[pid]["total"] = _num(line_sum)
+
     out = []
     counts = {"extraction": 0, "match": 0}
     for it in items.values():
