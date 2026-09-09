@@ -12,6 +12,16 @@ router = APIRouter(prefix="/api/po", tags=["po-edit"])
 
 
 class LineItemIn(BaseModel):
+    # The existing line_items.id, when the client is editing a row it loaded (vs.
+    # a row it added). save_po_edit() diffs by this id — UPDATE the rows that
+    # carry a known id, INSERT the ones that don't, DELETE the ones that vanished
+    # — so line_items.id stays stable and per-line state (math_ack, void_reason,
+    # price_anomaly) survives an edit. Without this field Pydantic dropped the id
+    # the SPA already sends, so *every* save silently deleted and re-inserted
+    # every line (fresh ids each time) — which then made the just-saved form's
+    # rows look "changed on the server" on the post-save refetch and lit a false
+    # concurrency-conflict banner.
+    id: int | None = None
     product_raw: str | None = None
     product_name: str | None = None
     container_size: str | None = None

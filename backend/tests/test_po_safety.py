@@ -186,6 +186,33 @@ def test_saved_view_delete_requires_kind():
     assert r.status_code == 422
 
 
+# --- PoEditIn: the line-item id must survive request parsing ---------------
+# Regression: LineItemIn had no `id` field, so Pydantic silently dropped the id
+# the SPA sends. save_po_edit() then saw only id-less rows, deleted every line,
+# and re-inserted fresh — which on the post-save refetch made the just-saved
+# form look "changed on the server" and lit a false concurrency banner.
+
+from app.routers.po_edit import PoEditIn  # noqa: E402
+
+
+def test_po_edit_in_round_trips_line_item_id():
+    body = PoEditIn.model_validate(
+        {
+            "header": {"customer_name": "Acme"},
+            "items": [
+                {"id": 42, "product_name": "Arugula", "quantity": 10},
+                {"product_name": "Basil", "quantity": 4},  # newly added row, no id
+            ],
+            "removed_items": [{"id": 7, "product_name": "Gone"}],
+            "expected_version": 3,
+        }
+    )
+    dumped = [it.model_dump() for it in body.items]
+    assert dumped[0]["id"] == 42
+    assert dumped[1]["id"] is None
+    assert body.removed_items[0].model_dump()["id"] == 7
+
+
 # --- reconcile line diff (pure) -------------------------------------------
 
 from app.services.reconcile import line_diff  # noqa: E402

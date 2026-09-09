@@ -5,12 +5,19 @@ import { EMPTY_LINE, type EditableLine } from "@/components/po/PoLineItemsEditor
 const HEADER_KEYS: (keyof PoHeader)[] = [
   "po_number", "customer_name", "po_date", "delivery_date", "subtotal", "tax", "total", "notes",
 ];
+// `id` is deliberately NOT here: it's server-assigned bookkeeping, not something
+// the user edits. A row the user just added has no id until it's saved, then the
+// post-save refetch brings it back WITH an id — comparing id would make that
+// round-trip read as "still dirty" forever, which blocks the reseed and lights a
+// false "changed on the server" banner. Content equality is what "did this drift
+// from the server copy" actually means.
 const ITEM_KEYS: (keyof PoLineItem)[] = [
-  "id", "product_name", "container_size", "quantity", "unit_price", "line_total",
+  "product_name", "container_size", "quantity", "unit_price", "line_total",
   "additional_cost", "voided",
 ];
 
-/** Compare the editable slice of the form to the server copy. */
+/** Compare the editable slice of the form to the server copy — content only, by
+ *  position (the editor has no row-reorder, and both save paths preserve order). */
 function formEqual(header: Partial<PoHeader>, items: EditableLine[], data: PoDetail): boolean {
   for (const k of HEADER_KEYS) if ((header[k] ?? null) !== (data.header[k] ?? null)) return false;
   if (items.length !== data.items.length) return false;
