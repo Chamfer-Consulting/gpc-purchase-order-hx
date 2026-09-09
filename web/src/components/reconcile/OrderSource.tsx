@@ -78,7 +78,12 @@ export function OrderSource({
             PO {h.po_number ?? h.id}
           </Text>
           <Text c="dimmed" truncate maw={260}>
-            {h.customer_name ?? "—"}
+            {h.customer_canonical ?? h.customer_name ?? "—"}
+            {h.customer_canonical && h.customer_name && h.customer_canonical !== h.customer_name && (
+              <Text span size="xs" c="dimmed" ml={4}>
+                (sent as {h.customer_name})
+              </Text>
+            )}
           </Text>
           <Text c="dimmed" style={NUMERIC_STYLE}>
             {fmtCurrency(orderTotal)}

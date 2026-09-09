@@ -8,6 +8,7 @@ import re
 
 import psycopg2.extras
 
+import customer_alias  # repo root, via app.reuse
 import qbo_client  # shared/, via app.reuse
 import qbo_matcher  # shared/, via app.reuse
 
@@ -221,11 +222,17 @@ def queue(conn) -> dict:
                 if line_sum is not None:
                     items[pid]["total"] = _num(line_sum)
 
+    # Canonical company name for display (the ⌘K list) — folds the buyer /
+    # spelling variants ("David Jedlecki" -> "Midwest Foods") the same way the
+    # per-PO card does, so the two agree.
+    resolve_cust = customer_alias.resolver(conn)
+
     out = []
     counts = {"extraction": 0, "match": 0}
     for it in items.values():
         stages = it.pop("_stages")
         it["stage"] = min(stages, key=lambda s: _STAGE_RANK[s])
+        it["customer_canonical"] = resolve_cust(it.get("customer_name"))
         for s in stages:
             if s in counts:
                 counts[s] += 1
@@ -359,6 +366,10 @@ def po_view(conn, po_id: int) -> dict | None:
     if base is None:
         return None
     hdr = base["header"]
+    # Canonical company name for display — the raw customer_name stays as-is (it's
+    # the editable form value); the SPA shows customer_canonical and, when it
+    # differs, the raw spelling as a secondary "(sent as: …)".
+    hdr["customer_canonical"] = customer_alias.resolver(conn)(hdr.get("customer_name"))
     kind, key = _target(hdr.get("source_file"), hdr.get("gmail_thread_id"))
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:

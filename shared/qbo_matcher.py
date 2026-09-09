@@ -62,6 +62,21 @@ def customers_match(po_customer, qbo_customer) -> bool:
     return a in b or b in a
 
 
+def customers_match_aliased(po_customer, other_customer, resolve=None) -> bool:
+    """customers_match, plus: if both names resolve (via the customer_aliases map)
+    to the same canonical company, that's a match even when neither contains the
+    other as a substring — e.g. a PO emailed by "David Jedlecki" (a buyer) against
+    a "Midwest Foods" invoice, or "Bill & Chris" vs "Skoufis Food Service".
+    `resolve` is a `f(name) -> canonical` closure (customer_alias.resolver(conn));
+    when None, this is exactly customers_match. Can only ADD matches — the
+    substring check is still the fallback."""
+    if resolve is not None:
+        ra, rb = resolve(po_customer), resolve(other_customer)
+        if ra and rb and ra == rb:
+            return True
+    return customers_match(po_customer, other_customer)
+
+
 def confidence_label(match_method: str, score) -> str:
     """Human-readable certainty grade for the review UI."""
     if match_method == "po_number":
@@ -604,6 +619,16 @@ def run_matching(conn) -> dict:
     inv_subtotals = _invoice_product_subtotals(conn, [inv["id"] for inv in invoices])
     date_window = _calibrated_date_window(conn)
 
+    # Buyer -> company folding: "David Jedlecki" / "Bill & Chris" / the many
+    # "Sean McLaughlin / Anthony Marano …" spellings resolve to one canonical
+    # company, so the customer-corroboration check below can confirm a PO-number
+    # match that the raw-substring customers_match would have kicked to review.
+    import customer_alias  # repo root, via app.reuse / run_qbo_sync sys.path
+    _resolve_cust = customer_alias.resolver(conn)
+
+    def _cust_ok(po_name, other_name) -> bool:
+        return customers_match_aliased(po_name, other_name, _resolve_cust)
+
     with conn.cursor() as cur:
         cur.execute("SELECT po_id, invoice_id FROM po_invoice_links WHERE confirmed OR rejected")
         decided = set(cur.fetchall())
@@ -632,7 +657,7 @@ def run_matching(conn) -> dict:
         # Only same-customer invoices are real candidates — a PO-number digit collision
         # across customers must not become review-queue noise. Keep the cross-customer
         # hits aside so a genuine coincidental collision still gets flagged.
-        candidates = [c for c in raw_candidates if customers_match(po.get("customer_name"), c.get("customer_name"))]
+        candidates = [c for c in raw_candidates if _cust_ok(po.get("customer_name"), c.get("customer_name"))]
         cross_customer = [c for c in raw_candidates if c not in candidates]
 
         if len(candidates) == 1:
@@ -684,7 +709,7 @@ def run_matching(conn) -> dict:
     for po in unmatched_pos:
         scored = []
         for inv in non_voided:
-            if (po["id"], inv["id"]) in decided or not customers_match(po.get("customer_name"), inv.get("customer_name")):
+            if (po["id"], inv["id"]) in decided or not _cust_ok(po.get("customer_name"), inv.get("customer_name")):
                 continue
             score = _score_candidate(po, inv, po_items_map, inv_items_map, date_window, inv_subtotals)
             if score is not None:

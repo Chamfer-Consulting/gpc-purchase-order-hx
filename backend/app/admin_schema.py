@@ -111,6 +111,18 @@ CREATE TABLE IF NOT EXISTS hidden_invoices (
     reason         TEXT,
     hidden_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Customer aliasing (0013) — one canonical company name per customer, no matter
+-- which buyer / spelling a PO or invoice carried. Seed lives in the migration
+-- file (idempotent), not here — this just guarantees the table exists.
+CREATE TABLE IF NOT EXISTS customer_aliases (
+    alias_name     TEXT PRIMARY KEY,
+    canonical_name TEXT NOT NULL,
+    source         TEXT NOT NULL DEFAULT 'auto' CHECK (source IN ('auto', 'manual')),
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_customer_aliases_canonical ON customer_aliases (canonical_name);
 """
 
 

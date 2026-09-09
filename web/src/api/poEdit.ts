@@ -36,6 +36,9 @@ export interface PoHeader {
   delivery_date: string | null;
   customer_name: string | null;
   customer_id?: string | null;
+  /** canonical company name (customer_aliases) — set only by the /reconcile
+   *  endpoint; customer_name stays the raw editable value. */
+  customer_canonical?: string | null;
   subtotal: number | null;
   tax: number | null;
   total: number | null;

@@ -31,6 +31,7 @@ export function QueueJump({
     return items.filter(
       (it) =>
         (it.po_number ?? String(it.po_id)).toLowerCase().includes(n) ||
+        (it.customer_canonical ?? "").toLowerCase().includes(n) ||
         (it.customer_name ?? "").toLowerCase().includes(n) ||
         it.reasons.some((r) => r.toLowerCase().includes(n)),
     );
@@ -77,7 +78,7 @@ export function QueueJump({
                     PO {it.po_number ?? it.po_id}
                   </Text>
                   <Text size="sm" c="dimmed" truncate>
-                    {it.customer_name ?? "—"}
+                    {it.customer_canonical ?? it.customer_name ?? "—"}
                   </Text>
                 </Group>
                 <Group gap={6} wrap="nowrap" style={{ flex: "none" }}>

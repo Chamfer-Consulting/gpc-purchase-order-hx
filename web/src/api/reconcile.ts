@@ -98,6 +98,8 @@ export interface QueueItem {
   priority: number;
   stage: Stage;
   customer_name: string | null;
+  /** canonical company name (customer_aliases) — folds buyer/spelling variants */
+  customer_canonical?: string | null;
   po_number?: string | null;
   po_date?: string | null;
   subject?: string | null;
