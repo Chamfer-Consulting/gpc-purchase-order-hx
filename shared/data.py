@@ -46,6 +46,7 @@ except ModuleNotFoundError:  # headless: the FastAPI backend / CLI scripts impor
 
     st = _NoStreamlit()
 
+import customer_alias
 import extraction_reviews
 from business_tz import business_now
 from math_check import validate_math
@@ -910,6 +911,18 @@ def load_hidden_products() -> set[str]:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def load_customer_alias_map() -> dict:
+    """{spelling -> canonical company} from customer_aliases (migration 0013).
+    Buyer names and PO-side spellings fold to the one company. Empty dict if the
+    table isn't there yet — callers then keep the raw name. See customer_alias.py."""
+    conn = psycopg2.connect(get_database_url())
+    try:
+        return customer_alias.load_customer_aliases(conn)
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def load_hidden_customers() -> set[str]:
     """Invoice customer_name values excluded from every analytics page (the
     customer analogue of load_hidden_products; hidden_customers, 0008)."""
@@ -1008,6 +1021,18 @@ def prepare(po_df: pd.DataFrame, items_df: pd.DataFrame):
     po["po_date"] = pd.to_datetime(po["po_date"], errors="coerce")
     po["delivery_date"] = pd.to_datetime(po["delivery_date"], errors="coerce")
     po["effective_date"] = pd.to_datetime(po["sent_date"], errors="coerce").fillna(po["po_date"])
+    # Canonical company name for a PO's own (raw, often buyer-named) customer_name
+    # — so an UNMATCHED PO from "David Jedlecki" still rolls up to / filters as
+    # "Midwest Foods" on the analytics pages, the same way a matched line already
+    # does via the linked invoice. raw customer_name is kept alongside.
+    try:
+        _amap = load_customer_alias_map()
+        _ci = customer_alias._ci_index(_amap) if _amap else {}
+        po["customer_canonical"] = po["customer_name"].map(
+            lambda n: customer_alias.canonical(n, _amap, _ci)
+        )
+    except Exception:  # DB unavailable / table missing — keep the raw name
+        po["customer_canonical"] = po["customer_name"]
     # Which revision of a po_number is "latest": document_printed_at >
     # source_received_at > sent_date > po_date (qbo_matcher.po_recency). sent_date
     # alone mis-orders a re-extraction that happens to carry one.
@@ -1025,7 +1050,8 @@ def prepare(po_df: pd.DataFrame, items_df: pd.DataFrame):
     )
 
     items = items_df.merge(
-        po[["id", "po_number", "po_key", "effective_date", "customer_name", "is_revision", "version_label", "error"]],
+        po[["id", "po_number", "po_key", "effective_date", "customer_name",
+            "customer_canonical", "is_revision", "version_label", "error"]],
         left_on="po_id", right_on="id", suffixes=("", "_po"),
     )
     latest_items = items[items["po_id"].isin(latest_po["id"]) & (~items["is_removed"])].copy()
@@ -1063,7 +1089,9 @@ def _lifecycle_rows(vp: pd.DataFrame, matched_items: pd.DataFrame) -> pd.DataFra
         first, last = grp.iloc[0], grp.iloc[-1]
         rows.append({
             "po_key": po_key, "po_number": last.get("po_number"),
-            "source_file": last.get("source_file"), "customer_name": last.get("customer_name"),
+            "source_file": last.get("source_file"),
+            # canonical company name (buyer/spelling folded), raw as fallback
+            "customer_name": last.get("customer_canonical") or last.get("customer_name"),
             "effective_date": last["effective_date"],
             "requested_amount": first.get("total"), "revised_amount": last.get("total"),
             "po_id": last["id"],
@@ -1097,13 +1125,17 @@ def customer_order_lifecycle(
     date filter, so the lifecycle KPI/waterfall/table don't silently show all-time
     history while the rest of the page is date-scoped.
 
-    Customer match is containment-based (qbo_matcher.customers_match), not exact:
-    the PO table stores short names ("Get Fresh", "Testa Produce") while the picker
-    is populated from QBO invoice names ("Get Fresh Produce, Inc.", "Testa Produce
-    Inc."), so an exact `==` left this section blank for every PO customer except
-    the one whose spelling happened to match on both sides."""
+    Customer match is: the PO/invoice spelling resolves (customer_aliases) to
+    exactly `customer` (the canonical picker value), OR the containment-based
+    qbo_matcher.customers_match fallback — the PO table stores short / buyer names
+    ("Get Fresh", "David Jedlecki") while the picker is a QBO canonical, so an
+    exact `==` alone left this section blank for most PO spellings."""
+    _amap = load_customer_alias_map()
+
     def _match(series):
-        return series.apply(lambda c: customers_match(c, customer))
+        return series.apply(
+            lambda c: customer_alias.canonical(c, _amap) == customer or customers_match(c, customer)
+        )
 
     vp = valid_po[_match(valid_po["customer_name"])]
     if keep_po_keys is not None:

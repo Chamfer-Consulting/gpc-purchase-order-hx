@@ -174,10 +174,20 @@ def order_lifecycle(fp: FilterParams) -> PageResponse:
     if fp.end:
         scoped = scoped[scoped["effective_date"] < pd.Timestamp(fp.end) + pd.Timedelta(days=1)]
     if fp.customers:
+        # match on the canonical company name (prepare() resolved the PO's raw /
+        # buyer-named customer_name through customer_aliases), falling back to the
+        # fuzzy containment check — the filter picker values are canonical QBO
+        # names, so an aliased PO ("David Jedlecki" -> "Midwest Foods") is in scope.
+        sel = set(fp.customers)
+        canon = (
+            scoped["customer_canonical"].fillna(scoped["customer_name"])
+            if "customer_canonical" in scoped.columns
+            else scoped["customer_name"]
+        ).fillna("")
+        raw = scoped["customer_name"].fillna("")
         scoped = scoped[
-            scoped["customer_name"].fillna("").map(
-                lambda c: any(customers_match(c, s) for s in fp.customers)
-            )
+            (canon.isin(sel))
+            | raw.map(lambda c: any(customers_match(c, s) for s in sel))
         ]
     keep_keys = set(scoped["po_key"])
     if not keep_keys:
