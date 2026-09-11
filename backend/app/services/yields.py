@@ -453,3 +453,69 @@ def delete_note(conn, note_id: int, *, actor: str | None = None) -> None:
     if gone:
         audit.log(conn, actor=actor, action="delete", entity="yield_note", entity_id=note_id)
     conn.commit()
+
+
+# --- employees ---------------------------------------------------------------
+# A roster so the kiosk's "harvested by" field is a tap-to-pick Select. Free
+# TEXT on yield_entries.harvested_by is unchanged (no FK) — this is a curated
+# suggestion list, not a referential-integrity change, so renaming/retiring/
+# deleting an employee never touches existing entry history.
+
+
+def list_employees(conn, *, include_inactive: bool = False) -> list[dict]:
+    where = "" if include_inactive else "WHERE active"
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(f"SELECT id, name, active FROM yield_employees {where} ORDER BY name")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def create_employee(conn, name: str, *, actor: str | None = None) -> dict:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "INSERT INTO yield_employees (name) VALUES (%s) RETURNING id, name, active",
+            (name.strip(),),
+        )
+        row = dict(cur.fetchone())
+    audit.log(conn, actor=actor, action="create", entity="yield_employee", entity_id=row["id"], after=row)
+    conn.commit()
+    return row
+
+
+def update_employee(conn, employee_id: int, *, name: str | None = None, active: bool | None = None,
+                     actor: str | None = None) -> dict:
+    sets: list[str] = []
+    vals: list[object] = []
+    if name is not None:
+        sets.append("name = %s")
+        vals.append(name.strip())
+    if active is not None:
+        sets.append("active = %s")
+        vals.append(active)
+    if not sets:
+        raise ValueError("nothing to update")
+    sets.append("updated_at = now()")
+    vals.append(employee_id)
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"UPDATE yield_employees SET {', '.join(sets)} WHERE id = %s RETURNING id, name, active",
+            vals,
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise NotFound(f"yield employee {employee_id} not found")
+        row = dict(row)
+    audit.log(conn, actor=actor, action="edit", entity="yield_employee", entity_id=employee_id, after=row)
+    conn.commit()
+    return row
+
+
+def delete_employee(conn, employee_id: int, *, actor: str | None = None) -> None:
+    """Always safe — no FK references it, so unlike delete_product this never
+    raises InUse; existing entries keep whatever harvested_by text they have."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM yield_employees WHERE id = %s", (employee_id,))
+        gone = cur.rowcount
+    if not gone:
+        raise NotFound(f"yield employee {employee_id} not found")
+    audit.log(conn, actor=actor, action="delete", entity="yield_employee", entity_id=employee_id)
+    conn.commit()

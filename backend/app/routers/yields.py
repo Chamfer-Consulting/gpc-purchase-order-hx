@@ -243,3 +243,42 @@ def delete_note(note_id: int, user: AuthedUser = Depends(require_admin)) -> dict
     with reused_conn() as conn:
         yields_svc.delete_note(conn, note_id, actor=_actor(user))
     return {"ok": True}
+
+
+# --- employees -----------------------------------------------------------------
+
+
+class EmployeeIn(BaseModel):
+    name: str
+
+
+class EmployeePatch(BaseModel):
+    name: str | None = None
+    active: bool | None = None
+
+
+@router.get("/employees")
+def list_employees(include_inactive: bool = False, _: AuthedUser = Depends(current_user)) -> list[dict]:
+    with reused_conn() as conn:
+        return yields_svc.list_employees(conn, include_inactive=include_inactive)
+
+
+@router.post("/employees")
+def create_employee(body: EmployeeIn, user: AuthedUser = Depends(require_editor)) -> dict:
+    with reused_conn() as conn:
+        return yields_svc.create_employee(conn, body.name, actor=_actor(user))
+
+
+@router.post("/employees/{employee_id}")
+def update_employee(employee_id: int, body: EmployeePatch, user: AuthedUser = Depends(require_editor)) -> dict:
+    with reused_conn() as conn:
+        return yields_svc.update_employee(
+            conn, employee_id, name=body.name, active=body.active, actor=_actor(user),
+        )
+
+
+@router.delete("/employees/{employee_id}")
+def delete_employee(employee_id: int, user: AuthedUser = Depends(require_editor)) -> dict:
+    with reused_conn() as conn:
+        yields_svc.delete_employee(conn, employee_id, actor=_actor(user))
+    return {"ok": True}

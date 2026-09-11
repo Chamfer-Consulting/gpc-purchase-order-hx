@@ -510,3 +510,15 @@ CREATE TABLE IF NOT EXISTS yield_notes (
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_yield_notes_product ON yield_notes (yield_product_id, note_date);
+
+-- Yield employees (0015) — a roster so the kiosk's "harvested by" field is a
+-- tap-to-pick Select instead of free typing. yield_entries.harvested_by
+-- stays free TEXT (no FK) — curated suggestions, not referential integrity.
+CREATE TABLE IF NOT EXISTS yield_employees (
+    id          SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    active      BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_yield_employees_active ON yield_employees (active);

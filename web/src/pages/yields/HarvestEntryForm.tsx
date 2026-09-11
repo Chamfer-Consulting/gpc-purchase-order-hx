@@ -12,7 +12,7 @@ import {
   TextInput,
 } from "@mantine/core";
 import { IconCheck } from "@tabler/icons-react";
-import { useCreateYieldEntry, useYieldEntries, useYieldProducts, type YieldUnit } from "@/api/yields";
+import { useCreateYieldEntry, useYieldEmployees, useYieldEntries, useYieldProducts, type YieldUnit } from "@/api/yields";
 import { SectionCard } from "@/components/SectionCard";
 import { notifySuccess } from "@/lib/notify";
 import { errorMessage } from "@/lib/errors";
@@ -39,8 +39,9 @@ function daysAgo(n: number): string {
  *  different chrome around it. */
 export function HarvestEntryForm() {
   const products = useYieldProducts();
-  // A rolling 30-day window of recent entries, just to seed the storage-bin /
-  // harvested-by autocomplete suggestions — not a full history view.
+  const employees = useYieldEmployees();
+  // A rolling 30-day window of recent entries, just to seed the storage-bin
+  // autocomplete suggestions — not a full history view.
   const recent = useYieldEntries({ date_from: daysAgo(30) });
   const create = useCreateYieldEntry();
 
@@ -67,9 +68,9 @@ export function HarvestEntryForm() {
       ).sort(),
     [recent.data],
   );
-  const workerSuggestions = useMemo(
-    () => Array.from(new Set((recent.data ?? []).map((e) => e.harvested_by).filter(Boolean))).sort(),
-    [recent.data],
+  const employeeOptions = useMemo(
+    () => (employees.data ?? []).map((e) => e.name),
+    [employees.data],
   );
 
   const canSubmit = productId != null && weight !== "" && Number(weight) > 0 && harvestedBy.trim() !== "";
@@ -114,6 +115,12 @@ export function HarvestEntryForm() {
       {products.data && products.data.length === 0 && (
         <Alert color="gray" variant="light">
           No harvest products set up yet — add one under Product Yields → Products.
+        </Alert>
+      )}
+
+      {employees.data && employees.data.length === 0 && (
+        <Alert color="gray" variant="light">
+          No employees set up yet — add one under Product Yields → Products → Harvest team.
         </Alert>
       )}
 
@@ -189,13 +196,15 @@ export function HarvestEntryForm() {
             onChange={(e) => setLotCode(e.currentTarget.value)}
             size="md"
           />
-          <Autocomplete
+          <Select
             label="Harvested by"
-            placeholder="Worker name"
-            data={workerSuggestions}
-            value={harvestedBy}
-            onChange={setHarvestedBy}
+            placeholder="Choose who's harvesting"
+            data={employeeOptions}
+            value={harvestedBy || null}
+            onChange={(v) => setHarvestedBy(v ?? "")}
+            searchable
             size="md"
+            disabled={employees.isLoading}
             required
           />
           <Textarea

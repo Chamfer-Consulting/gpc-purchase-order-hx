@@ -23,14 +23,19 @@ import {
 } from "@tabler/icons-react";
 import { useMe } from "@/api/me";
 import {
+  useCreateYieldEmployee,
   useCreateYieldLink,
   useCreateYieldProduct,
+  useDeleteYieldEmployee,
   useDeleteYieldLink,
   useDeleteYieldProduct,
+  useUpdateYieldEmployee,
   useUpdateYieldProduct,
+  useYieldEmployees,
   useYieldLinks,
   useYieldProducts,
   useYieldSalesProductNames,
+  type YieldEmployee,
   type YieldProduct,
 } from "@/api/yields";
 import { PageLayout } from "@/components/PageLayout";
@@ -308,9 +313,181 @@ function ProductList({ products, canEdit }: { products: YieldProduct[]; canEdit:
   );
 }
 
+/** A small inline "add an employee" form — editor/admin only. */
+function AddEmployeeForm() {
+  const create = useCreateYieldEmployee();
+  const [name, setName] = useState("");
+
+  return (
+    <Group align="flex-end" gap="xs">
+      <TextInput
+        label="Add an employee"
+        placeholder="e.g. Maria Lopez"
+        value={name}
+        onChange={(e) => setName(e.currentTarget.value)}
+        style={{ flex: 1 }}
+      />
+      <Button
+        loading={create.isPending}
+        disabled={!name.trim()}
+        onClick={() =>
+          create.mutate(
+            { name: name.trim() },
+            {
+              onSuccess: () => {
+                notifySuccess(`Added "${name.trim()}".`);
+                setName("");
+              },
+              onError: (e) => notifyError(e),
+            },
+          )
+        }
+      >
+        Add
+      </Button>
+    </Group>
+  );
+}
+
+function EmployeeRow({ employee, canEdit }: { employee: YieldEmployee; canEdit: boolean }) {
+  const update = useUpdateYieldEmployee();
+  const del = useDeleteYieldEmployee();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(employee.name);
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setName(employee.name);
+  };
+
+  const saveName = () => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === employee.name) {
+      cancelEdit();
+      return;
+    }
+    update.mutate(
+      { id: employee.id, name: trimmed },
+      {
+        onSuccess: () => {
+          notifySuccess("Renamed.");
+          setEditing(false);
+        },
+        onError: (e) => {
+          notifyError(e);
+          setName(employee.name);
+        },
+      },
+    );
+  };
+
+  const askDelete = () => {
+    confirmAction({
+      title: "Delete this employee?",
+      body: `"${employee.name}" will be removed from the kiosk's picker. Past entries keep whatever name they already have — this doesn't touch entry history.`,
+      confirmLabel: "Delete",
+      onConfirm: () =>
+        del.mutate(employee.id, {
+          onSuccess: () => notifySuccess("Deleted."),
+          onError: (e) => notifyError(e),
+        }),
+    });
+  };
+
+  return (
+    <Table.Tr>
+      <Table.Td>
+        {editing ? (
+          <Group gap={4} wrap="nowrap">
+            <TextInput
+              value={name}
+              onChange={(e) => setName(e.currentTarget.value)}
+              size="xs"
+              data-autofocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveName();
+                if (e.key === "Escape") cancelEdit();
+              }}
+            />
+            <ActionIcon size="sm" color="gpGreen" variant="light" onClick={saveName} loading={update.isPending}>
+              <IconCheck size={14} />
+            </ActionIcon>
+            <ActionIcon size="sm" variant="subtle" onClick={cancelEdit}>
+              <IconX size={14} />
+            </ActionIcon>
+          </Group>
+        ) : (
+          <Text fw={500} c={employee.active ? undefined : "dimmed"}>
+            {employee.name}
+          </Text>
+        )}
+      </Table.Td>
+      <Table.Td w={120}>
+        {canEdit ? (
+          <Switch
+            checked={employee.active}
+            label={employee.active ? "Active" : "Retired"}
+            onChange={(e) =>
+              update.mutate(
+                { id: employee.id, active: e.currentTarget.checked },
+                { onError: (err) => notifyError(err) },
+              )
+            }
+          />
+        ) : (
+          <Badge color={employee.active ? "gpGreen" : "gray"} variant="light">
+            {employee.active ? "Active" : "Retired"}
+          </Badge>
+        )}
+      </Table.Td>
+      {canEdit && (
+        <Table.Td w={72}>
+          {!editing && (
+            <Group gap={4} wrap="nowrap">
+              <ActionIcon size="sm" variant="subtle" onClick={() => setEditing(true)} aria-label="Rename">
+                <IconPencil size={14} />
+              </ActionIcon>
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                color="red"
+                onClick={askDelete}
+                loading={del.isPending}
+                aria-label="Delete"
+              >
+                <IconTrash size={14} />
+              </ActionIcon>
+            </Group>
+          )}
+        </Table.Td>
+      )}
+    </Table.Tr>
+  );
+}
+
+/** The kiosk's "harvested by" roster. Retire to hide from the picker; delete
+ *  outright any time — harvested_by stays free text on existing entries
+ *  either way, so this never risks entry history. */
+function EmployeeList({ employees, canEdit }: { employees: YieldEmployee[]; canEdit: boolean }) {
+  if (employees.length === 0) {
+    return <EmptyState label="No employees yet" compact />;
+  }
+
+  return (
+    <Table verticalSpacing="xs">
+      <Table.Tbody>
+        {employees.map((e) => (
+          <EmployeeRow key={e.id} employee={e} canEdit={canEdit} />
+        ))}
+      </Table.Tbody>
+    </Table>
+  );
+}
+
 export function YieldsAdminPage() {
   const { canEdit } = useMe();
   const products = useYieldProducts(true);
+  const employees = useYieldEmployees(true);
   const meta = pageMeta("/yields/admin");
 
   return (
@@ -332,6 +509,19 @@ export function YieldsAdminPage() {
             onRetry={() => void products.refetch()}
           >
             <ProductList products={products.data ?? []} canEdit={canEdit} />
+          </QueryBoundary>
+        </Stack>
+      </SectionCard>
+
+      <SectionCard title="Harvest team" subtitle="Who shows up in the kiosk's harvested-by picker.">
+        <Stack gap="md">
+          {canEdit && <AddEmployeeForm />}
+          <QueryBoundary
+            loading={employees.isLoading}
+            error={employees.error}
+            onRetry={() => void employees.refetch()}
+          >
+            <EmployeeList employees={employees.data ?? []} canEdit={canEdit} />
           </QueryBoundary>
         </Stack>
       </SectionCard>

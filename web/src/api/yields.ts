@@ -208,3 +208,44 @@ export function useDeleteYieldNote() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-notes"] }),
   });
 }
+
+export interface YieldEmployee {
+  id: number;
+  name: string;
+  active: boolean;
+}
+
+/** The kiosk's "harvested by" roster — a curated suggestion list, not a FK:
+ *  yield_entries.harvested_by stays free text either way. */
+export function useYieldEmployees(includeInactive = false) {
+  return useQuery({
+    queryKey: ["yield-employees", includeInactive],
+    queryFn: () => apiGet<YieldEmployee[]>("/api/yields/employees", { include_inactive: includeInactive }),
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateYieldEmployee() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string }) => apiSend<YieldEmployee>("POST", "/api/yields/employees", body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-employees"] }),
+  });
+}
+
+export function useUpdateYieldEmployee() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: number; name?: string; active?: boolean }) =>
+      apiSend<YieldEmployee>("POST", `/api/yields/employees/${id}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-employees"] }),
+  });
+}
+
+export function useDeleteYieldEmployee() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => apiSend<{ ok: boolean }>("DELETE", `/api/yields/employees/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-employees"] }),
+  });
+}
