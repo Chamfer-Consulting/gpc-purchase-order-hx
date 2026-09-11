@@ -1,11 +1,13 @@
+import { useState } from "react";
 import { Badge, Button, Card, Group, Stack, Text } from "@mantine/core";
-import { IconTrash } from "@tabler/icons-react";
+import { IconPencil, IconTrash } from "@tabler/icons-react";
 import { useAuth } from "@/auth/AuthProvider";
-import { useVoidYieldEntry, useYieldEntries } from "@/api/yields";
+import { useVoidYieldEntry, useYieldEntries, type YieldEntry } from "@/api/yields";
 import { EmptyState } from "@/components/EmptyState";
 import { QueryBoundary } from "@/components/ErrorState";
 import { promptReason } from "@/lib/modals";
 import { notifyError, notifySuccess } from "@/lib/notify";
+import { EditEntryModal } from "./EditEntryModal";
 
 function today(): string {
   const d = new Date();
@@ -25,6 +27,7 @@ export function MyRecentEntriesPage() {
     date_to: today(),
   });
   const voidEntry = useVoidYieldEntry();
+  const [editing, setEditing] = useState<YieldEntry | null>(null);
 
   const askVoid = (id: number, label: string) => {
     promptReason({
@@ -80,21 +83,33 @@ export function MyRecentEntriesPage() {
                       </Badge>
                     </Group>
                   </div>
-                  <Button
-                    size="xs"
-                    color="red"
-                    variant="subtle"
-                    leftSection={<IconTrash size={14} />}
-                    onClick={() => askVoid(e.id, e.product_name)}
-                  >
-                    Void
-                  </Button>
+                  <Group gap="xs" wrap="nowrap">
+                    <Button
+                      size="xs"
+                      variant="subtle"
+                      leftSection={<IconPencil size={14} />}
+                      onClick={() => setEditing(e)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      size="xs"
+                      color="red"
+                      variant="subtle"
+                      leftSection={<IconTrash size={14} />}
+                      onClick={() => askVoid(e.id, e.product_name)}
+                    >
+                      Void
+                    </Button>
+                  </Group>
                 </Group>
               </Card>
             ))}
           </Stack>
         )}
       </QueryBoundary>
+
+      <EditEntryModal entry={editing} onClose={() => setEditing(null)} />
     </Stack>
   );
 }

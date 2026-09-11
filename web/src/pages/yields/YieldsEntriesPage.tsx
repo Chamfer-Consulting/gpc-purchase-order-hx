@@ -1,12 +1,16 @@
 import { useMemo, useState } from "react";
-import { Badge, Group, Select, Table } from "@mantine/core";
-import { useYieldEntries, useYieldProducts } from "@/api/yields";
+import { ActionIcon, Badge, Group, Select, Table } from "@mantine/core";
+import { IconPencil, IconTrash } from "@tabler/icons-react";
+import { useVoidYieldEntry, useYieldEntries, useYieldProducts, type YieldEntry } from "@/api/yields";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
 import { EmptyState } from "@/components/EmptyState";
 import { QueryBoundary } from "@/components/ErrorState";
 import { fmtDateOnly } from "@/lib/datetime";
+import { promptReason } from "@/lib/modals";
+import { notifyError, notifySuccess } from "@/lib/notify";
 import { pageMeta } from "@/nav";
+import { EditEntryModal } from "./EditEntryModal";
 
 export function YieldsEntriesPage() {
   const products = useYieldProducts();
@@ -14,12 +18,32 @@ export function YieldsEntriesPage() {
   const entries = useYieldEntries({
     yield_product_id: productId ? Number(productId) : undefined,
   });
+  const voidEntry = useVoidYieldEntry();
+  const [editing, setEditing] = useState<YieldEntry | null>(null);
   const meta = pageMeta("/yields/entries");
 
   const productOptions = useMemo(
     () => (products.data ?? []).map((p) => ({ value: String(p.id), label: p.name })),
     [products.data],
   );
+
+  const askVoid = (entry: YieldEntry) => {
+    promptReason({
+      title: "Void this entry?",
+      description: `"${entry.product_name}" (${fmtDateOnly(entry.harvest_date)}) will be removed from reports.`,
+      label: "Reason (optional)",
+      confirmLabel: "Void entry",
+      confirmColor: "red",
+      onSubmit: (reason) =>
+        voidEntry.mutate(
+          { id: entry.id, reason },
+          {
+            onSuccess: () => notifySuccess("Entry voided."),
+            onError: (e) => notifyError(e),
+          },
+        ),
+    });
+  };
 
   return (
     <PageLayout
@@ -45,7 +69,7 @@ export function YieldsEntriesPage() {
           {!entries.data || entries.data.length === 0 ? (
             <EmptyState label="No harvest entries yet" />
           ) : (
-            <Table.ScrollContainer minWidth={760} type="native">
+            <Table.ScrollContainer minWidth={820} type="native">
               <Table highlightOnHover verticalSpacing="xs">
                 <Table.Thead>
                   <Table.Tr>
@@ -56,6 +80,7 @@ export function YieldsEntriesPage() {
                     <Table.Th ta="right">Discarded</Table.Th>
                     <Table.Th>Lot</Table.Th>
                     <Table.Th>Harvested by</Table.Th>
+                    <Table.Th w={72} />
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -79,6 +104,29 @@ export function YieldsEntriesPage() {
                           )}
                         </Group>
                       </Table.Td>
+                      <Table.Td>
+                        {!e.voided && (
+                          <Group gap={4} wrap="nowrap">
+                            <ActionIcon
+                              size="sm"
+                              variant="subtle"
+                              onClick={() => setEditing(e)}
+                              aria-label="Edit entry"
+                            >
+                              <IconPencil size={14} />
+                            </ActionIcon>
+                            <ActionIcon
+                              size="sm"
+                              variant="subtle"
+                              color="red"
+                              onClick={() => askVoid(e)}
+                              aria-label="Void entry"
+                            >
+                              <IconTrash size={14} />
+                            </ActionIcon>
+                          </Group>
+                        )}
+                      </Table.Td>
                     </Table.Tr>
                   ))}
                 </Table.Tbody>
@@ -87,6 +135,8 @@ export function YieldsEntriesPage() {
           )}
         </QueryBoundary>
       </SectionCard>
+
+      <EditEntryModal entry={editing} onClose={() => setEditing(null)} />
     </PageLayout>
   );
 }

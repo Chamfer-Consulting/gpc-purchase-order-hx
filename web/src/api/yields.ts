@@ -156,6 +156,29 @@ export function useCreateYieldEntry() {
   });
 }
 
+export interface YieldEntryPatch {
+  harvest_date?: string;
+  weight?: number;
+  unit?: YieldUnit;
+  tray_count?: number;
+  discarded_tray_count?: number;
+  lot_code?: string | null;
+  harvested_by?: string;
+  notes?: string | null;
+}
+
+/** Corrections to an already-logged entry. Backend enforces: a 'field'-rank
+ *  caller may only touch its own same-day entries; every other role
+ *  (viewer+) is unrestricted — see services/yields.py's _assert_can_touch. */
+export function useUpdateYieldEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: YieldEntryPatch & { id: number }) =>
+      apiSend<YieldEntry>("POST", `/api/yields/entries/${id}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-entries"] }),
+  });
+}
+
 export function useVoidYieldEntry() {
   const qc = useQueryClient();
   return useMutation({
