@@ -64,6 +64,41 @@ def delete_product(product_id: int, user: AuthedUser = Depends(require_editor)) 
     return {"ok": True}
 
 
+# --- yield product <-> sales SKU links ----------------------------------------
+
+
+class LinkIn(BaseModel):
+    yield_product_id: int
+    sales_product_name: str
+
+
+@router.get("/links")
+def list_links(yield_product_id: int | None = None, _: AuthedUser = Depends(require_editor)) -> list[dict]:
+    with reused_conn() as conn:
+        return yields_svc.list_links(conn, yield_product_id=yield_product_id)
+
+
+@router.post("/links")
+def create_link(body: LinkIn, user: AuthedUser = Depends(require_editor)) -> dict:
+    with reused_conn() as conn:
+        return yields_svc.create_link(
+            conn, body.yield_product_id, body.sales_product_name, actor=_actor(user),
+        )
+
+
+@router.delete("/links/{link_id}")
+def delete_link(link_id: int, user: AuthedUser = Depends(require_editor)) -> dict:
+    with reused_conn() as conn:
+        yields_svc.delete_link(conn, link_id, actor=_actor(user))
+    return {"ok": True}
+
+
+@router.get("/sales-product-names")
+def sales_product_names(_: AuthedUser = Depends(require_editor)) -> list[str]:
+    with reused_conn() as conn:
+        return yields_svc.sales_product_names(conn)
+
+
 # --- entries -----------------------------------------------------------------
 
 

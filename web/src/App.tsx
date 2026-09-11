@@ -9,6 +9,7 @@ import { useMe } from "@/api/me";
 import { KioskShell } from "@/kiosk/KioskShell";
 import { HarvestEntryPage } from "@/pages/yields/HarvestEntryPage";
 import { MyRecentEntriesPage } from "@/pages/yields/MyRecentEntriesPage";
+import { YieldsAdminPage } from "@/pages/yields/YieldsAdminPage";
 import { YieldsEntriesPage } from "@/pages/yields/YieldsEntriesPage";
 import { YieldsTrendsPage } from "@/pages/yields/YieldsTrendsPage";
 import { OverviewPage } from "@/pages/OverviewPage";
@@ -69,6 +70,7 @@ function RoleRouter() {
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/yields" element={<YieldsTrendsPage />} />
         <Route path="/yields/entries" element={<YieldsEntriesPage />} />
+        <Route path="/yields/admin" element={<YieldsAdminPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/_kitchen-sink" element={<KitchenSink />} />
         <Route path="*" element={<Navigate to="/" replace />} />

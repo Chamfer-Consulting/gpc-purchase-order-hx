@@ -90,6 +90,47 @@ export function useDeleteYieldProduct() {
   });
 }
 
+export interface YieldLink {
+  id: number;
+  yield_product_id: number;
+  product_name: string;
+  sales_product_name: string;
+}
+
+export function useYieldLinks(yieldProductId?: number) {
+  return useQuery({
+    queryKey: ["yield-links", yieldProductId],
+    queryFn: () =>
+      apiGet<YieldLink[]>("/api/yields/links", yieldProductId ? { yield_product_id: yieldProductId } : undefined),
+    staleTime: 30_000,
+  });
+}
+
+export function useYieldSalesProductNames() {
+  return useQuery({
+    queryKey: ["yield-sales-product-names"],
+    queryFn: () => apiGet<string[]>("/api/yields/sales-product-names"),
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateYieldLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { yield_product_id: number; sales_product_name: string }) =>
+      apiSend<YieldLink>("POST", "/api/yields/links", body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-links"] }),
+  });
+}
+
+export function useDeleteYieldLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => apiSend<{ ok: boolean }>("DELETE", `/api/yields/links/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-links"] }),
+  });
+}
+
 export function useYieldEntries(filters: YieldEntryFilters = {}) {
   return useQuery({
     queryKey: ["yield-entries", filters],

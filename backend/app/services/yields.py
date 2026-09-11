@@ -104,6 +104,74 @@ def delete_product(conn, product_id: int, *, actor: str | None = None) -> None:
     conn.commit()
 
 
+# --- yield product <-> sales SKU links --------------------------------------
+# Many-to-many (yield_product_sales_links), not the customer_aliases N:1-alias
+# shape — see supabase/migrations/0014_yields.sql for why: a yield product can
+# feed several sold SKUs, and a blend SKU pulls from several yield products.
+
+
+def list_links(conn, *, yield_product_id: int | None = None) -> list[dict]:
+    where = "WHERE l.yield_product_id = %s" if yield_product_id is not None else ""
+    vals = (yield_product_id,) if yield_product_id is not None else ()
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"""
+            SELECT l.id, l.yield_product_id, l.sales_product_name, p.name AS product_name
+            FROM yield_product_sales_links l
+            JOIN yield_products p ON p.id = l.yield_product_id
+            {where}
+            ORDER BY p.name, l.sales_product_name
+            """,
+            vals,
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def create_link(conn, yield_product_id: int, sales_product_name: str, *, actor: str | None = None) -> dict:
+    """Idempotent — linking the same pair twice just returns the existing row,
+    rather than erroring on the UNIQUE(yield_product_id, sales_product_name)."""
+    name = sales_product_name.strip()
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "INSERT INTO yield_product_sales_links (yield_product_id, sales_product_name) "
+            "VALUES (%s, %s) ON CONFLICT (yield_product_id, sales_product_name) DO NOTHING "
+            "RETURNING id, yield_product_id, sales_product_name",
+            (yield_product_id, name),
+        )
+        row = cur.fetchone()
+        if row is None:
+            cur.execute(
+                "SELECT id, yield_product_id, sales_product_name FROM yield_product_sales_links "
+                "WHERE yield_product_id = %s AND sales_product_name = %s",
+                (yield_product_id, name),
+            )
+            row = cur.fetchone()
+        row = dict(row)
+    audit.log(conn, actor=actor, action="create", entity="yield_link", entity_id=row["id"], after=row)
+    conn.commit()
+    return row
+
+
+def delete_link(conn, link_id: int, *, actor: str | None = None) -> None:
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM yield_product_sales_links WHERE id = %s", (link_id,))
+        gone = cur.rowcount
+    if gone:
+        audit.log(conn, actor=actor, action="delete", entity="yield_link", entity_id=link_id)
+    conn.commit()
+
+
+def sales_product_names(conn) -> list[str]:
+    """Existing PO/QBO sales-side product names, for the SKU-link picker —
+    reuses services/settings.py's list_products() union query (the same names
+    the Settings -> Visibility -> Products hide/show list offers) rather than
+    duplicating that SQL. Hidden names are excluded — nothing should link a
+    yield product to a sales name that's already hidden from every report."""
+    from . import settings as settings_svc
+
+    return [r["name"] for r in settings_svc.list_products(conn) if not r["hidden"]]
+
+
 # --- entries -------------------------------------------------------------
 
 
