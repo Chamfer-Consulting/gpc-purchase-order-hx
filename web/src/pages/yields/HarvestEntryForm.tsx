@@ -54,15 +54,27 @@ export function HarvestEntryForm() {
     [employees.data],
   );
 
-  // Auto-fill the lot code with the selected product's prefix, but only while
-  // the field still holds whatever we last auto-filled — once the employee
-  // types something of their own, switching products stops overwriting it.
-  const lastAutoPrefixRef = useRef("");
+  // Auto-fill the lot code as the selected product's prefix + the harvest
+  // date's MMDD (e.g. "TK0911"), but only while the field still holds
+  // whatever we last auto-filled — once the employee types something of
+  // their own, switching products/dates stops overwriting it.
+  const lastAutoLotRef = useRef("");
+  const autoLot = (id: string | null, harvestDate: string) => {
+    const prefix = (products.data ?? []).find((p) => String(p.id) === id)?.lot_code_prefix ?? "";
+    if (!prefix || harvestDate.length < 10) return prefix;
+    return prefix + harvestDate.slice(5, 7) + harvestDate.slice(8, 10);
+  };
+  const applyAutoLot = (next: string) => {
+    setLotCode((current) => (current === lastAutoLotRef.current ? next : current));
+    lastAutoLotRef.current = next;
+  };
   const handleProductChange = (id: string | null) => {
     setProductId(id);
-    const prefix = (products.data ?? []).find((p) => String(p.id) === id)?.lot_code_prefix ?? "";
-    setLotCode((current) => (current === lastAutoPrefixRef.current ? prefix : current));
-    lastAutoPrefixRef.current = prefix;
+    applyAutoLot(autoLot(id, date));
+  };
+  const handleDateChange = (value: string) => {
+    setDate(value);
+    applyAutoLot(autoLot(productId, value));
   };
 
   const canSubmit = productId != null && weight !== "" && Number(weight) > 0 && harvestedBy.trim() !== "";
@@ -132,7 +144,7 @@ export function HarvestEntryForm() {
             type="date"
             label="Harvest date"
             value={date}
-            onChange={(e) => setDate(e.currentTarget.value)}
+            onChange={(e) => handleDateChange(e.currentTarget.value)}
             size="md"
           />
           <Group grow align="flex-end">
