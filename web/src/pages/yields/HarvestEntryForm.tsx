@@ -160,7 +160,7 @@ export function HarvestEntryForm() {
           </Group>
           <Group grow>
             <NumberInput
-              label="Trays packed"
+              label="Trays harvested"
               value={trayCount}
               onChange={(v) => setTrayCount(v === "" ? "" : Number(v))}
               min={0}

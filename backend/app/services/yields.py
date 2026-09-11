@@ -372,10 +372,10 @@ def trends(conn, *, date_from: _date | None, date_to: _date | None,
             x=periods, series=weight_series, y_format="int",
         ),
         Chart(
-            id="yields-trays", title="Trays packed vs. discarded", kind="bar",
+            id="yields-trays", title="Trays harvested vs. discarded", kind="bar",
             x=periods, y_format="int",
             series=[
-                ChartSeries(name="Packed", data=[trays_by_period[p] for p in periods]),
+                ChartSeries(name="Harvested", data=[trays_by_period[p] for p in periods]),
                 ChartSeries(name="Discarded", data=[discarded_by_period[p] for p in periods]),
             ],
         ),
@@ -390,7 +390,7 @@ def trends(conn, *, date_from: _date | None, date_to: _date | None,
     kpis = [
         Kpi(label="Harvest weight", value=round(total_weight, 1), format="int", north_star=True,
             help="Sum across the selected range and products, normalized to ounces."),
-        Kpi(label="Trays packed", value=int(total_trays), format="int"),
+        Kpi(label="Trays harvested", value=int(total_trays), format="int"),
         Kpi(label="Trays discarded", value=int(total_discarded), format="int"),
         Kpi(label="Discard rate", value=round(discard_rate, 1), format="percent"),
     ]

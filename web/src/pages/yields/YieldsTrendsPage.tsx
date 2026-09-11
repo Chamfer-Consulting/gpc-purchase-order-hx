@@ -30,7 +30,7 @@ const GRAIN_OPTIONS = [
 ];
 
 /** Office-facing weekly/monthly/quarterly/yearly rollups — harvest weight and
- *  tray packed/discarded counts, mirroring how the PO side trends revenue.
+ *  tray harvested/discarded counts, mirroring how the PO side trends revenue.
  *  Own filter state (useYieldFilters) rather than the PO domain's useFilters:
  *  "product" here is a yield_product, a different universe from a sales SKU,
  *  and grain has no PO-side equivalent. */
