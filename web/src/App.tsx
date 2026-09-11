@@ -10,6 +10,7 @@ import { KioskShell } from "@/kiosk/KioskShell";
 import { HarvestEntryPage } from "@/pages/yields/HarvestEntryPage";
 import { MyRecentEntriesPage } from "@/pages/yields/MyRecentEntriesPage";
 import { YieldsEntriesPage } from "@/pages/yields/YieldsEntriesPage";
+import { YieldsTrendsPage } from "@/pages/yields/YieldsTrendsPage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
 import { ExplorePage } from "@/pages/ExplorePage";
@@ -66,7 +67,8 @@ function RoleRouter() {
         <Route path="/po/:id" element={<EditPoPage />} />
         <Route path="/archive" element={<ArchivePage />} />
         <Route path="/audit" element={<AuditPage />} />
-        <Route path="/yields" element={<YieldsEntriesPage />} />
+        <Route path="/yields" element={<YieldsTrendsPage />} />
+        <Route path="/yields/entries" element={<YieldsEntriesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/_kitchen-sink" element={<KitchenSink />} />
         <Route path="*" element={<Navigate to="/" replace />} />

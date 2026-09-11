@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from ..auth import AuthedUser, app_role, current_user, require_editor
 from ..reused_db import reused_conn
+from ..schemas import PageResponse
 from ..services import yields as yields_svc
 
 router = APIRouter(prefix="/api/yields", tags=["yields"])
@@ -150,6 +151,26 @@ def void_entry(entry_id: int, body: VoidIn, user: AuthedUser = Depends(current_u
     with reused_conn() as conn:
         return yields_svc.void_entry(
             conn, entry_id, body.reason, actor=_actor(user), actor_role=app_role(user.email),
+        )
+
+
+# --- trends ------------------------------------------------------------------
+
+
+@router.get("/trends")
+def trends(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    yield_product_id: list[int] | None = Query(None),
+    grain: str = "month",
+    _: AuthedUser = Depends(current_user),
+) -> PageResponse:
+    if grain not in yields_svc.GRAINS:
+        raise HTTPException(422, f"grain must be one of {', '.join(yields_svc.GRAINS)}")
+    with reused_conn() as conn:
+        return yields_svc.trends(
+            conn, date_from=date_from, date_to=date_to,
+            yield_product_ids=yield_product_id, grain=grain,
         )
 
 

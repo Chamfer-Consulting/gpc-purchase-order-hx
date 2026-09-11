@@ -1,10 +1,11 @@
 import {
   IconArchive,
   IconArrowsShuffle,
+  IconChartLine,
   IconHistory,
   IconLayoutDashboard,
   IconLeaf,
-  IconPlant2,
+  IconListDetails,
   IconRoute,
   IconSettings,
   IconShieldCheck,
@@ -94,9 +95,15 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Product Yields",
     items: [
       {
-        label: "Entries",
+        label: "Trends",
         to: "/yields",
-        icon: IconPlant2,
+        icon: IconChartLine,
+        description: "Harvest weight and tray trends — weekly, monthly, quarterly, yearly.",
+      },
+      {
+        label: "Entries",
+        to: "/yields/entries",
+        icon: IconListDetails,
         description: "Harvest log entries from the field kiosk — weight, trays, who and where.",
       },
     ],

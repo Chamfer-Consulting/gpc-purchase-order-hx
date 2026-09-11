@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiSend } from "@/lib/api";
+import type { PageResponse } from "@/api/schema";
 
 export type YieldUnit = "oz" | "lb" | "g";
+export type YieldGrain = "week" | "month" | "quarter" | "year";
 
 export interface YieldProduct {
   id: number;
@@ -110,5 +112,20 @@ export function useVoidYieldEntry() {
     mutationFn: ({ id, reason }: { id: number; reason?: string | null }) =>
       apiSend<YieldEntry>("POST", `/api/yields/entries/${id}/void`, { reason }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-entries"] }),
+  });
+}
+
+export interface YieldTrendsFilters {
+  date_from?: string;
+  date_to?: string;
+  yield_product_id?: number[];
+  grain?: YieldGrain;
+}
+
+export function useYieldTrends(filters: YieldTrendsFilters) {
+  return useQuery({
+    queryKey: ["yield-trends", filters],
+    queryFn: () => apiGet<PageResponse>("/api/yields/trends", { ...filters }),
+    staleTime: 30_000,
   });
 }

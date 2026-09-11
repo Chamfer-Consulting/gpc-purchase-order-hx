@@ -199,7 +199,7 @@ export function YieldsEntriesPage() {
   const entries = useYieldEntries({
     yield_product_id: productId ? Number(productId) : undefined,
   });
-  const meta = pageMeta("/yields");
+  const meta = pageMeta("/yields/entries");
 
   const productOptions = useMemo(
     () => (products.data ?? []).map((p) => ({ value: String(p.id), label: p.name })),

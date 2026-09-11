@@ -9,7 +9,7 @@ trail rather than the worker's identity.
 
 A 'field'-rank caller (the harvest kiosk role) may only edit/void its own
 same-day entries; every other role is unrestricted — see _assert_can_touch.
-Product/SKU-link management and trend rollups land in a later phase; see
+Yield-product <-> sales-SKU mapping lands in a later phase; see
 supabase/migrations/0014_yields.sql.
 """
 
@@ -22,7 +22,14 @@ import psycopg2.extras
 from business_tz import business_now  # shared/, via app.reuse
 
 from ..errors import Forbidden, InUse, NotFound
+from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope
 from . import audit
+
+# Every unit an entry can be recorded in, converted to ounces for aggregation
+# (oz is the default/most granular unit here — see 0014_yields.sql). Trends
+# always report weight in oz; a display-unit toggle is a nice-to-have, not v1.
+_OZ_PER_UNIT = {"oz": 1.0, "lb": 16.0, "g": 0.0352739619}
+GRAINS = ("week", "month", "quarter", "year")
 
 # --- products ----------------------------------------------------------------
 
@@ -218,6 +225,117 @@ def void_entry(conn, entry_id: int, reason: str | None, *, actor: str | None, ac
     audit.log(conn, actor=actor, action="void", entity="yield_entry", entity_id=entry_id, after=row)
     conn.commit()
     return row
+
+
+# --- trends ----------------------------------------------------------------
+
+
+def trends(conn, *, date_from: _date | None, date_to: _date | None,
+           yield_product_ids: list[int] | None, grain: str = "month") -> PageResponse:
+    """Weight + tray rollups by period, for the office Trends page. `grain` must
+    already be validated against GRAINS by the caller — it's interpolated into
+    date_trunc() as a bind parameter, not a literal, so an invalid value just
+    errors rather than injects, but the router should reject it before this
+    query ever runs."""
+    where = ["NOT e.voided"]
+    params: dict[str, object] = {"grain": grain}
+    if date_from is not None:
+        where.append("e.harvest_date >= %(date_from)s")
+        params["date_from"] = date_from
+    if date_to is not None:
+        where.append("e.harvest_date <= %(date_to)s")
+        params["date_to"] = date_to
+    if yield_product_ids:
+        where.append("e.yield_product_id = ANY(%(product_ids)s)")
+        params["product_ids"] = yield_product_ids
+    where_sql = " AND ".join(where)
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"""
+            SELECT date_trunc(%(grain)s, e.harvest_date)::date AS period,
+                   p.name AS product_name,
+                   sum(e.weight * CASE e.unit
+                       WHEN 'oz' THEN 1 WHEN 'lb' THEN 16 WHEN 'g' THEN 0.0352739619
+                       END) AS weight_oz,
+                   sum(e.tray_count) AS trays,
+                   sum(e.discarded_tray_count) AS discarded_trays,
+                   count(*) AS n_entries
+            FROM yield_entries e
+            JOIN yield_products p ON p.id = e.yield_product_id
+            WHERE {where_sql}
+            GROUP BY 1, 2
+            ORDER BY 1
+            """,
+            params,
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+    periods = sorted({r["period"].isoformat() for r in rows})
+    by_product: dict[str, dict[str, float]] = {}
+    total_by_period = dict.fromkeys(periods, 0.0)
+    trays_by_period = dict.fromkeys(periods, 0.0)
+    discarded_by_period = dict.fromkeys(periods, 0.0)
+
+    for r in rows:
+        period = r["period"].isoformat()
+        weight = float(r["weight_oz"] or 0)
+        by_product.setdefault(r["product_name"], dict.fromkeys(periods, 0.0))[period] += weight
+        total_by_period[period] += weight
+        trays_by_period[period] += float(r["trays"] or 0)
+        discarded_by_period[period] += float(r["discarded_trays"] or 0)
+
+    # One line per selected product when the caller filtered to specific ones
+    # (otherwise a busy multi-crop chart is more confusing than useful) — else
+    # a single "All products" total.
+    if yield_product_ids:
+        weight_series = [
+            ChartSeries(name=name, data=[round(vals[p], 1) for p in periods])
+            for name, vals in sorted(by_product.items())
+        ]
+    else:
+        weight_series = [
+            ChartSeries(name="All products", data=[round(total_by_period[p], 1) for p in periods])
+        ]
+
+    charts = [
+        Chart(
+            id="yields-weight", title="Harvest weight (oz)", kind="line",
+            x=periods, series=weight_series, y_format="int",
+        ),
+        Chart(
+            id="yields-trays", title="Trays packed vs. discarded", kind="bar",
+            x=periods, y_format="int",
+            series=[
+                ChartSeries(name="Packed", data=[trays_by_period[p] for p in periods]),
+                ChartSeries(name="Discarded", data=[discarded_by_period[p] for p in periods]),
+            ],
+        ),
+    ]
+
+    total_weight = sum(total_by_period.values())
+    total_trays = sum(trays_by_period.values())
+    total_discarded = sum(discarded_by_period.values())
+    tray_universe = total_trays + total_discarded
+    discard_rate = (total_discarded / tray_universe * 100) if tray_universe > 0 else 0.0
+
+    kpis = [
+        Kpi(label="Harvest weight", value=round(total_weight, 1), format="int", north_star=True,
+            help="Sum across the selected range and products, normalized to ounces."),
+        Kpi(label="Trays packed", value=int(total_trays), format="int"),
+        Kpi(label="Trays discarded", value=int(total_discarded), format="int"),
+        Kpi(label="Discard rate", value=round(discard_rate, 1), format="percent"),
+    ]
+
+    return PageResponse(
+        scope=Scope(
+            count=len(rows), noun="entries",
+            start=date_from.isoformat() if date_from else None,
+            end=date_to.isoformat() if date_to else None,
+        ),
+        kpis=kpis,
+        charts=charts,
+    )
 
 
 # --- notes -----------------------------------------------------------------
