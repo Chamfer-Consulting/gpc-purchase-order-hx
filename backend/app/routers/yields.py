@@ -48,7 +48,7 @@ def create_product(body: ProductIn, user: AuthedUser = Depends(require_editor)) 
         return yields_svc.create_product(conn, body.name, body.notes, actor=_actor(user))
 
 
-@router.patch("/products/{product_id}")
+@router.post("/products/{product_id}")
 def update_product(product_id: int, body: ProductPatch, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         return yields_svc.update_product(
@@ -129,7 +129,7 @@ def list_entries(
         )
 
 
-@router.patch("/entries/{entry_id}")
+@router.post("/entries/{entry_id}")
 def update_entry(entry_id: int, body: EntryPatch, user: AuthedUser = Depends(current_user)) -> dict:
     with reused_conn() as conn:
         return yields_svc.update_entry(

@@ -4,6 +4,7 @@ import {
   IconHistory,
   IconLayoutDashboard,
   IconLeaf,
+  IconPlant2,
   IconRoute,
   IconSettings,
   IconShieldCheck,
@@ -86,6 +87,17 @@ export const NAV_SECTIONS: NavSection[] = [
         to: "/pricing",
         icon: IconTag,
         description: "Reference prices per customer and product, with price history.",
+      },
+    ],
+  },
+  {
+    label: "Product Yields",
+    items: [
+      {
+        label: "Entries",
+        to: "/yields",
+        icon: IconPlant2,
+        description: "Harvest log entries from the field kiosk — weight, trays, who and where.",
       },
     ],
   },
