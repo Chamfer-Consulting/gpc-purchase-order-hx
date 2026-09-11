@@ -159,6 +159,7 @@ export function HarvestEntryForm() {
           <Group grow>
             <NumberInput
               label="Trays harvested"
+              description="Number of trays in bin"
               value={trayCount}
               onChange={(v) => setTrayCount(v === "" ? "" : Number(v))}
               min={0}
