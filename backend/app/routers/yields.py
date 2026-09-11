@@ -109,7 +109,6 @@ class EntryIn(BaseModel):
     unit: str = "oz"
     tray_count: int = 0
     discarded_tray_count: int = 0
-    storage_bin: str | None = None
     lot_code: str | None = None
     harvested_by: str
     notes: str | None = None
@@ -120,7 +119,6 @@ class EntryPatch(BaseModel):
     unit: str | None = None
     tray_count: int | None = None
     discarded_tray_count: int | None = None
-    storage_bin: str | None = None
     lot_code: str | None = None
     harvested_by: str | None = None
     notes: str | None = None
@@ -142,7 +140,6 @@ def create_entry(body: EntryIn, user: AuthedUser = Depends(current_user)) -> dic
             unit=body.unit,
             tray_count=body.tray_count,
             discarded_tray_count=body.discarded_tray_count,
-            storage_bin=body.storage_bin,
             lot_code=body.lot_code,
             harvested_by=body.harvested_by,
             notes=body.notes,

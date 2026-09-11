@@ -21,7 +21,6 @@ export interface YieldEntry {
   unit: YieldUnit;
   tray_count: number;
   discarded_tray_count: number;
-  storage_bin: string | null;
   lot_code: string | null;
   harvested_by: string;
   submitted_by: string;
@@ -48,7 +47,6 @@ export interface YieldEntryIn {
   unit: YieldUnit;
   tray_count: number;
   discarded_tray_count: number;
-  storage_bin?: string | null;
   lot_code?: string | null;
   harvested_by: string;
   notes?: string | null;

@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import {
   Alert,
-  Autocomplete,
   Button,
   Group,
   NumberInput,
@@ -12,7 +11,7 @@ import {
   TextInput,
 } from "@mantine/core";
 import { IconCheck } from "@tabler/icons-react";
-import { useCreateYieldEntry, useYieldEmployees, useYieldEntries, useYieldProducts, type YieldUnit } from "@/api/yields";
+import { useCreateYieldEntry, useYieldEmployees, useYieldProducts, type YieldUnit } from "@/api/yields";
 import { SectionCard } from "@/components/SectionCard";
 import { notifySuccess } from "@/lib/notify";
 import { errorMessage } from "@/lib/errors";
@@ -24,15 +23,8 @@ function today(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-function daysAgo(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  const pad = (v: number) => String(v).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 /** The harvest-logging form: product, weight, tray counts, who/where.
- *  Submitting resets weight/trays/notes but keeps product/unit/bin/worker
+ *  Submitting resets weight/trays/notes but keeps product/unit/worker
  *  selected, since a packing run usually logs several entries in a row for
  *  the same setup. Shared by the field kiosk (HarvestEntryPage) and the
  *  office "Log harvest" page (YieldsLogPage) — same form either way, just a
@@ -40,9 +32,6 @@ function daysAgo(n: number): string {
 export function HarvestEntryForm() {
   const products = useYieldProducts();
   const employees = useYieldEmployees();
-  // A rolling 30-day window of recent entries, just to seed the storage-bin
-  // autocomplete suggestions — not a full history view.
-  const recent = useYieldEntries({ date_from: daysAgo(30) });
   const create = useCreateYieldEntry();
 
   const [productId, setProductId] = useState<string | null>(null);
@@ -51,7 +40,6 @@ export function HarvestEntryForm() {
   const [unit, setUnit] = useState<YieldUnit>("oz");
   const [trayCount, setTrayCount] = useState<number | "">(0);
   const [discardedTrayCount, setDiscardedTrayCount] = useState<number | "">(0);
-  const [storageBin, setStorageBin] = useState("");
   const [lotCode, setLotCode] = useState("");
   const [harvestedBy, setHarvestedBy] = useState("");
   const [notes, setNotes] = useState("");
@@ -60,13 +48,6 @@ export function HarvestEntryForm() {
   const productOptions = useMemo(
     () => (products.data ?? []).map((p) => ({ value: String(p.id), label: p.name })),
     [products.data],
-  );
-  const binSuggestions = useMemo(
-    () =>
-      Array.from(
-        new Set((recent.data ?? []).map((e) => e.storage_bin).filter((v): v is string => Boolean(v))),
-      ).sort(),
-    [recent.data],
   );
   const employeeOptions = useMemo(
     () => (employees.data ?? []).map((e) => e.name),
@@ -85,7 +66,6 @@ export function HarvestEntryForm() {
         unit,
         tray_count: Number(trayCount) || 0,
         discarded_tray_count: Number(discardedTrayCount) || 0,
-        storage_bin: storageBin.trim() || null,
         lot_code: lotCode.trim() || null,
         harvested_by: harvestedBy.trim(),
         notes: notes.trim() || null,
@@ -182,14 +162,6 @@ export function HarvestEntryForm() {
               size="md"
             />
           </Group>
-          <Autocomplete
-            label="Storage bin"
-            placeholder="e.g. Bin A"
-            data={binSuggestions}
-            value={storageBin}
-            onChange={setStorageBin}
-            size="md"
-          />
           <TextInput
             label="Lot code"
             value={lotCode}

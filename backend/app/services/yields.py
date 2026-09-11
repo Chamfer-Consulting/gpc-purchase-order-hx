@@ -187,19 +187,19 @@ def _entry_row(r: dict) -> dict:
 
 def create_entry(conn, *, yield_product_id: int, harvest_date: _date, weight: float, unit: str,
                   tray_count: int = 0, discarded_tray_count: int = 0,
-                  storage_bin: str | None = None, lot_code: str | None = None,
+                  lot_code: str | None = None,
                   harvested_by: str, notes: str | None = None, submitted_by: str) -> dict:
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
             INSERT INTO yield_entries
                 (yield_product_id, harvest_date, weight, unit, tray_count,
-                 discarded_tray_count, storage_bin, lot_code, harvested_by, notes, submitted_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 discarded_tray_count, lot_code, harvested_by, notes, submitted_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (yield_product_id, harvest_date, weight, unit, tray_count, discarded_tray_count,
-             storage_bin, lot_code, harvested_by, notes, submitted_by),
+             lot_code, harvested_by, notes, submitted_by),
         )
         row = _entry_row(dict(cur.fetchone()))
     audit.log(conn, actor=submitted_by, action="create", entity="yield_entry",
@@ -256,7 +256,7 @@ def _assert_can_touch(conn, entry_id: int, *, actor: str | None, actor_role: str
 
 
 _ENTRY_PATCH_FIELDS = {
-    "weight", "unit", "tray_count", "discarded_tray_count", "storage_bin",
+    "weight", "unit", "tray_count", "discarded_tray_count",
     "lot_code", "harvested_by", "notes", "harvest_date",
 }
 

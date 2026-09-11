@@ -487,7 +487,6 @@ CREATE TABLE IF NOT EXISTS yield_entries (
     unit                   TEXT NOT NULL DEFAULT 'oz' CHECK (unit IN ('oz', 'lb', 'g')),
     tray_count             INTEGER NOT NULL DEFAULT 0 CHECK (tray_count >= 0),
     discarded_tray_count   INTEGER NOT NULL DEFAULT 0 CHECK (discarded_tray_count >= 0),
-    storage_bin            TEXT,
     lot_code               TEXT,
     harvested_by           TEXT NOT NULL,
     submitted_by           TEXT NOT NULL,

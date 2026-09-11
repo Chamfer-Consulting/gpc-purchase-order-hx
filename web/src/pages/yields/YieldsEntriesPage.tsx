@@ -54,7 +54,6 @@ export function YieldsEntriesPage() {
                     <Table.Th ta="right">Weight</Table.Th>
                     <Table.Th ta="right">Trays</Table.Th>
                     <Table.Th ta="right">Discarded</Table.Th>
-                    <Table.Th>Bin</Table.Th>
                     <Table.Th>Lot</Table.Th>
                     <Table.Th>Harvested by</Table.Th>
                   </Table.Tr>
@@ -69,7 +68,6 @@ export function YieldsEntriesPage() {
                       </Table.Td>
                       <Table.Td ta="right">{e.tray_count}</Table.Td>
                       <Table.Td ta="right">{e.discarded_tray_count || "—"}</Table.Td>
-                      <Table.Td>{e.storage_bin ?? "—"}</Table.Td>
                       <Table.Td>{e.lot_code ?? "—"}</Table.Td>
                       <Table.Td>
                         <Group gap={6} wrap="nowrap">

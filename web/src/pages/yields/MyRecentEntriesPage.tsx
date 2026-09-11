@@ -70,11 +70,6 @@ export function MyRecentEntriesPage() {
                       {e.discarded_tray_count > 0 && ` · ${e.discarded_tray_count} discarded`}
                     </Text>
                     <Group gap={6} mt={4}>
-                      {e.storage_bin && (
-                        <Badge size="sm" variant="light" color="gray">
-                          {e.storage_bin}
-                        </Badge>
-                      )}
                       {e.lot_code && (
                         <Badge size="sm" variant="light" color="gray">
                           Lot {e.lot_code}

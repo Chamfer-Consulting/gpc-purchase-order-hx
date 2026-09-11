@@ -158,7 +158,6 @@ CREATE TABLE IF NOT EXISTS yield_entries (
     unit                   TEXT NOT NULL DEFAULT 'oz' CHECK (unit IN ('oz', 'lb', 'g')),
     tray_count             INTEGER NOT NULL DEFAULT 0 CHECK (tray_count >= 0),
     discarded_tray_count   INTEGER NOT NULL DEFAULT 0 CHECK (discarded_tray_count >= 0),
-    storage_bin            TEXT,
     lot_code               TEXT,
     harvested_by           TEXT NOT NULL,
     submitted_by           TEXT NOT NULL,
@@ -170,6 +169,9 @@ CREATE TABLE IF NOT EXISTS yield_entries (
 );
 CREATE INDEX IF NOT EXISTS idx_yield_entries_date ON yield_entries (harvest_date);
 CREATE INDEX IF NOT EXISTS idx_yield_entries_product_date ON yield_entries (yield_product_id, harvest_date);
+-- storage_bin (0016) — dropped, turned out not to be needed. The CREATE TABLE
+-- above is a no-op on an already-existing table, so fix it directly too.
+ALTER TABLE yield_entries DROP COLUMN IF EXISTS storage_bin;
 
 CREATE TABLE IF NOT EXISTS yield_notes (
     id                BIGSERIAL PRIMARY KEY,
