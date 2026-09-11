@@ -50,6 +50,22 @@ import { pageMeta } from "@/nav";
 function AddProductForm() {
   const create = useCreateYieldProduct();
   const [name, setName] = useState("");
+  const [lotPrefix, setLotPrefix] = useState("");
+
+  const submit = () => {
+    if (!name.trim()) return;
+    create.mutate(
+      { name: name.trim(), lot_code_prefix: lotPrefix.trim() || null },
+      {
+        onSuccess: () => {
+          notifySuccess(`Added "${name.trim()}".`);
+          setName("");
+          setLotPrefix("");
+        },
+        onError: (e) => notifyError(e),
+      },
+    );
+  };
 
   return (
     <Group align="flex-end" gap="xs">
@@ -60,22 +76,14 @@ function AddProductForm() {
         onChange={(e) => setName(e.currentTarget.value)}
         style={{ flex: 1 }}
       />
-      <Button
-        loading={create.isPending}
-        disabled={!name.trim()}
-        onClick={() =>
-          create.mutate(
-            { name: name.trim() },
-            {
-              onSuccess: () => {
-                notifySuccess(`Added "${name.trim()}".`);
-                setName("");
-              },
-              onError: (e) => notifyError(e),
-            },
-          )
-        }
-      >
+      <TextInput
+        label="Lot prefix"
+        placeholder="e.g. TK"
+        value={lotPrefix}
+        onChange={(e) => setLotPrefix(e.currentTarget.value)}
+        w={120}
+      />
+      <Button loading={create.isPending} disabled={!name.trim()} onClick={submit}>
         Add
       </Button>
     </Group>
@@ -158,32 +166,36 @@ function ProductRow({ product, canEdit }: { product: YieldProduct; canEdit: bool
   const del = useDeleteYieldProduct();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(product.name);
+  const [lotPrefix, setLotPrefix] = useState(product.lot_code_prefix ?? "");
   const [linksOpen, setLinksOpen] = useState(false);
 
   const cancelEdit = () => {
     setEditing(false);
     setName(product.name);
+    setLotPrefix(product.lot_code_prefix ?? "");
   };
 
   const saveName = () => {
-    const trimmed = name.trim();
-    if (!trimmed || trimmed === product.name) {
+    const trimmedName = name.trim();
+    const trimmedPrefix = lotPrefix.trim();
+    const patch: { id: number; name?: string; lot_code_prefix?: string | null } = { id: product.id };
+    if (trimmedName && trimmedName !== product.name) patch.name = trimmedName;
+    if (trimmedPrefix !== (product.lot_code_prefix ?? "")) patch.lot_code_prefix = trimmedPrefix || null;
+    if (!("name" in patch) && !("lot_code_prefix" in patch)) {
       cancelEdit();
       return;
     }
-    update.mutate(
-      { id: product.id, name: trimmed },
-      {
-        onSuccess: () => {
-          notifySuccess("Renamed.");
-          setEditing(false);
-        },
-        onError: (e) => {
-          notifyError(e);
-          setName(product.name);
-        },
+    update.mutate(patch, {
+      onSuccess: () => {
+        notifySuccess("Saved.");
+        setEditing(false);
       },
-    );
+      onError: (e) => {
+        notifyError(e);
+        setName(product.name);
+        setLotPrefix(product.lot_code_prefix ?? "");
+      },
+    });
   };
 
   const askDelete = () => {
@@ -227,6 +239,17 @@ function ProductRow({ product, canEdit }: { product: YieldProduct; canEdit: bool
                   if (e.key === "Escape") cancelEdit();
                 }}
               />
+              <TextInput
+                value={lotPrefix}
+                onChange={(e) => setLotPrefix(e.currentTarget.value)}
+                placeholder="Lot prefix"
+                size="xs"
+                w={90}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveName();
+                  if (e.key === "Escape") cancelEdit();
+                }}
+              />
               <ActionIcon size="sm" color="gpGreen" variant="light" onClick={saveName} loading={update.isPending}>
                 <IconCheck size={14} />
               </ActionIcon>
@@ -235,9 +258,16 @@ function ProductRow({ product, canEdit }: { product: YieldProduct; canEdit: bool
               </ActionIcon>
             </Group>
           ) : (
-            <Text fw={500} c={product.active ? undefined : "dimmed"}>
-              {product.name}
-            </Text>
+            <Group gap={6} wrap="nowrap">
+              <Text fw={500} c={product.active ? undefined : "dimmed"}>
+                {product.name}
+              </Text>
+              {product.lot_code_prefix && (
+                <Badge size="xs" variant="light" color="gray">
+                  {product.lot_code_prefix}
+                </Badge>
+              )}
+            </Group>
           )}
         </Table.Td>
         <Table.Td w={120}>
@@ -262,7 +292,7 @@ function ProductRow({ product, canEdit }: { product: YieldProduct; canEdit: bool
           <Table.Td w={72}>
             {!editing && (
               <Group gap={4} wrap="nowrap">
-                <ActionIcon size="sm" variant="subtle" onClick={() => setEditing(true)} aria-label="Rename">
+                <ActionIcon size="sm" variant="subtle" onClick={() => setEditing(true)} aria-label="Edit">
                   <IconPencil size={14} />
                 </ActionIcon>
                 <ActionIcon

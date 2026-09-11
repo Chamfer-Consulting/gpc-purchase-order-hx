@@ -457,12 +457,16 @@ CREATE TABLE IF NOT EXISTS dashboard_saved_views (
 -- qbo_invoice_items.product_name as a genuine many-to-many join (a yield product
 -- can feed several sold SKUs, a blend SKU can pull from several yield products).
 CREATE TABLE IF NOT EXISTS yield_products (
-    id          SERIAL PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE,
-    active      BOOLEAN NOT NULL DEFAULT TRUE,
-    notes       TEXT,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id               SERIAL PRIMARY KEY,
+    name             TEXT NOT NULL UNIQUE,
+    active           BOOLEAN NOT NULL DEFAULT TRUE,
+    notes            TEXT,
+    -- Short lot-code prefix (e.g. "TK") — the entry form auto-fills the lot
+    -- code field with this so harvest entries stay traceable to the product
+    -- without retyping it every time (0017).
+    lot_code_prefix  TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_yield_products_active ON yield_products (active);
 

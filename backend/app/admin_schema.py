@@ -132,14 +132,18 @@ CREATE INDEX IF NOT EXISTS idx_customer_aliases_canonical ON customer_aliases (c
 -- Product Yields (0014) — harvest logging, a separate domain from PO/QBO sales.
 -- See supabase/migrations/0014_yields.sql for the full rationale.
 CREATE TABLE IF NOT EXISTS yield_products (
-    id          SERIAL PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE,
-    active      BOOLEAN NOT NULL DEFAULT TRUE,
-    notes       TEXT,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id               SERIAL PRIMARY KEY,
+    name             TEXT NOT NULL UNIQUE,
+    active           BOOLEAN NOT NULL DEFAULT TRUE,
+    notes            TEXT,
+    lot_code_prefix  TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_yield_products_active ON yield_products (active);
+-- lot_code_prefix (0017) — the CREATE TABLE above is a no-op on an
+-- already-existing table, so fix it directly too.
+ALTER TABLE yield_products ADD COLUMN IF NOT EXISTS lot_code_prefix TEXT;
 
 CREATE TABLE IF NOT EXISTS yield_product_sales_links (
     id                 SERIAL PRIMARY KEY,

@@ -10,6 +10,9 @@ export interface YieldProduct {
   name: string;
   active: boolean;
   notes: string | null;
+  /** Short lot-code prefix (e.g. "TK") — the entry form auto-fills the lot
+   *  code field with this for traceability, without retyping it every time. */
+  lot_code_prefix: string | null;
 }
 
 export interface YieldEntry {
@@ -63,7 +66,7 @@ export function useYieldProducts(includeInactive = false) {
 export function useCreateYieldProduct() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name: string; notes?: string | null }) =>
+    mutationFn: (body: { name: string; notes?: string | null; lot_code_prefix?: string | null }) =>
       apiSend<YieldProduct>("POST", "/api/yields/products", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-products"] }),
   });
@@ -72,8 +75,16 @@ export function useCreateYieldProduct() {
 export function useUpdateYieldProduct() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: number; name?: string; active?: boolean; notes?: string | null }) =>
-      apiSend<YieldProduct>("POST", `/api/yields/products/${id}`, body),
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id: number;
+      name?: string;
+      active?: boolean;
+      notes?: string | null;
+      lot_code_prefix?: string | null;
+    }) => apiSend<YieldProduct>("POST", `/api/yields/products/${id}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-products"] }),
   });
 }

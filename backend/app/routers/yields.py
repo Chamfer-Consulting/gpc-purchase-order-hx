@@ -29,12 +29,14 @@ def _actor(user: AuthedUser) -> str | None:
 class ProductIn(BaseModel):
     name: str
     notes: str | None = None
+    lot_code_prefix: str | None = None
 
 
 class ProductPatch(BaseModel):
     name: str | None = None
     active: bool | None = None
     notes: str | None = None
+    lot_code_prefix: str | None = None
 
 
 @router.get("/products")
@@ -46,14 +48,17 @@ def list_products(include_inactive: bool = False, _: AuthedUser = Depends(curren
 @router.post("/products")
 def create_product(body: ProductIn, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
-        return yields_svc.create_product(conn, body.name, body.notes, actor=_actor(user))
+        return yields_svc.create_product(
+            conn, body.name, body.notes, lot_code_prefix=body.lot_code_prefix, actor=_actor(user),
+        )
 
 
 @router.post("/products/{product_id}")
 def update_product(product_id: int, body: ProductPatch, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         return yields_svc.update_product(
-            conn, product_id, name=body.name, active=body.active, notes=body.notes, actor=_actor(user),
+            conn, product_id, name=body.name, active=body.active, notes=body.notes,
+            lot_code_prefix=body.lot_code_prefix, actor=_actor(user),
         )
 
 

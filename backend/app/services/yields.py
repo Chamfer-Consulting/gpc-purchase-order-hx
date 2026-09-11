@@ -37,16 +37,19 @@ GRAINS = ("week", "month", "quarter", "year")
 def list_products(conn, *, include_inactive: bool = False) -> list[dict]:
     where = "" if include_inactive else "WHERE active"
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(f"SELECT id, name, active, notes FROM yield_products {where} ORDER BY name")
+        cur.execute(
+            f"SELECT id, name, active, notes, lot_code_prefix FROM yield_products {where} ORDER BY name",
+        )
         return [dict(r) for r in cur.fetchall()]
 
 
-def create_product(conn, name: str, notes: str | None = None, *, actor: str | None = None) -> dict:
+def create_product(conn, name: str, notes: str | None = None, *, lot_code_prefix: str | None = None,
+                    actor: str | None = None) -> dict:
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            "INSERT INTO yield_products (name, notes) VALUES (%s, %s) "
-            "RETURNING id, name, active, notes",
-            (name.strip(), notes),
+            "INSERT INTO yield_products (name, notes, lot_code_prefix) VALUES (%s, %s, %s) "
+            "RETURNING id, name, active, notes, lot_code_prefix",
+            (name.strip(), notes, lot_code_prefix.strip() if lot_code_prefix else None),
         )
         row = dict(cur.fetchone())
     audit.log(conn, actor=actor, action="create", entity="yield_product", entity_id=row["id"], after=row)
@@ -55,7 +58,8 @@ def create_product(conn, name: str, notes: str | None = None, *, actor: str | No
 
 
 def update_product(conn, product_id: int, *, name: str | None = None, active: bool | None = None,
-                    notes: str | None = None, actor: str | None = None) -> dict:
+                    notes: str | None = None, lot_code_prefix: str | None = None,
+                    actor: str | None = None) -> dict:
     sets: list[str] = []
     vals: list[object] = []
     if name is not None:
@@ -67,6 +71,9 @@ def update_product(conn, product_id: int, *, name: str | None = None, active: bo
     if notes is not None:
         sets.append("notes = %s")
         vals.append(notes)
+    if lot_code_prefix is not None:
+        sets.append("lot_code_prefix = %s")
+        vals.append(lot_code_prefix.strip() or None)
     if not sets:
         raise ValueError("nothing to update")
     sets.append("updated_at = now()")
@@ -74,7 +81,7 @@ def update_product(conn, product_id: int, *, name: str | None = None, active: bo
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             f"UPDATE yield_products SET {', '.join(sets)} WHERE id = %s "
-            "RETURNING id, name, active, notes",
+            "RETURNING id, name, active, notes, lot_code_prefix",
             vals,
         )
         row = cur.fetchone()

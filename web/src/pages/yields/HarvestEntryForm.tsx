@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -53,6 +53,17 @@ export function HarvestEntryForm() {
     () => (employees.data ?? []).map((e) => e.name),
     [employees.data],
   );
+
+  // Auto-fill the lot code with the selected product's prefix, but only while
+  // the field still holds whatever we last auto-filled — once the employee
+  // types something of their own, switching products stops overwriting it.
+  const lastAutoPrefixRef = useRef("");
+  const handleProductChange = (id: string | null) => {
+    setProductId(id);
+    const prefix = (products.data ?? []).find((p) => String(p.id) === id)?.lot_code_prefix ?? "";
+    setLotCode((current) => (current === lastAutoPrefixRef.current ? prefix : current));
+    lastAutoPrefixRef.current = prefix;
+  };
 
   const canSubmit = productId != null && weight !== "" && Number(weight) > 0 && harvestedBy.trim() !== "";
 
@@ -111,7 +122,7 @@ export function HarvestEntryForm() {
             placeholder="Choose a crop"
             data={productOptions}
             value={productId}
-            onChange={setProductId}
+            onChange={handleProductChange}
             searchable
             size="md"
             disabled={products.isLoading}
