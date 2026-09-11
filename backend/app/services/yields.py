@@ -424,29 +424,28 @@ def _note_row(r: dict) -> dict:
     }
 
 
-def list_notes(conn, *, yield_product_id: int | None = None) -> list[dict]:
+def list_notes(conn, *, lot_code: str | None = None) -> list[dict]:
     where: list[str] = []
     vals: list[object] = []
-    if yield_product_id is not None:
-        where.append("n.yield_product_id = %s")
-        vals.append(yield_product_id)
-    sql = ("SELECT n.*, p.name AS product_name FROM yield_notes n "
-           "LEFT JOIN yield_products p ON p.id = n.yield_product_id")
+    if lot_code is not None:
+        where.append("lot_code = %s")
+        vals.append(lot_code)
+    sql = "SELECT * FROM yield_notes"
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY n.note_date DESC, n.created_at DESC"
+    sql += " ORDER BY note_date DESC, created_at DESC"
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(sql, vals)
         return [_note_row(dict(r)) for r in cur.fetchall()]
 
 
-def create_note(conn, *, yield_product_id: int | None, note: str, note_date: _date | None = None,
+def create_note(conn, *, lot_code: str | None, note: str, note_date: _date | None = None,
                  submitted_by: str) -> dict:
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            "INSERT INTO yield_notes (yield_product_id, note, note_date, submitted_by) "
+            "INSERT INTO yield_notes (lot_code, note, note_date, submitted_by) "
             "VALUES (%s, %s, COALESCE(%s, CURRENT_DATE), %s) RETURNING *",
-            (yield_product_id, note, note_date, submitted_by),
+            (lot_code.strip() if lot_code else None, note, note_date, submitted_by),
         )
         row = _note_row(dict(cur.fetchone()))
     conn.commit()

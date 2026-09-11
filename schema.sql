@@ -504,15 +504,19 @@ CREATE INDEX IF NOT EXISTS idx_yield_entries_date ON yield_entries (harvest_date
 CREATE INDEX IF NOT EXISTS idx_yield_entries_product_date ON yield_entries (yield_product_id, harvest_date);
 
 -- Freeform grower observations, not tied to a specific weigh-in.
+-- Ties to a specific lot_code (the default/primary case — a traceability
+-- observation about that exact harvest lot) or is left general (lot_code
+-- NULL — not specific to any one lot). Free TEXT, not a FK — lot codes
+-- aren't a normalized entity, same as yield_entries.lot_code itself (0018).
 CREATE TABLE IF NOT EXISTS yield_notes (
     id                BIGSERIAL PRIMARY KEY,
-    yield_product_id  INTEGER REFERENCES yield_products(id) ON DELETE SET NULL,
+    lot_code          TEXT,
     note_date         DATE NOT NULL DEFAULT CURRENT_DATE,
     note              TEXT NOT NULL,
     submitted_by      TEXT NOT NULL,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_yield_notes_product ON yield_notes (yield_product_id, note_date);
+CREATE INDEX IF NOT EXISTS idx_yield_notes_lot_code ON yield_notes (lot_code, note_date);
 
 -- Yield employees (0015) — a roster so the kiosk's "harvested by" field is a
 -- tap-to-pick Select instead of free typing. yield_entries.harvested_by

@@ -179,13 +179,17 @@ ALTER TABLE yield_entries DROP COLUMN IF EXISTS storage_bin;
 
 CREATE TABLE IF NOT EXISTS yield_notes (
     id                BIGSERIAL PRIMARY KEY,
-    yield_product_id  INTEGER REFERENCES yield_products(id) ON DELETE SET NULL,
+    lot_code          TEXT,
     note_date         DATE NOT NULL DEFAULT CURRENT_DATE,
     note              TEXT NOT NULL,
     submitted_by      TEXT NOT NULL,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_yield_notes_product ON yield_notes (yield_product_id, note_date);
+CREATE INDEX IF NOT EXISTS idx_yield_notes_lot_code ON yield_notes (lot_code, note_date);
+-- lot_code replaces yield_product_id (0018) — the CREATE TABLE above is a
+-- no-op on an already-existing table, so fix it directly too.
+ALTER TABLE yield_notes DROP COLUMN IF EXISTS yield_product_id;
+ALTER TABLE yield_notes ADD COLUMN IF NOT EXISTS lot_code TEXT;
 
 -- Yield employees (0015) — a roster so the kiosk's "harvested by" field is a
 -- tap-to-pick Select. Free TEXT on yield_entries stays unchanged (no FK).

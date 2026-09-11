@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { ActionIcon, Alert, Badge, Button, Group, Paper, Select, Stack, Text, Textarea, TextInput } from "@mantine/core";
+import { ActionIcon, Alert, Autocomplete, Badge, Button, Group, Paper, Stack, Text, Textarea, TextInput } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
 import { useMe } from "@/api/me";
-import { useCreateYieldNote, useDeleteYieldNote, useYieldNotes, useYieldProducts } from "@/api/yields";
+import { useCreateYieldNote, useDeleteYieldNote, useYieldEntries, useYieldNotes } from "@/api/yields";
 import { EmptyState } from "@/components/EmptyState";
 import { QueryBoundary } from "@/components/ErrorState";
 import { PageLayout } from "@/components/PageLayout";
@@ -17,22 +17,33 @@ function today(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+function daysAgo(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  const pad = (v: number) => String(v).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** A note ties to a specific lot_code by default (the traceability case) —
+ *  leave it blank for a general note not specific to any one lot. */
 function AddNoteForm() {
-  const products = useYieldProducts();
+  // A rolling 60-day window of recent entries, just to seed lot-code
+  // suggestions — not a full history view.
+  const recent = useYieldEntries({ date_from: daysAgo(60) });
   const create = useCreateYieldNote();
-  const [productId, setProductId] = useState<string | null>(null);
+  const [lotCode, setLotCode] = useState("");
   const [date, setDate] = useState(today());
   const [note, setNote] = useState("");
 
-  const productOptions = useMemo(
-    () => (products.data ?? []).map((p) => ({ value: String(p.id), label: p.name })),
-    [products.data],
+  const lotSuggestions = useMemo(
+    () => Array.from(new Set((recent.data ?? []).map((e) => e.lot_code).filter((v): v is string => Boolean(v)))).sort(),
+    [recent.data],
   );
 
   const submit = () => {
     if (!note.trim()) return;
     create.mutate(
-      { yield_product_id: productId ? Number(productId) : null, note: note.trim(), note_date: date },
+      { lot_code: lotCode.trim() || null, note: note.trim(), note_date: date },
       {
         onSuccess: () => {
           notifySuccess("Note added.");
@@ -46,14 +57,13 @@ function AddNoteForm() {
   return (
     <Stack gap="sm">
       <Group gap="sm" wrap="wrap" align="flex-end">
-        <Select
-          label="Product (optional)"
-          placeholder="General — not product-specific"
-          data={productOptions}
-          value={productId}
-          onChange={setProductId}
-          searchable
-          clearable
+        <Autocomplete
+          label="Lot code"
+          description="Leave blank for a general note, not tied to one lot"
+          placeholder="e.g. TK0911"
+          data={lotSuggestions}
+          value={lotCode}
+          onChange={setLotCode}
           w={240}
         />
         <TextInput type="date" label="Date" value={date} onChange={(e) => setDate(e.currentTarget.value)} w={160} />
@@ -119,9 +129,13 @@ export function YieldsNotesPage() {
                         <Text size="xs" c="dimmed">
                           {fmtDateOnly(n.note_date)}
                         </Text>
-                        {n.product_name && (
+                        {n.lot_code ? (
                           <Badge size="xs" variant="light" color="gpGreen">
-                            {n.product_name}
+                            {n.lot_code}
+                          </Badge>
+                        ) : (
+                          <Badge size="xs" variant="light" color="gray">
+                            General
                           </Badge>
                         )}
                         <Text size="xs" c="dimmed">

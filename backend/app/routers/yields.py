@@ -217,15 +217,15 @@ def trends(
 
 
 class NoteIn(BaseModel):
-    yield_product_id: int | None = None
+    lot_code: str | None = None
     note: str
     note_date: date | None = None
 
 
 @router.get("/notes")
-def list_notes(yield_product_id: int | None = None, _: AuthedUser = Depends(require_admin)) -> list[dict]:
+def list_notes(lot_code: str | None = None, _: AuthedUser = Depends(require_admin)) -> list[dict]:
     with reused_conn() as conn:
-        return yields_svc.list_notes(conn, yield_product_id=yield_product_id)
+        return yields_svc.list_notes(conn, lot_code=lot_code)
 
 
 @router.post("/notes")
@@ -233,7 +233,7 @@ def create_note(body: NoteIn, user: AuthedUser = Depends(require_admin)) -> dict
     with reused_conn() as conn:
         return yields_svc.create_note(
             conn,
-            yield_product_id=body.yield_product_id,
+            lot_code=body.lot_code,
             note=body.note,
             note_date=body.note_date,
             submitted_by=_actor(user) or "",
