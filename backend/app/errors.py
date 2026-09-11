@@ -94,6 +94,14 @@ class NotActive(ApiProblem):
         )
 
 
+class InUse(ApiProblem):
+    """A hard delete was attempted on a row other rows still reference (e.g. a
+    yield product with harvest entries). 409 — retire/hide it instead."""
+
+    status = 409
+    code = "in_use"
+
+
 class Forbidden(ApiProblem):
     """The signed-in user's role can't perform this action. 403."""
 

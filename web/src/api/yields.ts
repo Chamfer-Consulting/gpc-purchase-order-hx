@@ -78,6 +78,16 @@ export function useUpdateYieldProduct() {
   });
 }
 
+/** Only succeeds while the product has no harvest entries yet (backend 409s
+ *  with code "in_use" otherwise) — retire it via useUpdateYieldProduct instead. */
+export function useDeleteYieldProduct() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => apiSend<{ ok: boolean }>("DELETE", `/api/yields/products/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-products"] }),
+  });
+}
+
 export function useYieldEntries(filters: YieldEntryFilters = {}) {
   return useQuery({
     queryKey: ["yield-entries", filters],

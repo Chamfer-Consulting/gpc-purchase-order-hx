@@ -17,10 +17,11 @@ from __future__ import annotations
 
 from datetime import date as _date
 
+import psycopg2.errors
 import psycopg2.extras
 from business_tz import business_now  # shared/, via app.reuse
 
-from ..errors import Forbidden, NotFound
+from ..errors import Forbidden, InUse, NotFound
 from . import audit
 
 # --- products ----------------------------------------------------------------
@@ -76,6 +77,24 @@ def update_product(conn, product_id: int, *, name: str | None = None, active: bo
     audit.log(conn, actor=actor, action="edit", entity="yield_product", entity_id=product_id, after=row)
     conn.commit()
     return row
+
+
+def delete_product(conn, product_id: int, *, actor: str | None = None) -> None:
+    """Hard delete — only succeeds while nothing references this product yet
+    (yield_entries.yield_product_id is ON DELETE RESTRICT). Once a harvest has
+    been logged against it, retire it instead (update_product(active=False))."""
+    with conn.cursor() as cur:
+        try:
+            cur.execute("DELETE FROM yield_products WHERE id = %s", (product_id,))
+        except psycopg2.errors.ForeignKeyViolation as exc:
+            raise InUse(
+                "This product has harvest entries on record — retire it instead of deleting it."
+            ) from exc
+        gone = cur.rowcount
+    if not gone:
+        raise NotFound(f"yield product {product_id} not found")
+    audit.log(conn, actor=actor, action="delete", entity="yield_product", entity_id=product_id)
+    conn.commit()
 
 
 # --- entries -------------------------------------------------------------

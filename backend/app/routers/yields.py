@@ -56,6 +56,13 @@ def update_product(product_id: int, body: ProductPatch, user: AuthedUser = Depen
         )
 
 
+@router.delete("/products/{product_id}")
+def delete_product(product_id: int, user: AuthedUser = Depends(require_editor)) -> dict:
+    with reused_conn() as conn:
+        yields_svc.delete_product(conn, product_id, actor=_actor(user))
+    return {"ok": True}
+
+
 # --- entries -----------------------------------------------------------------
 
 
