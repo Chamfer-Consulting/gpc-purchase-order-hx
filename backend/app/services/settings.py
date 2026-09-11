@@ -260,7 +260,7 @@ def set_invoice_hidden(conn, qbo_invoice_id: str, hidden: bool,
 
 # --- team / access control (app_users) -----------------------------------
 
-_TEAM_ROLES = ("viewer", "editor", "admin")
+_TEAM_ROLES = ("field", "viewer", "editor", "admin")
 
 
 class TeamError(ValueError):
@@ -306,7 +306,7 @@ def list_team(conn) -> list[dict]:
             "signed_up_at": _iso(r["signed_up_at"]),
             "last_sign_in_at": _iso(r["last_sign_in_at"]),
         })
-    _RANK = {"admin": 0, "editor": 1, "viewer": 2, None: 3}
+    _RANK = {"admin": 0, "editor": 1, "viewer": 2, "field": 3, None: 4}
     out.sort(key=lambda x: (_RANK.get(x["effective_role"], 3), not x["allowed"], x["email"]))
     return out
 

@@ -148,6 +148,7 @@ export function SettingsPage() {
 }
 
 const ROLE_DATA = [
+  { value: "field", label: "Field (Yields kiosk only)" },
   { value: "viewer", label: "Viewer" },
   { value: "editor", label: "Editor" },
   { value: "admin", label: "Admin" },

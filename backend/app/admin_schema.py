@@ -19,13 +19,18 @@ CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders (status
 
 CREATE TABLE IF NOT EXISTS app_users (
     email      TEXT PRIMARY KEY,
-    role       TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('viewer','editor','admin')),
+    role       TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('field','viewer','editor','admin')),
     note       TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 INSERT INTO app_users (email, role, note) VALUES ('jcaternolo@gmail.com', 'admin', 'seed: repo owner')
 ON CONFLICT (email) DO NOTHING;
+-- 'field' role (0014) added after this table already existed in deployed DBs —
+-- CREATE TABLE IF NOT EXISTS above is a no-op there, so fix the constraint directly.
+ALTER TABLE app_users DROP CONSTRAINT IF EXISTS app_users_role_check;
+ALTER TABLE app_users ADD CONSTRAINT app_users_role_check
+    CHECK (role IN ('field','viewer','editor','admin'));
 
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS voided BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS void_reason TEXT;
@@ -123,6 +128,58 @@ CREATE TABLE IF NOT EXISTS customer_aliases (
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_customer_aliases_canonical ON customer_aliases (canonical_name);
+
+-- Product Yields (0014) — harvest logging, a separate domain from PO/QBO sales.
+-- See supabase/migrations/0014_yields.sql for the full rationale.
+CREATE TABLE IF NOT EXISTS yield_products (
+    id          SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    active      BOOLEAN NOT NULL DEFAULT TRUE,
+    notes       TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_yield_products_active ON yield_products (active);
+
+CREATE TABLE IF NOT EXISTS yield_product_sales_links (
+    id                 SERIAL PRIMARY KEY,
+    yield_product_id   INTEGER NOT NULL REFERENCES yield_products(id) ON DELETE CASCADE,
+    sales_product_name TEXT NOT NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (yield_product_id, sales_product_name)
+);
+CREATE INDEX IF NOT EXISTS idx_yield_links_sales_name ON yield_product_sales_links (sales_product_name);
+
+CREATE TABLE IF NOT EXISTS yield_entries (
+    id                     BIGSERIAL PRIMARY KEY,
+    yield_product_id       INTEGER NOT NULL REFERENCES yield_products(id) ON DELETE RESTRICT,
+    harvest_date           DATE NOT NULL,
+    weight                 NUMERIC(10,2) NOT NULL CHECK (weight > 0),
+    unit                   TEXT NOT NULL DEFAULT 'oz' CHECK (unit IN ('oz', 'lb', 'g')),
+    tray_count             INTEGER NOT NULL DEFAULT 0 CHECK (tray_count >= 0),
+    discarded_tray_count   INTEGER NOT NULL DEFAULT 0 CHECK (discarded_tray_count >= 0),
+    storage_bin            TEXT,
+    lot_code               TEXT,
+    harvested_by           TEXT NOT NULL,
+    submitted_by           TEXT NOT NULL,
+    notes                  TEXT,
+    voided                 BOOLEAN NOT NULL DEFAULT FALSE,
+    void_reason            TEXT,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_yield_entries_date ON yield_entries (harvest_date);
+CREATE INDEX IF NOT EXISTS idx_yield_entries_product_date ON yield_entries (yield_product_id, harvest_date);
+
+CREATE TABLE IF NOT EXISTS yield_notes (
+    id                BIGSERIAL PRIMARY KEY,
+    yield_product_id  INTEGER REFERENCES yield_products(id) ON DELETE SET NULL,
+    note_date         DATE NOT NULL DEFAULT CURRENT_DATE,
+    note              TEXT NOT NULL,
+    submitted_by      TEXT NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_yield_notes_product ON yield_notes (yield_product_id, note_date);
 """
 
 

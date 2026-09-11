@@ -91,9 +91,11 @@ ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS lock_version INTEGER NOT NU
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders (status);
 
 -- Authorization tiers for the admin surface (0006). No row => 'editor'.
+-- 'field' (0014) is the Product Yields kiosk role, ranked below 'viewer' —
+-- never a default, only ever an explicit grant.
 CREATE TABLE IF NOT EXISTS app_users (
     email      TEXT PRIMARY KEY,
-    role       TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('viewer','editor','admin')),
+    role       TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('field','viewer','editor','admin')),
     note       TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -448,3 +450,63 @@ CREATE TABLE IF NOT EXISTS dashboard_saved_views (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (owner, kind, name)
 );
+
+-- Product Yields (0014) — harvest logging, a separate domain from PO/QBO sales.
+-- yield_products is a standalone crop/variety catalog (decoupled from sales SKU
+-- names); yield_product_sales_links maps it to line_items.product_name /
+-- qbo_invoice_items.product_name as a genuine many-to-many join (a yield product
+-- can feed several sold SKUs, a blend SKU can pull from several yield products).
+CREATE TABLE IF NOT EXISTS yield_products (
+    id          SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    active      BOOLEAN NOT NULL DEFAULT TRUE,
+    notes       TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_yield_products_active ON yield_products (active);
+
+CREATE TABLE IF NOT EXISTS yield_product_sales_links (
+    id                 SERIAL PRIMARY KEY,
+    yield_product_id   INTEGER NOT NULL REFERENCES yield_products(id) ON DELETE CASCADE,
+    sales_product_name TEXT NOT NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (yield_product_id, sales_product_name)
+);
+CREATE INDEX IF NOT EXISTS idx_yield_links_sales_name ON yield_product_sales_links (sales_product_name);
+
+-- Harvest log rows. No daily-uniqueness constraint — multiple entries per
+-- product per day are expected (separate packing runs). harvested_by is the
+-- individual worker (free text); submitted_by is the signed-in kiosk account's
+-- email, since the kiosk login is shared across workers, not per-employee.
+CREATE TABLE IF NOT EXISTS yield_entries (
+    id                     BIGSERIAL PRIMARY KEY,
+    yield_product_id       INTEGER NOT NULL REFERENCES yield_products(id) ON DELETE RESTRICT,
+    harvest_date           DATE NOT NULL,
+    weight                 NUMERIC(10,2) NOT NULL CHECK (weight > 0),
+    unit                   TEXT NOT NULL DEFAULT 'oz' CHECK (unit IN ('oz', 'lb', 'g')),
+    tray_count             INTEGER NOT NULL DEFAULT 0 CHECK (tray_count >= 0),
+    discarded_tray_count   INTEGER NOT NULL DEFAULT 0 CHECK (discarded_tray_count >= 0),
+    storage_bin            TEXT,
+    lot_code               TEXT,
+    harvested_by           TEXT NOT NULL,
+    submitted_by           TEXT NOT NULL,
+    notes                  TEXT,
+    voided                 BOOLEAN NOT NULL DEFAULT FALSE,
+    void_reason            TEXT,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_yield_entries_date ON yield_entries (harvest_date);
+CREATE INDEX IF NOT EXISTS idx_yield_entries_product_date ON yield_entries (yield_product_id, harvest_date);
+
+-- Freeform grower observations, not tied to a specific weigh-in.
+CREATE TABLE IF NOT EXISTS yield_notes (
+    id                BIGSERIAL PRIMARY KEY,
+    yield_product_id  INTEGER REFERENCES yield_products(id) ON DELETE SET NULL,
+    note_date         DATE NOT NULL DEFAULT CURRENT_DATE,
+    note              TEXT NOT NULL,
+    submitted_by      TEXT NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_yield_notes_product ON yield_notes (yield_product_id, note_date);

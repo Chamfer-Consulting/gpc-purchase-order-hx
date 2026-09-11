@@ -159,7 +159,7 @@ def set_invoice_hidden(body: HideInvoiceIn, user: AuthedUser = Depends(require_e
 
 class TeamMemberIn(BaseModel):
     email: str
-    role: str  # viewer | editor | admin
+    role: str  # field | viewer | editor | admin
     note: str | None = None
 
 
