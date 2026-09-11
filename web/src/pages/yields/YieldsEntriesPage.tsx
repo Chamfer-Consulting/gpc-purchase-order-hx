@@ -93,7 +93,16 @@ export function YieldsEntriesPage() {
                       </Table.Td>
                       <Table.Td ta="right">{e.tray_count}</Table.Td>
                       <Table.Td ta="right">{e.discarded_tray_count || "—"}</Table.Td>
-                      <Table.Td>{e.lot_code ?? "—"}</Table.Td>
+                      <Table.Td>
+                        <Group gap={6} wrap="nowrap">
+                          {e.product_lot_code_prefix && (
+                            <Badge size="xs" variant="outline" color="gray">
+                              {e.product_lot_code_prefix}
+                            </Badge>
+                          )}
+                          {e.lot_code ?? "—"}
+                        </Group>
+                      </Table.Td>
                       <Table.Td>
                         <Group gap={6} wrap="nowrap">
                           {e.harvested_by}

@@ -75,6 +75,7 @@ export function MyRecentEntriesPage() {
                     <Group gap={6} mt={4}>
                       {e.lot_code && (
                         <Badge size="sm" variant="light" color="gray">
+                          {e.product_lot_code_prefix && `${e.product_lot_code_prefix} · `}
                           Lot {e.lot_code}
                         </Badge>
                       )}

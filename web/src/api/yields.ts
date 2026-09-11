@@ -19,6 +19,9 @@ export interface YieldEntry {
   id: number;
   yield_product_id: number;
   product_name: string;
+  /** The product's lot-code prefix (e.g. "TK") — only populated on list
+   *  results (joined), not on the row returned from create/update/void. */
+  product_lot_code_prefix: string | null;
   harvest_date: string;
   weight: number;
   unit: YieldUnit;

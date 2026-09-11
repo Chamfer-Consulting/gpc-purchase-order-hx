@@ -235,7 +235,8 @@ def list_entries(conn, *, yield_product_id: int | None = None, date_from: _date 
     if submitted_by:
         where.append("e.submitted_by = %s")
         vals.append(submitted_by)
-    sql = "SELECT e.*, p.name AS product_name FROM yield_entries e JOIN yield_products p ON p.id = e.yield_product_id"
+    sql = ("SELECT e.*, p.name AS product_name, p.lot_code_prefix AS product_lot_code_prefix "
+           "FROM yield_entries e JOIN yield_products p ON p.id = e.yield_product_id")
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY e.harvest_date DESC, e.created_at DESC"
