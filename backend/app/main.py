@@ -31,6 +31,7 @@ from .routers import (
     reconcile,
     review,
     settings as settings_router,
+    yields as yields_router,
 )
 
 
@@ -81,6 +82,7 @@ app.include_router(settings_router.router)
 app.include_router(connections.router)
 app.include_router(oauth.router)
 app.include_router(audit_router.router)
+app.include_router(yields_router.router)
 
 _log = logging.getLogger("po-api")
 
