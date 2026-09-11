@@ -170,3 +170,41 @@ export function useYieldTrends(filters: YieldTrendsFilters) {
     staleTime: 30_000,
   });
 }
+
+export interface YieldNote {
+  id: number;
+  yield_product_id: number | null;
+  product_name: string | null;
+  note_date: string;
+  note: string;
+  submitted_by: string;
+  created_at: string;
+}
+
+/** Admin-only for now, both here and on the backend (require_admin) — see
+ *  routers/yields.py's notes section. */
+export function useYieldNotes(yieldProductId?: number) {
+  return useQuery({
+    queryKey: ["yield-notes", yieldProductId],
+    queryFn: () =>
+      apiGet<YieldNote[]>("/api/yields/notes", yieldProductId ? { yield_product_id: yieldProductId } : undefined),
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateYieldNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { yield_product_id?: number | null; note: string; note_date?: string | null }) =>
+      apiSend<YieldNote>("POST", "/api/yields/notes", body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-notes"] }),
+  });
+}
+
+export function useDeleteYieldNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => apiSend<{ ok: boolean }>("DELETE", `/api/yields/notes/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-notes"] }),
+  });
+}

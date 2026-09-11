@@ -11,6 +11,8 @@ import { HarvestEntryPage } from "@/pages/yields/HarvestEntryPage";
 import { MyRecentEntriesPage } from "@/pages/yields/MyRecentEntriesPage";
 import { YieldsAdminPage } from "@/pages/yields/YieldsAdminPage";
 import { YieldsEntriesPage } from "@/pages/yields/YieldsEntriesPage";
+import { YieldsLogPage } from "@/pages/yields/YieldsLogPage";
+import { YieldsNotesPage } from "@/pages/yields/YieldsNotesPage";
 import { YieldsTrendsPage } from "@/pages/yields/YieldsTrendsPage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
@@ -69,8 +71,10 @@ function RoleRouter() {
         <Route path="/archive" element={<ArchivePage />} />
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/yields" element={<YieldsTrendsPage />} />
+        <Route path="/yields/log" element={<YieldsLogPage />} />
         <Route path="/yields/entries" element={<YieldsEntriesPage />} />
         <Route path="/yields/admin" element={<YieldsAdminPage />} />
+        <Route path="/yields/notes" element={<YieldsNotesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/_kitchen-sink" element={<KitchenSink />} />
         <Route path="*" element={<Navigate to="/" replace />} />

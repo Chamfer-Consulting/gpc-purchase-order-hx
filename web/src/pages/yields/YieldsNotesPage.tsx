@@ -1,0 +1,158 @@
+import { useMemo, useState } from "react";
+import { ActionIcon, Alert, Badge, Button, Group, Paper, Select, Stack, Text, Textarea, TextInput } from "@mantine/core";
+import { IconTrash } from "@tabler/icons-react";
+import { useMe } from "@/api/me";
+import { useCreateYieldNote, useDeleteYieldNote, useYieldNotes, useYieldProducts } from "@/api/yields";
+import { EmptyState } from "@/components/EmptyState";
+import { QueryBoundary } from "@/components/ErrorState";
+import { PageLayout } from "@/components/PageLayout";
+import { SectionCard } from "@/components/SectionCard";
+import { fmtDateOnly } from "@/lib/datetime";
+import { notifyError, notifySuccess } from "@/lib/notify";
+import { pageMeta } from "@/nav";
+
+function today(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function AddNoteForm() {
+  const products = useYieldProducts();
+  const create = useCreateYieldNote();
+  const [productId, setProductId] = useState<string | null>(null);
+  const [date, setDate] = useState(today());
+  const [note, setNote] = useState("");
+
+  const productOptions = useMemo(
+    () => (products.data ?? []).map((p) => ({ value: String(p.id), label: p.name })),
+    [products.data],
+  );
+
+  const submit = () => {
+    if (!note.trim()) return;
+    create.mutate(
+      { yield_product_id: productId ? Number(productId) : null, note: note.trim(), note_date: date },
+      {
+        onSuccess: () => {
+          notifySuccess("Note added.");
+          setNote("");
+        },
+        onError: (e) => notifyError(e),
+      },
+    );
+  };
+
+  return (
+    <Stack gap="sm">
+      <Group gap="sm" wrap="wrap" align="flex-end">
+        <Select
+          label="Product (optional)"
+          placeholder="General — not product-specific"
+          data={productOptions}
+          value={productId}
+          onChange={setProductId}
+          searchable
+          clearable
+          w={240}
+        />
+        <TextInput type="date" label="Date" value={date} onChange={(e) => setDate(e.currentTarget.value)} w={160} />
+      </Group>
+      <Textarea
+        placeholder="Growing conditions, pest pressure, a change worth remembering…"
+        value={note}
+        onChange={(e) => setNote(e.currentTarget.value)}
+        autosize
+        minRows={2}
+      />
+      <Group justify="flex-end">
+        <Button disabled={!note.trim()} loading={create.isPending} onClick={submit}>
+          Add note
+        </Button>
+      </Group>
+    </Stack>
+  );
+}
+
+export function YieldsNotesPage() {
+  const meta = pageMeta("/yields/notes");
+  const { canAdmin, roleKnown } = useMe();
+  const notes = useYieldNotes();
+  const del = useDeleteYieldNote();
+
+  if (roleKnown && !canAdmin) {
+    return (
+      <PageLayout
+        title={meta?.title ?? "Notes"}
+        description={meta?.description}
+        breadcrumbs={meta?.breadcrumbs}
+      >
+        <Alert color="gray" variant="light" title="Admin access required">
+          Grower notes are only available to admins for now.
+        </Alert>
+      </PageLayout>
+    );
+  }
+
+  return (
+    <PageLayout
+      title={meta?.title ?? "Notes"}
+      description={meta?.description ?? "Freeform growing observations, not tied to a specific harvest."}
+      breadcrumbs={meta?.breadcrumbs}
+      width="form"
+    >
+      <SectionCard title="Add a note">
+        <AddNoteForm />
+      </SectionCard>
+
+      <SectionCard title="Recent notes">
+        <QueryBoundary loading={notes.isLoading} error={notes.error} onRetry={() => void notes.refetch()}>
+          {!notes.data || notes.data.length === 0 ? (
+            <EmptyState label="No notes yet" compact />
+          ) : (
+            <Stack gap="xs">
+              {notes.data.map((n) => (
+                <Paper key={n.id} withBorder radius="md" p="sm" bg="var(--gp-surface)">
+                  <Group justify="space-between" align="flex-start" wrap="nowrap">
+                    <div style={{ minWidth: 0 }}>
+                      <Group gap={6} mb={4}>
+                        <Text size="xs" c="dimmed">
+                          {fmtDateOnly(n.note_date)}
+                        </Text>
+                        {n.product_name && (
+                          <Badge size="xs" variant="light" color="gpGreen">
+                            {n.product_name}
+                          </Badge>
+                        )}
+                        <Text size="xs" c="dimmed">
+                          · {n.submitted_by}
+                        </Text>
+                      </Group>
+                      <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                        {n.note}
+                      </Text>
+                    </div>
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      color="red"
+                      onClick={() =>
+                        del.mutate(n.id, {
+                          onSuccess: () => notifySuccess("Deleted."),
+                          onError: (e) => notifyError(e),
+                        })
+                      }
+                      aria-label="Delete note"
+                    >
+                      <IconTrash size={14} />
+                    </ActionIcon>
+                  </Group>
+                </Paper>
+              ))}
+            </Stack>
+          )}
+        </QueryBoundary>
+      </SectionCard>
+    </PageLayout>
+  );
+}

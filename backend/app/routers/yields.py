@@ -11,7 +11,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, app_role, current_user, require_editor
+from ..auth import AuthedUser, app_role, current_user, require_admin, require_editor
 from ..reused_db import reused_conn
 from ..schemas import PageResponse
 from ..services import yields as yields_svc
@@ -210,6 +210,8 @@ def trends(
 
 
 # --- notes -------------------------------------------------------------------
+# Admin-only for now (per the user, while both role sides are still being
+# tested) — tighten/loosen later by swapping require_admin below.
 
 
 class NoteIn(BaseModel):
@@ -219,13 +221,13 @@ class NoteIn(BaseModel):
 
 
 @router.get("/notes")
-def list_notes(yield_product_id: int | None = None, _: AuthedUser = Depends(current_user)) -> list[dict]:
+def list_notes(yield_product_id: int | None = None, _: AuthedUser = Depends(require_admin)) -> list[dict]:
     with reused_conn() as conn:
         return yields_svc.list_notes(conn, yield_product_id=yield_product_id)
 
 
 @router.post("/notes")
-def create_note(body: NoteIn, user: AuthedUser = Depends(current_user)) -> dict:
+def create_note(body: NoteIn, user: AuthedUser = Depends(require_admin)) -> dict:
     with reused_conn() as conn:
         return yields_svc.create_note(
             conn,
@@ -237,7 +239,7 @@ def create_note(body: NoteIn, user: AuthedUser = Depends(current_user)) -> dict:
 
 
 @router.delete("/notes/{note_id}")
-def delete_note(note_id: int, user: AuthedUser = Depends(require_editor)) -> dict:
+def delete_note(note_id: int, user: AuthedUser = Depends(require_admin)) -> dict:
     with reused_conn() as conn:
         yields_svc.delete_note(conn, note_id, actor=_actor(user))
     return {"ok": True}
