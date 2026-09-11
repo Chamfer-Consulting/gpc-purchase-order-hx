@@ -3,14 +3,14 @@ GET /api/explore (default PageResponse) stays in routers/analytics.py."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..auth import AuthedUser, current_user
+from ..auth import AuthedUser, current_user, require_viewer
 from ..cache import cached
 from ..deps import FilterParams, filter_params
 from ..schemas import PageResponse
 from ..services.explore import compare as compare_svc
 from ..services.explore import pivot as pivot_svc
 
-router = APIRouter(prefix="/api/explore", tags=["explore"])
+router = APIRouter(prefix="/api/explore", tags=["explore"], dependencies=[Depends(require_viewer)])
 
 
 def _key(*args, **kwargs):

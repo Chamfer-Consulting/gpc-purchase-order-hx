@@ -6,12 +6,12 @@ the extraction pipeline leaves it alone. See services/po_admin.py."""
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user, require_admin, require_editor
+from ..auth import AuthedUser, current_user, require_admin, require_editor, require_viewer
 from ..reused_db import reused_conn
 from ..services import audit, extraction_retry, po_admin
 from .po_edit import HeaderIn, LineItemIn
 
-router = APIRouter(prefix="/api", tags=["po-admin"])
+router = APIRouter(prefix="/api", tags=["po-admin"], dependencies=[Depends(require_viewer)])
 
 
 def _actor(user: AuthedUser) -> str | None:

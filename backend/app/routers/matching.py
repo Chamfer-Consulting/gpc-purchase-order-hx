@@ -6,13 +6,13 @@ import qbo_matcher  # shared/, via app.reuse
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user, require_editor
+from ..auth import AuthedUser, current_user, require_editor, require_viewer
 from ..cache import clear as clear_cache
 from ..reused_db import reused_conn
 from ..services import matching as matching_svc
 from ..services.po_admin import AdminError
 
-router = APIRouter(prefix="/api/matching", tags=["matching"])
+router = APIRouter(prefix="/api/matching", tags=["matching"], dependencies=[Depends(require_viewer)])
 
 
 class LinkRef(BaseModel):

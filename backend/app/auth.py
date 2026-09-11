@@ -128,9 +128,12 @@ def current_user(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> Auth
 
 # --- who may sign in + authorization tiers (app_users) --------------------
 
-# viewer < editor < admin. No app_users row => 'viewer' (read-only): a new
-# allowed user can look but not touch; 'editor' / 'admin' must be granted.
-_ROLE_RANK = {"viewer": 0, "editor": 1, "admin": 2}
+# field < viewer < editor < admin. No app_users row => 'viewer' (read-only): a
+# new allowed user can look but not touch; 'field' / 'editor' / 'admin' must be
+# granted. 'field' is the kiosk-only role (Product Yields harvest tablets) —
+# it sits below 'viewer' and is never the implicit default, only ever an
+# explicit grant, since it's *more* restricted than an ungranted signed-in user.
+_ROLE_RANK = {"field": 0, "viewer": 1, "editor": 2, "admin": 3}
 _DEFAULT_ROLE = "viewer"
 
 # Per-email: the app_users role string, or "" for "no row". Cached ~60s so both
@@ -210,5 +213,6 @@ def require_role(minimum: str):
     return _dep
 
 
+require_viewer = require_role("viewer")
 require_editor = require_role("editor")
 require_admin = require_role("admin")

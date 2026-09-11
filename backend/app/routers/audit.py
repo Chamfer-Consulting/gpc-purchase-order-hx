@@ -7,11 +7,11 @@ from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
 
-from ..auth import AuthedUser, require_admin
+from ..auth import AuthedUser, require_admin, require_viewer
 from ..reused_db import reused_conn
 from ..services import audit
 
-router = APIRouter(prefix="/api/audit", tags=["audit"])
+router = APIRouter(prefix="/api/audit", tags=["audit"], dependencies=[Depends(require_viewer)])
 
 
 @router.get("")

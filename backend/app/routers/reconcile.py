@@ -3,11 +3,11 @@ only — the mutations reuse the existing po / matching / review endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..auth import AuthedUser, current_user
+from ..auth import AuthedUser, current_user, require_viewer
 from ..reused_db import reused_conn
 from ..services import reconcile
 
-router = APIRouter(prefix="/api/reconcile", tags=["reconcile"])
+router = APIRouter(prefix="/api/reconcile", tags=["reconcile"], dependencies=[Depends(require_viewer)])
 
 
 @router.get("/queue")

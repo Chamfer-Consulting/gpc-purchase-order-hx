@@ -7,12 +7,19 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, clear_role_cache, current_user, require_admin, require_editor
+from ..auth import (
+    AuthedUser,
+    clear_role_cache,
+    current_user,
+    require_admin,
+    require_editor,
+    require_viewer,
+)
 from ..cache import clear as clear_cache
 from ..reused_db import reused_conn
 from ..services import settings as svc
 
-router = APIRouter(prefix="/api/settings", tags=["settings"])
+router = APIRouter(prefix="/api/settings", tags=["settings"], dependencies=[Depends(require_viewer)])
 
 
 class HideIn(BaseModel):

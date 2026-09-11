@@ -4,11 +4,11 @@ the sync never overwrites it (same guard the Streamlit editor used)."""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user, require_editor
+from ..auth import AuthedUser, current_user, require_editor, require_viewer
 from ..reused_db import reused_conn
 from ..services import po_admin, po_edit
 
-router = APIRouter(prefix="/api/po", tags=["po-edit"])
+router = APIRouter(prefix="/api/po", tags=["po-edit"], dependencies=[Depends(require_viewer)])
 
 
 class LineItemIn(BaseModel):
