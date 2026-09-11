@@ -1,7 +1,13 @@
 import { useMemo, useState } from "react";
-import { Badge, Button, Group, Select, Table, TextInput } from "@mantine/core";
+import { Badge, Button, Group, Select, Stack, Switch, Table, Text, TextInput } from "@mantine/core";
 import { useMe } from "@/api/me";
-import { useCreateYieldProduct, useYieldEntries, useYieldProducts } from "@/api/yields";
+import {
+  useCreateYieldProduct,
+  useUpdateYieldProduct,
+  useYieldEntries,
+  useYieldProducts,
+  type YieldProduct,
+} from "@/api/yields";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
 import { EmptyState } from "@/components/EmptyState";
@@ -11,8 +17,8 @@ import { notifyError, notifySuccess } from "@/lib/notify";
 import { pageMeta } from "@/nav";
 
 /** A small inline "add a harvest product" form — editor/admin only. Full
- *  product management (rename, retire, SKU links) is a later phase; for now
- *  this is just enough to seed the kiosk's product picker. */
+ *  product management (rename, SKU links) is a later phase; for now this is
+ *  just enough to seed the kiosk's product picker and see what's in it. */
 function AddProductForm() {
   const create = useCreateYieldProduct();
   const [name, setName] = useState("");
@@ -48,9 +54,53 @@ function AddProductForm() {
   );
 }
 
+/** Every harvest product — active ones show up on the kiosk's picker; toggle
+ *  off to retire one without losing its entry history. */
+function ProductList({ products, canEdit }: { products: YieldProduct[]; canEdit: boolean }) {
+  const update = useUpdateYieldProduct();
+
+  if (products.length === 0) {
+    return <EmptyState label="No harvest products yet" compact />;
+  }
+
+  return (
+    <Table verticalSpacing="xs">
+      <Table.Tbody>
+        {products.map((p) => (
+          <Table.Tr key={p.id}>
+            <Table.Td>
+              <Text fw={500} c={p.active ? undefined : "dimmed"}>
+                {p.name}
+              </Text>
+            </Table.Td>
+            <Table.Td w={120}>
+              {canEdit ? (
+                <Switch
+                  checked={p.active}
+                  label={p.active ? "Active" : "Retired"}
+                  onChange={(e) =>
+                    update.mutate(
+                      { id: p.id, active: e.currentTarget.checked },
+                      { onError: (err) => notifyError(err) },
+                    )
+                  }
+                />
+              ) : (
+                <Badge color={p.active ? "gpGreen" : "gray"} variant="light">
+                  {p.active ? "Active" : "Retired"}
+                </Badge>
+              )}
+            </Table.Td>
+          </Table.Tr>
+        ))}
+      </Table.Tbody>
+    </Table>
+  );
+}
+
 export function YieldsEntriesPage() {
   const { canEdit } = useMe();
-  const products = useYieldProducts();
+  const products = useYieldProducts(true);
   const [productId, setProductId] = useState<string | null>(null);
   const entries = useYieldEntries({
     yield_product_id: productId ? Number(productId) : undefined,
@@ -70,7 +120,16 @@ export function YieldsEntriesPage() {
     >
       {canEdit && (
         <SectionCard title="Harvest products" subtitle="What the kiosk's product picker offers">
-          <AddProductForm />
+          <Stack gap="md">
+            <AddProductForm />
+            <QueryBoundary
+              loading={products.isLoading}
+              error={products.error}
+              onRetry={() => void products.refetch()}
+            >
+              <ProductList products={products.data ?? []} canEdit={canEdit} />
+            </QueryBoundary>
+          </Stack>
         </SectionCard>
       )}
 
