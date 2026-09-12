@@ -152,6 +152,34 @@ def create_entry(body: EntryIn, user: AuthedUser = Depends(current_user)) -> dic
         )
 
 
+class EntryImportRow(BaseModel):
+    yield_product_id: int
+    harvest_date: date
+    weight: float
+    unit: str = "oz"
+    lot_code: str | None = None
+    harvested_by: str
+
+
+class EntriesImportIn(BaseModel):
+    entries: list[EntryImportRow]
+
+
+# Admin-only, and deliberately not shared with the plain current_user floor
+# every other entries endpoint uses — the kiosk's 'field' role has no
+# legitimate reason to bulk-import historical data, unlike submitting its
+# own entries one at a time.
+@router.post("/entries/import")
+def import_entries(body: EntriesImportIn, user: AuthedUser = Depends(require_admin)) -> dict:
+    if not body.entries:
+        raise HTTPException(422, "no entries to import")
+    with reused_conn() as conn:
+        n = yields_svc.import_entries(
+            conn, [e.model_dump() for e in body.entries], actor=_actor(user) or "",
+        )
+    return {"ok": True, "created": n}
+
+
 @router.get("/entries")
 def list_entries(
     yield_product_id: int | None = None,

@@ -159,6 +159,27 @@ export function useCreateYieldEntry() {
   });
 }
 
+export interface YieldEntryImportRow {
+  yield_product_id: number;
+  harvest_date: string;
+  weight: number;
+  unit: YieldUnit;
+  lot_code?: string | null;
+  harvested_by: string;
+}
+
+/** Admin-only, one-transaction bulk insert for historical data (the CSV
+ *  import page) — no tray counts or notes (historical records don't carry
+ *  those), and a single audit_log row summarizes the whole batch. */
+export function useImportYieldEntries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (entries: YieldEntryImportRow[]) =>
+      apiSend<{ ok: boolean; created: number }>("POST", "/api/yields/entries/import", { entries }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-entries"] }),
+  });
+}
+
 export interface YieldEntryPatch {
   harvest_date?: string;
   weight?: number;

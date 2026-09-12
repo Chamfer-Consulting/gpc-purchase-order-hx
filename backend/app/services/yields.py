@@ -215,6 +215,32 @@ def create_entry(conn, *, yield_product_id: int, harvest_date: _date, weight: fl
     return row
 
 
+def import_entries(conn, rows: list[dict], *, actor: str) -> int:
+    """Bulk-insert historical harvest entries in one transaction — the CSV
+    import flow. Each row carries the same required fields as create_entry
+    (yield_product_id/harvest_date/weight/unit/harvested_by; lot_code
+    optional); tray counts default 0, notes NULL — historical records don't
+    carry those. One audit_log row summarizes the whole batch rather than
+    one per row, so a 500-row import doesn't flood the audit trail."""
+    n = 0
+    with conn.cursor() as cur:
+        for r in rows:
+            cur.execute(
+                """
+                INSERT INTO yield_entries
+                    (yield_product_id, harvest_date, weight, unit, lot_code, harvested_by, submitted_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (r["yield_product_id"], r["harvest_date"], r["weight"], r["unit"],
+                 r.get("lot_code"), r["harvested_by"], actor),
+            )
+            n += 1
+    audit.log(conn, actor=actor, action="import", entity="yield_entry", entity_id=None,
+              after={"count": n})
+    conn.commit()
+    return n
+
+
 def list_entries(conn, *, yield_product_id: int | None = None, date_from: _date | None = None,
                   date_to: _date | None = None, harvested_by: str | None = None,
                   submitted_by: str | None = None, include_voided: bool = False) -> list[dict]:
