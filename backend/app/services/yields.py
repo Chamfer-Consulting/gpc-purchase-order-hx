@@ -215,16 +215,42 @@ def create_entry(conn, *, yield_product_id: int, harvest_date: _date, weight: fl
     return row
 
 
-def import_entries(conn, rows: list[dict], *, actor: str) -> int:
+def import_entries(conn, rows: list[dict], *, actor: str) -> dict:
     """Bulk-insert historical harvest entries in one transaction — the CSV
     import flow. Each row carries the same required fields as create_entry
     (yield_product_id/harvest_date/weight/unit/harvested_by; lot_code
     optional); tray counts default 0, notes NULL — historical records don't
     carry those. One audit_log row summarizes the whole batch rather than
-    one per row, so a 500-row import doesn't flood the audit trail."""
-    n = 0
+    one per row, so a 500-row import doesn't flood the audit trail.
+
+    Skips (doesn't insert) any row that already matches a non-voided entry
+    for the same product + date — by lot_code when the row has one
+    (the more reliable signal), else by weight. This is what keeps the
+    "download a template pre-filled with your 5 most recent entries" flow
+    from double-entering those rows if the admin imports the template
+    without deleting/overwriting them; it also naturally catches an
+    accidental duplicate row within the same CSV, since each insert is
+    visible to the later duplicate check within the same transaction."""
+    created = 0
+    skipped_duplicates = 0
     with conn.cursor() as cur:
         for r in rows:
+            lot_code = r.get("lot_code")
+            if lot_code:
+                cur.execute(
+                    "SELECT 1 FROM yield_entries WHERE yield_product_id = %s AND harvest_date = %s "
+                    "AND lot_code = %s AND NOT voided LIMIT 1",
+                    (r["yield_product_id"], r["harvest_date"], lot_code),
+                )
+            else:
+                cur.execute(
+                    "SELECT 1 FROM yield_entries WHERE yield_product_id = %s AND harvest_date = %s "
+                    "AND lot_code IS NULL AND weight = %s AND NOT voided LIMIT 1",
+                    (r["yield_product_id"], r["harvest_date"], r["weight"]),
+                )
+            if cur.fetchone() is not None:
+                skipped_duplicates += 1
+                continue
             cur.execute(
                 """
                 INSERT INTO yield_entries
@@ -232,13 +258,14 @@ def import_entries(conn, rows: list[dict], *, actor: str) -> int:
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (r["yield_product_id"], r["harvest_date"], r["weight"], r["unit"],
-                 r.get("lot_code"), r["harvested_by"], actor),
+                 lot_code, r["harvested_by"], actor),
             )
-            n += 1
-    audit.log(conn, actor=actor, action="import", entity="yield_entry", entity_id=None,
-              after={"count": n})
+            created += 1
+    if created:
+        audit.log(conn, actor=actor, action="import", entity="yield_entry", entity_id=None,
+                  after={"count": created, "skipped_duplicates": skipped_duplicates})
     conn.commit()
-    return n
+    return {"created": created, "skipped_duplicates": skipped_duplicates}
 
 
 def list_entries(conn, *, yield_product_id: int | None = None, date_from: _date | None = None,

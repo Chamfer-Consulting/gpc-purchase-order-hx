@@ -217,7 +217,9 @@ export function DataGrid<Row extends Record<string, unknown>>({
   );
 }
 
-function csvCell(v: unknown): string {
+/** CSV-cell escaping + formula-injection guard — shared with the Yields
+ *  import page's "download a template" feature. */
+export function csvCell(v: unknown): string {
   if (v == null) return "";
   let s = String(v);
   // Neutralise spreadsheet formula injection — some columns (email subject / from)

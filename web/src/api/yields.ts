@@ -170,12 +170,20 @@ export interface YieldEntryImportRow {
 
 /** Admin-only, one-transaction bulk insert for historical data (the CSV
  *  import page) — no tray counts or notes (historical records don't carry
- *  those), and a single audit_log row summarizes the whole batch. */
+ *  those), and a single audit_log row summarizes the whole batch. The
+ *  backend skips (doesn't create) any row that already matches a non-voided
+ *  entry for the same product + date + lot_code (or + weight when there's
+ *  no lot_code) — reported back as skipped_duplicates, so re-importing the
+ *  template's own example rows, or the same file twice, doesn't double up. */
 export function useImportYieldEntries() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (entries: YieldEntryImportRow[]) =>
-      apiSend<{ ok: boolean; created: number }>("POST", "/api/yields/entries/import", { entries }),
+      apiSend<{ ok: boolean; created: number; skipped_duplicates: number }>(
+        "POST",
+        "/api/yields/entries/import",
+        { entries },
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-entries"] }),
   });
 }

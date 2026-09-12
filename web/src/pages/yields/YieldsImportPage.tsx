@@ -11,14 +11,16 @@ import {
   Text,
   TextInput,
 } from "@mantine/core";
-import { IconCheck, IconUpload } from "@tabler/icons-react";
+import { IconCheck, IconDownload, IconUpload } from "@tabler/icons-react";
 import { useMe } from "@/api/me";
 import {
   useCreateYieldProduct,
   useImportYieldEntries,
+  useYieldEntries,
   useYieldProducts,
   type YieldUnit,
 } from "@/api/yields";
+import { csvCell } from "@/components/DataGrid";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
 import { parseCsv } from "@/lib/csv";
@@ -61,6 +63,7 @@ export function YieldsImportPage() {
   const meta = pageMeta("/yields/import");
   const { canAdmin, roleKnown } = useMe();
   const products = useYieldProducts(true);
+  const recent = useYieldEntries({});
   const createProduct = useCreateYieldProduct();
   const importEntries = useImportYieldEntries();
 
@@ -71,7 +74,22 @@ export function YieldsImportPage() {
   const [unit, setUnit] = useState<YieldUnit>("lb");
   const [harvestedBy, setHarvestedBy] = useState("");
   const [importing, setImporting] = useState(false);
-  const [lastResult, setLastResult] = useState<number | null>(null);
+  const [lastResult, setLastResult] = useState<{ created: number; duplicates: number } | null>(null);
+
+  const downloadTemplate = () => {
+    const header = ["date", "product", "weight", "lot_code"];
+    const examples = (recent.data ?? [])
+      .slice(0, 5)
+      .map((e) => [e.harvest_date, e.product_name, String(e.weight), e.lot_code ?? ""]);
+    const lines = [header, ...examples].map((cells) => cells.map(csvCell).join(","));
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "yields-import-template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const handleFile = async (f: File | null) => {
     setFile(f);
@@ -187,7 +205,7 @@ export function YieldsImportPage() {
 
       const result = await importEntries.mutateAsync(entries);
       notifySuccess(`Imported ${result.created} entries.`);
-      setLastResult(result.created);
+      setLastResult({ created: result.created, duplicates: result.skipped_duplicates });
       setFile(null);
       setParsed(null);
       setResolutions({});
@@ -218,8 +236,25 @@ export function YieldsImportPage() {
       <SectionCard
         title="Upload a CSV"
         subtitle='Columns: "date" (YYYY-MM-DD or M/D/YYYY), "product", "weight", and optionally "lot_code".'
+        actions={
+          <Button
+            size="xs"
+            variant="light"
+            leftSection={<IconDownload size={14} />}
+            onClick={downloadTemplate}
+            disabled={recent.isLoading}
+          >
+            Download template
+          </Button>
+        }
       >
         <Stack gap="md">
+          <Text size="xs" c="dimmed">
+            The template includes your 5 most recent entries as examples — replace or delete them before
+            filling in your own rows. If you leave them in, they won't be double-entered: importing a row
+            that already matches an existing entry (same product, date, and lot code) is skipped
+            automatically.
+          </Text>
           <FileInput
             placeholder="Choose a .csv file"
             accept=".csv,text/csv"
@@ -237,7 +272,9 @@ export function YieldsImportPage() {
 
           {lastResult != null && (
             <Alert color="gpGreen" icon={<IconCheck size={18} />} variant="light">
-              Imported {lastResult} entries.
+              Imported {lastResult.created} entries.
+              {lastResult.duplicates > 0 &&
+                ` Skipped ${lastResult.duplicates} already-present entr${lastResult.duplicates === 1 ? "y" : "ies"}.`}
             </Alert>
           )}
 

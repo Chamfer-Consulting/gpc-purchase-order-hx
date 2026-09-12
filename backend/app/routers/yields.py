@@ -174,10 +174,10 @@ def import_entries(body: EntriesImportIn, user: AuthedUser = Depends(require_adm
     if not body.entries:
         raise HTTPException(422, "no entries to import")
     with reused_conn() as conn:
-        n = yields_svc.import_entries(
+        result = yields_svc.import_entries(
             conn, [e.model_dump() for e in body.entries], actor=_actor(user) or "",
         )
-    return {"ok": True, "created": n}
+    return {"ok": True, **result}
 
 
 @router.get("/entries")
