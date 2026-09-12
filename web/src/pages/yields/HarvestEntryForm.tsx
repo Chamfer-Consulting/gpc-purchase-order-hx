@@ -49,18 +49,23 @@ export function HarvestEntryForm() {
   );
 
   // Auto-fill the lot code as the selected product's prefix + the harvest
-  // date's MMDD (e.g. "TK0911"), but only while the field still holds
-  // whatever we last auto-filled — once the employee types something of
-  // their own, switching products/dates stops overwriting it.
-  const lastAutoLotRef = useRef("");
+  // date's MMDD (e.g. "TK0911"), but only until the employee types something
+  // of their own into the field — an explicit "has this been hand-edited"
+  // flag, not a value comparison, so a manual edit that happens to coincide
+  // with a later auto-computed value can't make auto-fill silently resume
+  // and clobber it.
+  const lotEditedRef = useRef(false);
   const autoLot = (id: string | null, harvestDate: string) => {
     const prefix = (products.data ?? []).find((p) => String(p.id) === id)?.lot_code_prefix ?? "";
     if (!prefix || harvestDate.length < 10) return prefix;
     return prefix + harvestDate.slice(5, 7) + harvestDate.slice(8, 10);
   };
   const applyAutoLot = (next: string) => {
-    setLotCode((current) => (current === lastAutoLotRef.current ? next : current));
-    lastAutoLotRef.current = next;
+    if (!lotEditedRef.current) setLotCode(next);
+  };
+  const handleLotCodeChange = (value: string) => {
+    lotEditedRef.current = true;
+    setLotCode(value);
   };
   const handleProductChange = (id: string | null) => {
     setProductId(id);
@@ -183,7 +188,7 @@ export function HarvestEntryForm() {
           <TextInput
             label="Lot code"
             value={lotCode}
-            onChange={(e) => setLotCode(e.currentTarget.value)}
+            onChange={(e) => handleLotCodeChange(e.currentTarget.value)}
             size="md"
           />
           <Select

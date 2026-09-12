@@ -3,7 +3,7 @@ FilterParams. All four are wired to services that call dashboard/data.py headles
 
 from fastapi import APIRouter, Depends
 
-from ..auth import AuthedUser, current_user, require_viewer
+from ..auth import AuthedUser, current_user
 from ..cache import cached
 from ..deps import FilterParams, filter_params
 from ..schemas import PageResponse
@@ -12,7 +12,7 @@ from ..services.explore import explore as explore_svc
 from ..services.lifecycle import order_lifecycle
 from ..services.products import products_and_sizes
 
-router = APIRouter(prefix="/api", tags=["analytics"], dependencies=[Depends(require_viewer)])
+router = APIRouter(prefix="/api", tags=["analytics"])
 
 
 def _key(*args, **kwargs):

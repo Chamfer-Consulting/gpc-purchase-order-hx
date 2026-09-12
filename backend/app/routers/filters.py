@@ -3,11 +3,11 @@ customer / product / size MultiSelects."""
 
 from fastapi import APIRouter, Depends
 
-from ..auth import AuthedUser, current_user, require_viewer
+from ..auth import AuthedUser, current_user
 from ..cache import cached
 from ..reused_db import reused_conn
 
-router = APIRouter(prefix="/api/filters", tags=["filters"], dependencies=[Depends(require_viewer)])
+router = APIRouter(prefix="/api/filters", tags=["filters"])
 
 
 @router.get("/options")

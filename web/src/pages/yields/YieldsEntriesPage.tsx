@@ -17,6 +17,7 @@ export function YieldsEntriesPage() {
   const [productId, setProductId] = useState<string | null>(null);
   const entries = useYieldEntries({
     yield_product_id: productId ? Number(productId) : undefined,
+    include_voided: true,
   });
   const voidEntry = useVoidYieldEntry();
   const [editing, setEditing] = useState<YieldEntry | null>(null);

@@ -7,7 +7,7 @@ import qbo_client  # shared/, via app.reuse
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import oauth_state
-from ..auth import AuthedUser, current_user, require_admin, require_editor, require_viewer
+from ..auth import AuthedUser, current_user, require_admin, require_editor
 from ..cache import clear as clear_cache
 from ..config import get_settings
 from ..reused_db import reused_conn
@@ -17,7 +17,7 @@ from ..services import audit
 def _actor(user: AuthedUser) -> str | None:
     return user.email or user.id
 
-router = APIRouter(prefix="/api/connections", tags=["connections"], dependencies=[Depends(require_viewer)])
+router = APIRouter(prefix="/api/connections", tags=["connections"])
 
 
 def _iso(v) -> str | None:

@@ -129,8 +129,11 @@ export function useYieldSalesProductNames() {
 export function useCreateYieldLink() {
   const qc = useQueryClient();
   return useMutation({
+    // The create endpoint's RETURNING clause has no product_name (that's a
+    // join only list_links does) — Omit it rather than claiming YieldLink's
+    // full shape for a response that doesn't have it.
     mutationFn: (body: { yield_product_id: number; sales_product_name: string }) =>
-      apiSend<YieldLink>("POST", "/api/yields/links", body),
+      apiSend<Omit<YieldLink, "product_name">>("POST", "/api/yields/links", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-links"] }),
   });
 }

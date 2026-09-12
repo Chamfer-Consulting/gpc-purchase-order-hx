@@ -10,14 +10,14 @@ import qbo_client  # shared/, via app.reuse
 import qbo_matcher  # shared/, via app.reuse
 from fastapi import APIRouter, Depends
 
-from ..auth import AuthedUser, current_user, require_viewer
+from ..auth import AuthedUser, current_user
 from ..deps import FilterParams, filter_params
 from ..reused_db import reused_conn
 from ..schemas import AttentionItem, Chart, ChartSeries, PageResponse
 from ..services import reconcile, review_queue
 from ..services.overview import overview_page
 
-router = APIRouter(prefix="/api", tags=["overview"], dependencies=[Depends(require_viewer)])
+router = APIRouter(prefix="/api", tags=["overview"])
 
 _NOT_PO = "not a purchase order"
 _SEV_ORDER = {"critical": 0, "serious": 1, "warning": 2, "info": 3}

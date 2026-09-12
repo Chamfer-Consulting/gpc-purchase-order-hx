@@ -232,10 +232,11 @@ def import_entries(conn, rows: list[dict], *, actor: str) -> dict:
 
     Skips (doesn't insert) any row that already matches a non-voided entry
     for the same product + date — by lot_code when the row has one, else by
-    weight *regardless of whether the matching existing entry happens to
+    weight+unit *regardless of whether the matching existing entry happens to
     have a lot_code* (matching only lot-code-less existing entries would
     miss a real duplicate whose lot_code was simply left off the
-    re-imported row). This is what keeps the "download a template
+    re-imported row; matching on weight alone without unit would wrongly
+    collide e.g. 5 oz with 5 lb). This is what keeps the "download a template
     pre-filled with your 5 most recent entries" flow from double-entering
     those rows if the admin imports the template without deleting/
     overwriting them. A duplicate row within the same CSV is caught the
@@ -253,28 +254,28 @@ def import_entries(conn, rows: list[dict], *, actor: str) -> dict:
     dates = list({r["harvest_date"] for r in rows})
 
     by_lot: set[tuple[int, object, str]] = set()
-    by_weight: set[tuple[int, object, float]] = set()
+    by_weight: set[tuple[int, object, float, str]] = set()
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT yield_product_id, harvest_date, lot_code, weight FROM yield_entries "
+            "SELECT yield_product_id, harvest_date, lot_code, weight, unit FROM yield_entries "
             "WHERE NOT voided AND yield_product_id = ANY(%s) AND harvest_date = ANY(%s)",
             (product_ids, dates),
         )
-        for pid, d, lot, w in cur.fetchall():
-            by_weight.add((pid, d, round(float(w), 2)))
+        for pid, d, lot, w, u in cur.fetchall():
+            by_weight.add((pid, d, round(float(w), 2), u))
             if lot:
                 by_lot.add((pid, d, lot))
 
     to_insert: list[tuple] = []
     skipped_duplicates = 0
     for r in rows:
-        pid, d, w = r["yield_product_id"], r["harvest_date"], round(float(r["weight"]), 2)
+        pid, d, w, u = r["yield_product_id"], r["harvest_date"], round(float(r["weight"]), 2), r["unit"]
         lot_code = r.get("lot_code")
-        is_dup = (pid, d, lot_code) in by_lot if lot_code else (pid, d, w) in by_weight
+        is_dup = (pid, d, lot_code) in by_lot if lot_code else (pid, d, w, u) in by_weight
         if is_dup:
             skipped_duplicates += 1
             continue
-        by_weight.add((pid, d, w))
+        by_weight.add((pid, d, w, u))
         if lot_code:
             by_lot.add((pid, d, lot_code))
         to_insert.append((pid, d, r["weight"], r["unit"], lot_code, r["harvested_by"], actor))
@@ -342,7 +343,7 @@ def _assert_can_touch(conn, entry_id: int, *, actor: str | None, actor_role: str
         same_day = row["harvest_date"] == business_now().date()
         own = (row["submitted_by"] or "").lower() == (actor or "").lower()
         if not (same_day and own):
-            raise Forbidden(need="editor", have=actor_role)
+            raise Forbidden(need="viewer", have=actor_role)
     return row
 
 
@@ -535,6 +536,7 @@ def create_note(conn, *, lot_code: str | None, note: str, note_date: _date | Non
             (lot_code.strip() if lot_code else None, note, note_date, submitted_by),
         )
         row = _note_row(dict(cur.fetchone()))
+    audit.log(conn, actor=submitted_by, action="create", entity="yield_note", entity_id=row["id"], after=row)
     conn.commit()
     return row
 

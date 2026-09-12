@@ -168,6 +168,12 @@ function ProductRow({ product, canEdit }: { product: YieldProduct; canEdit: bool
   const [name, setName] = useState(product.name);
   const [lotPrefix, setLotPrefix] = useState(product.lot_code_prefix ?? "");
   const [linksOpen, setLinksOpen] = useState(false);
+  // Collapse animates height without unmounting its children, so mounting
+  // ProductLinks unconditionally would fire every row's useYieldLinks fetch
+  // on page load. Mount it lazily on first expand and leave it mounted after
+  // that (rather than un-mounting on every collapse) so the close animation
+  // still has content to animate away.
+  const [linksMounted, setLinksMounted] = useState(false);
 
   const cancelEdit = () => {
     setEditing(false);
@@ -219,7 +225,10 @@ function ProductRow({ product, canEdit }: { product: YieldProduct; canEdit: bool
             <ActionIcon
               size="sm"
               variant="subtle"
-              onClick={() => setLinksOpen((v) => !v)}
+              onClick={() => {
+                setLinksOpen((v) => !v);
+                setLinksMounted(true);
+              }}
               aria-label="Sales SKU links"
             >
               {linksOpen ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
@@ -313,9 +322,7 @@ function ProductRow({ product, canEdit }: { product: YieldProduct; canEdit: bool
       {canEdit && (
         <Table.Tr>
           <Table.Td colSpan={4} p={0}>
-            <Collapse in={linksOpen}>
-              <ProductLinks productId={product.id} />
-            </Collapse>
+            <Collapse in={linksOpen}>{linksMounted && <ProductLinks productId={product.id} />}</Collapse>
           </Table.Td>
         </Table.Tr>
       )}

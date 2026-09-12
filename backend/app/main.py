@@ -3,13 +3,14 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from . import reuse  # noqa: F401 — sys.path shim for the reused repo modules
 from .admin_schema import ensure_admin_schema
+from .auth import require_viewer
 from .config import get_settings
 from .errors import ApiProblem
 from .db import close_pool, init_pool
@@ -65,23 +66,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# A viewer-rank floor (see auth.py's require_viewer) applied once here rather
+# than repeated on each router's own APIRouter(...) — every PO/financial
+# router needs it so the 'field' kiosk role can never reach them, but a new
+# router only gets the floor automatically if it's added below with it;
+# nothing enforces that at the router-definition level. me/oauth (pre-role,
+# pre-auth) and yields (needs the 'field' role to reach its own endpoints,
+# see routers/yields.py) are deliberately excluded.
+_viewer_floor = [Depends(require_viewer)]
 app.include_router(me_router.router)
-app.include_router(overview.router)
-app.include_router(analytics.router)
-app.include_router(explore.router)
-app.include_router(filters.router)
-app.include_router(quality.router)
-app.include_router(matching.router)
-app.include_router(reconcile.router)
-app.include_router(review.router)
-app.include_router(po_edit.router)
-app.include_router(po_admin.router)
-app.include_router(po_docs.router)
-app.include_router(pricing.router)
-app.include_router(settings_router.router)
-app.include_router(connections.router)
+app.include_router(overview.router, dependencies=_viewer_floor)
+app.include_router(analytics.router, dependencies=_viewer_floor)
+app.include_router(explore.router, dependencies=_viewer_floor)
+app.include_router(filters.router, dependencies=_viewer_floor)
+app.include_router(quality.router, dependencies=_viewer_floor)
+app.include_router(matching.router, dependencies=_viewer_floor)
+app.include_router(reconcile.router, dependencies=_viewer_floor)
+app.include_router(review.router, dependencies=_viewer_floor)
+app.include_router(po_edit.router, dependencies=_viewer_floor)
+app.include_router(po_admin.router, dependencies=_viewer_floor)
+app.include_router(po_docs.router, dependencies=_viewer_floor)
+app.include_router(pricing.router, dependencies=_viewer_floor)
+app.include_router(settings_router.router, dependencies=_viewer_floor)
+app.include_router(connections.router, dependencies=_viewer_floor)
 app.include_router(oauth.router)
-app.include_router(audit_router.router)
+app.include_router(audit_router.router, dependencies=_viewer_floor)
 app.include_router(yields_router.router)
 
 _log = logging.getLogger("po-api")

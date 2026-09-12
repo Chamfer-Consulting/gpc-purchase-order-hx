@@ -8,13 +8,13 @@ import doc_storage  # repo root, via app.reuse
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user, require_editor, require_viewer
+from ..auth import AuthedUser, current_user, require_editor
 from ..config import get_settings
 from ..reused_db import reused_conn
 from ..services import po_docs
 from ..services.po_admin import AdminError
 
-router = APIRouter(prefix="/api/po", tags=["po-docs"], dependencies=[Depends(require_viewer)])
+router = APIRouter(prefix="/api/po", tags=["po-docs"])
 
 
 def _actor(user: AuthedUser) -> str | None:

@@ -14,7 +14,10 @@ export interface Me {
 const RANK: Record<Role, number> = { field: 0, viewer: 1, editor: 2, admin: 3 };
 
 /** Current user + app role. Cached long — role changes are rare and the backend
- *  caches too. Falls back to `viewer` (least privilege) until it loads. */
+ *  caches too. `role` falls back to `viewer` while loading/erroring, but
+ *  AccountGate blocks rendering of anything that reads it (RoleRouter
+ *  included) until the query actually succeeds — this fallback is never
+ *  observed past that gate. */
 export function useMe() {
   const { session } = useAuth();
   const q = useQuery({

@@ -13,13 +13,12 @@ from ..auth import (
     current_user,
     require_admin,
     require_editor,
-    require_viewer,
 )
 from ..cache import clear as clear_cache
 from ..reused_db import reused_conn
 from ..services import settings as svc
 
-router = APIRouter(prefix="/api/settings", tags=["settings"], dependencies=[Depends(require_viewer)])
+router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
 class HideIn(BaseModel):

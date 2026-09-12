@@ -15,12 +15,12 @@ from fastapi import APIRouter, Depends
 
 import qbo_matcher  # shared/, via app.reuse — customers_match()
 
-from ..auth import AuthedUser, current_user, require_viewer
+from ..auth import AuthedUser, current_user
 from ..deps import FilterParams, filter_params
 from ..reused_db import reused_conn
 from ..schemas import Kpi, PageResponse, Scope, Table, TableColumn
 
-router = APIRouter(prefix="/api", tags=["quality"], dependencies=[Depends(require_viewer)])
+router = APIRouter(prefix="/api", tags=["quality"])
 
 _NOT_PO = "not a purchase order"
 _ROW_CAP = 300          # rows returned per table; the title notes "showing N of M"

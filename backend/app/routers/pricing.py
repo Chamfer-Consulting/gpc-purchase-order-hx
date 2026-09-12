@@ -6,11 +6,11 @@ flags as anomalous). See services/pricing.py."""
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user, require_admin, require_viewer
+from ..auth import AuthedUser, current_user, require_admin
 from ..reused_db import reused_conn
 from ..services import pricing
 
-router = APIRouter(prefix="/api/pricing", tags=["pricing"], dependencies=[Depends(require_viewer)])
+router = APIRouter(prefix="/api/pricing", tags=["pricing"])
 
 
 def _actor(user: AuthedUser) -> str | None:

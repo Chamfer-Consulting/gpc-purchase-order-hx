@@ -6,11 +6,11 @@ import extraction_reviews  # repo root, via app.reuse
 from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user, require_editor, require_viewer
+from ..auth import AuthedUser, current_user, require_editor
 from ..reused_db import reused_conn
 from ..services import audit, review_queue
 
-router = APIRouter(prefix="/api/review", tags=["review"], dependencies=[Depends(require_viewer)])
+router = APIRouter(prefix="/api/review", tags=["review"])
 
 
 class Decision(BaseModel):

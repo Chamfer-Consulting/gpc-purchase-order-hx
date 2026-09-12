@@ -156,9 +156,14 @@ export function YieldsImportPage() {
     setParsed(rows);
   };
 
+  // Only active products auto-match a CSV row's name — a name that matches a
+  // *retired* product still falls into "unmatched" below, so the admin has to
+  // explicitly decide (via the resolution picker, which does list retired
+  // products) rather than new entries silently landing on a retired product.
+  const activeProducts = useMemo(() => (products.data ?? []).filter((p) => p.active), [products.data]);
   const productNameSet = useMemo(
-    () => new Set((products.data ?? []).map((p) => p.name.toLowerCase())),
-    [products.data],
+    () => new Set(activeProducts.map((p) => p.name.toLowerCase())),
+    [activeProducts],
   );
   const productOptions = useMemo(
     () => (products.data ?? []).map((p) => ({ value: String(p.id), label: p.name })),
@@ -205,7 +210,7 @@ export function YieldsImportPage() {
       toCreate.forEach(({ key }, i) => {
         createdIds[key] = createdProducts[i].id;
       });
-      const idByLowerName = new Map((products.data ?? []).map((p) => [p.name.toLowerCase(), p.id]));
+      const idByLowerName = new Map(activeProducts.map((p) => [p.name.toLowerCase(), p.id]));
       const resolveProductId = (rawName: string): number | null => {
         const key = rawName.toLowerCase();
         const exact = idByLowerName.get(key);

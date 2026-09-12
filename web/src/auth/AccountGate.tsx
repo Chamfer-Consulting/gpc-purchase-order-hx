@@ -7,8 +7,10 @@ import { useAuth } from "./AuthProvider";
 
 /** Sits inside RequireAuth: the Supabase session is valid, but the API may still
  *  refuse this email (not on the allow-list). Show a dead-end screen rather than
- *  a broken app of 403s. Any other /api/me failure falls through — pages handle
- *  their own errors. */
+ *  a broken app of 403s. Any other /api/me failure also blocks here (with a
+ *  retry) rather than falling through — RoleRouter reads useMe().role to decide
+ *  between the full app and the kiosk shell, and that decision must never be
+ *  made on the pre-load "viewer" fallback. */
 export function AccountGate({ children }: { children: ReactNode }) {
   const { signOut } = useAuth();
   const me = useMe();
@@ -43,6 +45,27 @@ export function AccountGate({ children }: { children: ReactNode }) {
         <Stack align="center" gap="sm">
           <BrandMark size={40} />
           <Loader size="sm" />
+        </Stack>
+      </Center>
+    );
+  }
+
+  if (me.isError) {
+    return (
+      <Center h="100vh" bg="var(--gp-page)" p="lg">
+        <Stack align="center" gap="lg" w={400} maw="100%">
+          <BrandMark size={40} />
+          <Paper withBorder shadow="md" radius="md" p="xl" w="100%" bg="var(--gp-surface)">
+            <Stack gap="sm">
+              <Text fw={600}>Couldn't load your account</Text>
+              <Text size="sm" c="dimmed">
+                Something went wrong reaching the server. Try again in a moment.
+              </Text>
+              <Button variant="default" onClick={() => void me.refetch()}>
+                Retry
+              </Button>
+            </Stack>
+          </Paper>
         </Stack>
       </Center>
     );
