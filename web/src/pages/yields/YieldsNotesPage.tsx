@@ -7,15 +7,9 @@ import { EmptyState } from "@/components/EmptyState";
 import { QueryBoundary } from "@/components/ErrorState";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
-import { fmtDateOnly } from "@/lib/datetime";
+import { businessToday, fmtDateOnly } from "@/lib/datetime";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { pageMeta } from "@/nav";
-
-function today(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
 
 function daysAgo(n: number): string {
   const d = new Date();
@@ -32,7 +26,7 @@ function AddNoteForm() {
   const recent = useYieldEntries({ date_from: daysAgo(60) });
   const create = useCreateYieldNote();
   const [lotCode, setLotCode] = useState("");
-  const [date, setDate] = useState(today());
+  const [date, setDate] = useState(businessToday());
   const [note, setNote] = useState("");
 
   const lotSuggestions = useMemo(

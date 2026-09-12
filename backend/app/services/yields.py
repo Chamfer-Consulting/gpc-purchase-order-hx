@@ -28,7 +28,14 @@ from . import audit
 # Every unit an entry can be recorded in, converted to ounces for aggregation
 # (oz is the default/most granular unit here — see 0014_yields.sql). Trends
 # always report weight in oz; a display-unit toggle is a nice-to-have, not v1.
+# The unit strings are our own trusted constants (never user input), so
+# building this into a literal SQL CASE is safe — it's the single source
+# trends() aggregates with, rather than a second hardcoded copy that could
+# drift from this dict.
 _OZ_PER_UNIT = {"oz": 1.0, "lb": 16.0, "g": 0.0352739619}
+_OZ_PER_UNIT_SQL = "CASE e.unit " + " ".join(
+    f"WHEN '{unit}' THEN {factor}" for unit, factor in _OZ_PER_UNIT.items()
+) + " END"
 GRAINS = ("week", "month", "quarter", "year")
 
 # --- products ----------------------------------------------------------------
@@ -224,44 +231,65 @@ def import_entries(conn, rows: list[dict], *, actor: str) -> dict:
     one per row, so a 500-row import doesn't flood the audit trail.
 
     Skips (doesn't insert) any row that already matches a non-voided entry
-    for the same product + date — by lot_code when the row has one
-    (the more reliable signal), else by weight. This is what keeps the
-    "download a template pre-filled with your 5 most recent entries" flow
-    from double-entering those rows if the admin imports the template
-    without deleting/overwriting them; it also naturally catches an
-    accidental duplicate row within the same CSV, since each insert is
-    visible to the later duplicate check within the same transaction."""
-    created = 0
-    skipped_duplicates = 0
+    for the same product + date — by lot_code when the row has one, else by
+    weight *regardless of whether the matching existing entry happens to
+    have a lot_code* (matching only lot-code-less existing entries would
+    miss a real duplicate whose lot_code was simply left off the
+    re-imported row). This is what keeps the "download a template
+    pre-filled with your 5 most recent entries" flow from double-entering
+    those rows if the admin imports the template without deleting/
+    overwriting them. A duplicate row within the same CSV is caught the
+    same way — a row about to be inserted is added to the lookup
+    immediately, before the next row is checked.
+
+    Existing entries are pre-fetched once (scoped to the products/dates in
+    this batch) and the whole batch is inserted in one multi-row INSERT — a
+    per-row SELECT+INSERT round trip doesn't scale to a few-hundred-row
+    historical import."""
+    if not rows:
+        return {"created": 0, "skipped_duplicates": 0}
+
+    product_ids = list({r["yield_product_id"] for r in rows})
+    dates = list({r["harvest_date"] for r in rows})
+
+    by_lot: set[tuple[int, object, str]] = set()
+    by_weight: set[tuple[int, object, float]] = set()
     with conn.cursor() as cur:
-        for r in rows:
-            lot_code = r.get("lot_code")
-            if lot_code:
-                cur.execute(
-                    "SELECT 1 FROM yield_entries WHERE yield_product_id = %s AND harvest_date = %s "
-                    "AND lot_code = %s AND NOT voided LIMIT 1",
-                    (r["yield_product_id"], r["harvest_date"], lot_code),
-                )
-            else:
-                cur.execute(
-                    "SELECT 1 FROM yield_entries WHERE yield_product_id = %s AND harvest_date = %s "
-                    "AND lot_code IS NULL AND weight = %s AND NOT voided LIMIT 1",
-                    (r["yield_product_id"], r["harvest_date"], r["weight"]),
-                )
-            if cur.fetchone() is not None:
-                skipped_duplicates += 1
-                continue
-            cur.execute(
-                """
-                INSERT INTO yield_entries
-                    (yield_product_id, harvest_date, weight, unit, lot_code, harvested_by, submitted_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """,
-                (r["yield_product_id"], r["harvest_date"], r["weight"], r["unit"],
-                 lot_code, r["harvested_by"], actor),
+        cur.execute(
+            "SELECT yield_product_id, harvest_date, lot_code, weight FROM yield_entries "
+            "WHERE NOT voided AND yield_product_id = ANY(%s) AND harvest_date = ANY(%s)",
+            (product_ids, dates),
+        )
+        for pid, d, lot, w in cur.fetchall():
+            by_weight.add((pid, d, round(float(w), 2)))
+            if lot:
+                by_lot.add((pid, d, lot))
+
+    to_insert: list[tuple] = []
+    skipped_duplicates = 0
+    for r in rows:
+        pid, d, w = r["yield_product_id"], r["harvest_date"], round(float(r["weight"]), 2)
+        lot_code = r.get("lot_code")
+        is_dup = (pid, d, lot_code) in by_lot if lot_code else (pid, d, w) in by_weight
+        if is_dup:
+            skipped_duplicates += 1
+            continue
+        by_weight.add((pid, d, w))
+        if lot_code:
+            by_lot.add((pid, d, lot_code))
+        to_insert.append((pid, d, r["weight"], r["unit"], lot_code, r["harvested_by"], actor))
+
+    created = 0
+    if to_insert:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(
+                cur,
+                "INSERT INTO yield_entries "
+                "(yield_product_id, harvest_date, weight, unit, lot_code, harvested_by, submitted_by) "
+                "VALUES %s",
+                to_insert,
             )
-            created += 1
-    if created:
+        created = len(to_insert)
         audit.log(conn, actor=actor, action="import", entity="yield_entry", entity_id=None,
                   after={"count": created, "skipped_duplicates": skipped_duplicates})
     conn.commit()
@@ -286,8 +314,10 @@ def list_entries(conn, *, yield_product_id: int | None = None, date_from: _date 
         where.append("e.harvested_by = %s")
         vals.append(harvested_by)
     if submitted_by:
-        where.append("e.submitted_by = %s")
-        vals.append(submitted_by)
+        # Case-insensitive — matches _assert_can_touch's .lower() ownership
+        # check and the codebase's lower()-everywhere email convention.
+        where.append("lower(e.submitted_by) = %s")
+        vals.append(submitted_by.lower())
     sql = ("SELECT e.*, p.name AS product_name, p.lot_code_prefix AS product_lot_code_prefix "
            "FROM yield_entries e JOIN yield_products p ON p.id = e.yield_product_id")
     if where:
@@ -323,11 +353,16 @@ _ENTRY_PATCH_FIELDS = {
 
 
 def update_entry(conn, entry_id: int, patch: dict, *, actor: str | None, actor_role: str) -> dict:
+    """`patch` is already `model_dump(exclude_unset=True)`'d by the router, so
+    every key present here was explicitly sent by the caller — including an
+    explicit `None` for the nullable columns (lot_code, notes), which is how
+    the Edit modal clears them. Don't drop `None` values: a caller that
+    wanted a field left alone simply wouldn't include the key at all."""
     _assert_can_touch(conn, entry_id, actor=actor, actor_role=actor_role)
     sets: list[str] = []
     vals: list[object] = []
     for k, v in patch.items():
-        if k in _ENTRY_PATCH_FIELDS and v is not None:
+        if k in _ENTRY_PATCH_FIELDS:
             sets.append(f"{k} = %s")
             vals.append(v)
     if not sets:
@@ -384,9 +419,7 @@ def trends(conn, *, date_from: _date | None, date_to: _date | None,
             f"""
             SELECT date_trunc(%(grain)s, e.harvest_date)::date AS period,
                    p.name AS product_name,
-                   sum(e.weight * CASE e.unit
-                       WHEN 'oz' THEN 1 WHEN 'lb' THEN 16 WHEN 'g' THEN 0.0352739619
-                       END) AS weight_oz,
+                   sum(e.weight * {_OZ_PER_UNIT_SQL}) AS weight_oz,
                    sum(e.tray_count) AS trays,
                    sum(e.discarded_tray_count) AS discarded_trays,
                    count(*) AS n_entries

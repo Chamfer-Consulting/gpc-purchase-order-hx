@@ -45,16 +45,29 @@ function normalizeHeader(s: string): string {
   return s.trim().toLowerCase().replace(/[\s_]+/g, "");
 }
 
+/** Accepts "YYYY-MM-DD" or "M/D/YYYY" and returns ISO, but only for a date
+ *  that actually exists — the regexes alone accept calendar-invalid values
+ *  like month 13 or Feb 30 (which would then fail the backend's strict date
+ *  parsing and 422 the *entire* import batch instead of just this row), so
+ *  every candidate is round-tripped through Date.UTC to confirm it didn't
+ *  get silently normalized (e.g. day 30 in April rolling over to May). */
 function parseDateCell(raw: string): string | null {
   const s = raw.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) {
-    const [, mo, da, yr] = m;
-    const pad = (v: string) => v.padStart(2, "0");
-    return `${yr}-${pad(mo)}-${pad(da)}`;
+  let y: number, mo: number, da: number;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const us = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (iso) {
+    [y, mo, da] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+  } else if (us) {
+    [mo, da, y] = [Number(us[1]), Number(us[2]), Number(us[3])];
+  } else {
+    return null;
   }
-  return null;
+  if (mo < 1 || mo > 12 || da < 1 || da > 31) return null;
+  const d = new Date(Date.UTC(y, mo - 1, da));
+  if (d.getUTCFullYear() !== y || d.getUTCMonth() !== mo - 1 || d.getUTCDate() !== da) return null;
+  const pad = (v: number) => String(v).padStart(2, "0");
+  return `${y}-${pad(mo)}-${pad(da)}`;
 }
 
 const PREVIEW_LIMIT = 50;
@@ -152,21 +165,31 @@ export function YieldsImportPage() {
     [products.data],
   );
 
+  // Keyed by lowercase name — the "already exists" check above (productNameSet)
+  // is case-insensitive, so grouping unmatched rows case-sensitively would
+  // split one real unmatched product into several undercounted entries (e.g.
+  // "Toscano Kale" and "toscano kale" as two separate unresolved groups).
+  // Each group keeps the first-seen casing as its display/create name.
   const unmatchedNames = useMemo(() => {
     if (!parsed) return [];
-    const names = new Set<string>();
+    const seen = new Map<string, string>();
     for (const r of parsed) {
-      if (!r.error && r.product && !productNameSet.has(r.product.toLowerCase())) names.add(r.product);
+      if (!r.error && r.product && !productNameSet.has(r.product.toLowerCase())) {
+        const key = r.product.toLowerCase();
+        if (!seen.has(key)) seen.set(key, r.product);
+      }
     }
-    return Array.from(names).sort();
+    return Array.from(seen.entries())
+      .map(([key, name]) => ({ key, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }, [parsed, productNameSet]);
 
-  const countFor = (name: string) => parsed?.filter((r) => r.product === name).length ?? 0;
+  const countFor = (key: string) => parsed?.filter((r) => r.product.toLowerCase() === key).length ?? 0;
 
   const validCount = parsed ? parsed.filter((r) => !r.error).length : 0;
   const errorRows = parsed ? parsed.filter((r) => r.error) : [];
 
-  const allResolved = unmatchedNames.every((n) => resolutions[n] != null);
+  const allResolved = unmatchedNames.every((n) => resolutions[n.key] != null);
   const canImport =
     !!parsed && !headerError && validCount > 0 && allResolved && harvestedBy.trim() !== "" && !importing;
 
@@ -174,21 +197,22 @@ export function YieldsImportPage() {
     if (!parsed || !canImport) return;
     setImporting(true);
     try {
+      const toCreate = unmatchedNames.filter(({ key }) => resolutions[key]?.kind === "create");
+      const createdProducts = await Promise.all(
+        toCreate.map(({ name }) => createProduct.mutateAsync({ name })),
+      );
       const createdIds: Record<string, number> = {};
-      for (const name of unmatchedNames) {
-        const res = resolutions[name];
-        if (res?.kind === "create") {
-          const p = await createProduct.mutateAsync({ name });
-          createdIds[name] = p.id;
-        }
-      }
+      toCreate.forEach(({ key }, i) => {
+        createdIds[key] = createdProducts[i].id;
+      });
       const idByLowerName = new Map((products.data ?? []).map((p) => [p.name.toLowerCase(), p.id]));
       const resolveProductId = (rawName: string): number | null => {
-        const exact = idByLowerName.get(rawName.toLowerCase());
+        const key = rawName.toLowerCase();
+        const exact = idByLowerName.get(key);
         if (exact != null) return exact;
-        const res = resolutions[rawName];
+        const res = resolutions[key];
         if (res?.kind === "map") return res.productId;
-        if (res?.kind === "create") return createdIds[rawName] ?? null;
+        if (res?.kind === "create") return createdIds[key] ?? null;
         return null;
       };
       const entries = parsed
@@ -314,14 +338,14 @@ export function YieldsImportPage() {
                   subtitle="These names don't match anything in your product catalog yet."
                 >
                   <Stack gap="xs">
-                    {unmatchedNames.map((name) => (
-                      <Group key={name} justify="space-between" wrap="nowrap" gap="sm">
+                    {unmatchedNames.map(({ key, name }) => (
+                      <Group key={key} justify="space-between" wrap="nowrap" gap="sm">
                         <div style={{ minWidth: 0, flex: "1 1 auto" }}>
                           <Text size="sm" fw={500} truncate>
                             {name}
                           </Text>
                           <Text size="xs" c="dimmed">
-                            {countFor(name)} row{countFor(name) === 1 ? "" : "s"}
+                            {countFor(key)} row{countFor(key) === 1 ? "" : "s"}
                           </Text>
                         </div>
                         <Select
@@ -331,9 +355,9 @@ export function YieldsImportPage() {
                             ...productOptions,
                           ]}
                           value={
-                            resolutions[name]?.kind === "map"
-                              ? String(resolutions[name].productId)
-                              : resolutions[name]?.kind === "create"
+                            resolutions[key]?.kind === "map"
+                              ? String(resolutions[key].productId)
+                              : resolutions[key]?.kind === "create"
                                 ? CREATE_VALUE
                                 : null
                           }
@@ -343,7 +367,7 @@ export function YieldsImportPage() {
                               ...(v == null
                                 ? {}
                                 : {
-                                    [name]:
+                                    [key]:
                                       v === CREATE_VALUE
                                         ? { kind: "create" }
                                         : { kind: "map", productId: Number(v) },

@@ -57,6 +57,16 @@ export function fmtDateTime(value: string | null | undefined): string {
   return `${g("year")}-${g("month")}-${g("day")} ${g("hour")}:${g("minute")} ${tzAbbrev(d)}`;
 }
 
+/** Today's date (YYYY-MM-DD) in the business timezone — not the viewer's
+ *  device clock. Use this anywhere "today" gates something the backend also
+ *  gates by business_now().date() (shared/business_tz.py) — e.g. the kiosk's
+ *  same-day self-edit window — so a misconfigured device timezone or the
+ *  minutes around the business's own midnight can't desync the two. */
+export function businessToday(): string {
+  const g = (t: string) => part(dateParts, new Date(), t);
+  return `${g("year")}-${g("month")}-${g("day")}`;
+}
+
 /** The calendar date a timestamptz value falls on in the business timezone —
  *  for a TIMESTAMPTZ column shown as a bare date (e.g. "captured", "delivered").
  *  A plain DATE-column string ("YYYY-MM-DD", no time part) passes through

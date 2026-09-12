@@ -13,15 +13,9 @@ import {
 import { IconCheck } from "@tabler/icons-react";
 import { useCreateYieldEntry, useYieldEmployees, useYieldProducts, type YieldUnit } from "@/api/yields";
 import { SectionCard } from "@/components/SectionCard";
+import { businessToday } from "@/lib/datetime";
 import { notifySuccess } from "@/lib/notify";
 import { errorMessage } from "@/lib/errors";
-
-function today(): string {
-  // The tablet/office sits at the business — its local calendar day is the business day.
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
 
 /** The harvest-logging form: product, weight, tray counts, who/where.
  *  Submitting resets weight/trays/notes but keeps product/unit/worker
@@ -35,7 +29,7 @@ export function HarvestEntryForm() {
   const create = useCreateYieldEntry();
 
   const [productId, setProductId] = useState<string | null>(null);
-  const [date, setDate] = useState(today());
+  const [date, setDate] = useState(businessToday());
   const [weight, setWeight] = useState<number | "">("");
   const [unit, setUnit] = useState<YieldUnit>("oz");
   const [trayCount, setTrayCount] = useState<number | "">(0);

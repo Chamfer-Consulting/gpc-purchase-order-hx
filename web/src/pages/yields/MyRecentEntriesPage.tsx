@@ -5,26 +5,23 @@ import { useAuth } from "@/auth/AuthProvider";
 import { useVoidYieldEntry, useYieldEntries, type YieldEntry } from "@/api/yields";
 import { EmptyState } from "@/components/EmptyState";
 import { QueryBoundary } from "@/components/ErrorState";
+import { businessToday } from "@/lib/datetime";
 import { promptReason } from "@/lib/modals";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { EditEntryModal } from "./EditEntryModal";
 
-function today(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 /** Today's entries submitted from this kiosk account — self-service correction
  *  for a mis-entered harvest. The backend only allows voiding a same-day, own
- *  entry for the 'field' role, so this deliberately only shows today's rows. */
+ *  entry for the 'field' role, so this deliberately only shows today's rows —
+ *  "today" is the business's own calendar day (businessToday), matching the
+ *  backend's business_now().date() gate, not this device's local clock. */
 export function MyRecentEntriesPage() {
   const { session } = useAuth();
   const email = session?.user.email ?? "";
   const { data, isLoading, error, refetch } = useYieldEntries({
     submitted_by: email,
-    date_from: today(),
-    date_to: today(),
+    date_from: businessToday(),
+    date_to: businessToday(),
   });
   const voidEntry = useVoidYieldEntry();
   const [editing, setEditing] = useState<YieldEntry | null>(null);

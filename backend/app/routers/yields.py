@@ -1,8 +1,15 @@
 """Product Yields — harvest logging. A domain separate from PO/QBO sales; see
-services/yields.py. No router-level role floor: 'field' (the harvest kiosk
-role) is rank 0, the floor of the whole app, so bare `current_user` is already
-correct for reads/submissions. Product management stays `require_editor`,
-matching the rest of the app's catalog-editing endpoints."""
+services/yields.py. No router-level *role* floor beyond bare current_user:
+'field' (the harvest kiosk role) is rank 0, the floor of the whole app, so a
+require_viewer-style floor (as every PO router has) would lock the kiosk out
+of its own endpoints. dependencies=[Depends(current_user)] below is a plain
+authentication floor, not a role one — it costs every current endpoint
+nothing (they all already require at least current_user explicitly) but
+means a future endpoint added to this router without remembering its own
+Depends(...) still fails closed (must be an authenticated, allow-listed
+user) instead of being reachable with no auth at all. Product/link/employee
+management stays `require_editor`/`require_admin` per-endpoint, matching the
+rest of the app's catalog-editing conventions."""
 
 from __future__ import annotations
 
@@ -16,7 +23,7 @@ from ..reused_db import reused_conn
 from ..schemas import PageResponse
 from ..services import yields as yields_svc
 
-router = APIRouter(prefix="/api/yields", tags=["yields"])
+router = APIRouter(prefix="/api/yields", tags=["yields"], dependencies=[Depends(current_user)])
 
 
 def _actor(user: AuthedUser) -> str | None:
