@@ -33,6 +33,7 @@ interface ParsedRow {
   product: string;
   date: string | null;
   weight: number | null;
+  unit: YieldUnit | null;
   lotCode: string | null;
   error: string | null;
 }
@@ -40,9 +41,20 @@ interface ParsedRow {
 type Resolution = { kind: "map"; productId: number } | { kind: "create" };
 
 const CREATE_VALUE = "__create__";
+const VALID_UNITS: YieldUnit[] = ["oz", "lb", "g"];
 
 function normalizeHeader(s: string): string {
   return s.trim().toLowerCase().replace(/[\s_]+/g, "");
+}
+
+/** A per-row unit is optional — most historical imports have no unit column
+ *  at all and rely on the single batch-wide unit picker below — but when a
+ *  row *does* carry one (notably the downloaded template's own example rows,
+ *  which are real past entries and may not be in the batch's chosen unit),
+ *  it must be one of the three valid units, not silently coerced. */
+function parseUnitCell(raw: string): YieldUnit | null {
+  const s = raw.trim().toLowerCase();
+  return (VALID_UNITS as string[]).includes(s) ? (s as YieldUnit) : null;
 }
 
 /** Accepts "YYYY-MM-DD" or "M/D/YYYY" and returns ISO, but only for a date
@@ -90,10 +102,10 @@ export function YieldsImportPage() {
   const [lastResult, setLastResult] = useState<{ created: number; duplicates: number } | null>(null);
 
   const downloadTemplate = () => {
-    const header = ["date", "product", "weight", "lot_code"];
+    const header = ["date", "product", "weight", "unit", "lot_code"];
     const examples = (recent.data ?? [])
       .slice(0, 5)
-      .map((e) => [e.harvest_date, e.product_name, String(e.weight), e.lot_code ?? ""]);
+      .map((e) => [e.harvest_date, e.product_name, String(e.weight), e.unit, e.lot_code ?? ""]);
     const lines = [header, ...examples].map((cells) => cells.map(csvCell).join(","));
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -124,6 +136,7 @@ export function YieldsImportPage() {
     const dateIx = header.findIndex((h) => h === "date" || h === "harvestdate");
     const productIx = header.findIndex((h) => h === "product" || h === "productname" || h === "crop");
     const weightIx = header.findIndex((h) => h === "weight");
+    const unitIx = header.findIndex((h) => h === "unit");
     const lotIx = header.findIndex((h) => h === "lotcode" || h === "lot");
     if (dateIx < 0 || productIx < 0 || weightIx < 0) {
       setHeaderError(
@@ -137,18 +150,22 @@ export function YieldsImportPage() {
       const productRaw = (cells[productIx] ?? "").trim();
       const dateRaw = (cells[dateIx] ?? "").trim();
       const weightRaw = (cells[weightIx] ?? "").trim();
+      const unitRaw = unitIx >= 0 ? (cells[unitIx] ?? "").trim() : "";
       const lotRaw = lotIx >= 0 ? (cells[lotIx] ?? "").trim() : "";
       const date = parseDateCell(dateRaw);
       const weightNum = weightRaw ? Number(weightRaw) : NaN;
+      const unitCell = unitRaw ? parseUnitCell(unitRaw) : null;
       let error: string | null = null;
       if (!productRaw) error = "Missing product";
       else if (!date) error = `Unparseable date "${dateRaw}"`;
       else if (!Number.isFinite(weightNum) || weightNum <= 0) error = `Invalid weight "${weightRaw}"`;
+      else if (unitRaw && !unitCell) error = `Unrecognized unit "${unitRaw}" (must be oz, lb, or g)`;
       return {
         rowNum: i + 2,
         product: productRaw,
         date,
         weight: Number.isFinite(weightNum) ? weightNum : null,
+        unit: unitCell,
         lotCode: lotRaw || null,
         error,
       };
@@ -226,7 +243,7 @@ export function YieldsImportPage() {
           yield_product_id: resolveProductId(r.product),
           harvest_date: r.date as string,
           weight: r.weight as number,
-          unit,
+          unit: r.unit ?? unit,
           lot_code: r.lotCode,
           harvested_by: harvestedBy.trim(),
         }))
@@ -392,6 +409,7 @@ export function YieldsImportPage() {
               <Group gap="sm" wrap="wrap" align="flex-end">
                 <Select
                   label="Weight unit"
+                  description="Used for rows without their own unit column"
                   data={[
                     { value: "oz", label: "oz" },
                     { value: "lb", label: "lb" },
@@ -400,7 +418,7 @@ export function YieldsImportPage() {
                   value={unit}
                   onChange={(v) => setUnit((v as YieldUnit) ?? "lb")}
                   allowDeselect={false}
-                  w={120}
+                  w={220}
                 />
                 <TextInput
                   label="Attribute these entries to"
@@ -434,7 +452,7 @@ export function YieldsImportPage() {
                             <Table.Td>{r.date}</Table.Td>
                             <Table.Td>{r.product}</Table.Td>
                             <Table.Td ta="right">
-                              {r.weight} {unit}
+                              {r.weight} {r.unit ?? unit}
                             </Table.Td>
                             <Table.Td>{r.lotCode ?? "—"}</Table.Td>
                           </Table.Tr>

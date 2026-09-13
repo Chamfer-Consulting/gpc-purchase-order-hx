@@ -146,18 +146,25 @@ export function useDeleteYieldLink() {
   });
 }
 
-export function useYieldEntries(filters: YieldEntryFilters = {}) {
+export function useYieldEntries(filters: YieldEntryFilters = {}, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ["yield-entries", filters],
     queryFn: () => apiGet<YieldEntry[]>("/api/yields/entries", { ...filters }),
     staleTime: 15_000,
+    enabled: options?.enabled,
   });
 }
+
+// The backend's RETURNING clause for create/update/void is `yield_entries`
+// alone (no join to yield_products), so these three never carry
+// product_name/product_lot_code_prefix — only list_entries's joined rows do.
+type YieldEntryMutationResult = Omit<YieldEntry, "product_name" | "product_lot_code_prefix">;
 
 export function useCreateYieldEntry() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: YieldEntryIn) => apiSend<YieldEntry>("POST", "/api/yields/entries", body),
+    mutationFn: (body: YieldEntryIn) =>
+      apiSend<YieldEntryMutationResult>("POST", "/api/yields/entries", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-entries"] }),
   });
 }
@@ -175,9 +182,11 @@ export interface YieldEntryImportRow {
  *  import page) — no tray counts or notes (historical records don't carry
  *  those), and a single audit_log row summarizes the whole batch. The
  *  backend skips (doesn't create) any row that already matches a non-voided
- *  entry for the same product + date + lot_code (or + weight when there's
- *  no lot_code) — reported back as skipped_duplicates, so re-importing the
- *  template's own example rows, or the same file twice, doesn't double up. */
+ *  entry for the same product + date + weight + unit (also + lot_code when
+ *  the row has one) — reported back as skipped_duplicates, so re-importing
+ *  the template's own example rows, or the same file twice, doesn't double
+ *  up, while two different entries that happen to share a lot code (e.g.
+ *  two people harvesting into the same labeled bin) still both get created. */
 export function useImportYieldEntries() {
   const qc = useQueryClient();
   return useMutation({
@@ -209,7 +218,7 @@ export function useUpdateYieldEntry() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }: YieldEntryPatch & { id: number }) =>
-      apiSend<YieldEntry>("POST", `/api/yields/entries/${id}`, body),
+      apiSend<YieldEntryMutationResult>("POST", `/api/yields/entries/${id}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-entries"] }),
   });
 }
@@ -218,7 +227,7 @@ export function useVoidYieldEntry() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, reason }: { id: number; reason?: string | null }) =>
-      apiSend<YieldEntry>("POST", `/api/yields/entries/${id}/void`, { reason }),
+      apiSend<YieldEntryMutationResult>("POST", `/api/yields/entries/${id}/void`, { reason }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-entries"] }),
   });
 }

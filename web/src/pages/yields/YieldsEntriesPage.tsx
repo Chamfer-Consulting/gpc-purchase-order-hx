@@ -192,6 +192,9 @@ export function YieldsEntriesPage() {
                     if (g.entries.length === 1) return entryRow(g.entries[0], false);
                     const first = g.entries[0];
                     const by = harvestedBySummary(g.entries);
+                    const activeCount = g.entries.filter((e) => !e.voided).length;
+                    const countLabel =
+                      activeCount === g.entries.length ? `${activeCount} entries` : `${activeCount} of ${g.entries.length} entries`;
                     return (
                       <Fragment key={g.key}>
                         <Table.Tr fw={600} bg="var(--mantine-color-gpGreen-0)">
@@ -200,7 +203,7 @@ export function YieldsEntriesPage() {
                             <Group gap={6} wrap="nowrap">
                               {first.product_name}
                               <Badge size="xs" variant="light" color="gpGreen">
-                                {g.entries.length} entries
+                                {countLabel}
                               </Badge>
                             </Group>
                           </Table.Td>

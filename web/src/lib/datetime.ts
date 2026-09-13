@@ -67,6 +67,15 @@ export function businessToday(): string {
   return `${g("year")}-${g("month")}-${g("day")}`;
 }
 
+/** `n` days before today (YYYY-MM-DD), in the business timezone — same
+ *  rationale as businessToday(): a viewer's device clock/timezone shouldn't
+ *  shift which calendar day a lookback window lands on. */
+export function businessDaysAgo(n: number): string {
+  const d = new Date(Date.now() - n * 86_400_000);
+  const g = (t: string) => part(dateParts, d, t);
+  return `${g("year")}-${g("month")}-${g("day")}`;
+}
+
 /** The calendar date a timestamptz value falls on in the business timezone —
  *  for a TIMESTAMPTZ column shown as a bare date (e.g. "captured", "delivered").
  *  A plain DATE-column string ("YYYY-MM-DD", no time part) passes through

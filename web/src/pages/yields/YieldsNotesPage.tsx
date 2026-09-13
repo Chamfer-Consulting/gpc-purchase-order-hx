@@ -7,23 +7,16 @@ import { EmptyState } from "@/components/EmptyState";
 import { QueryBoundary } from "@/components/ErrorState";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
-import { businessToday, fmtDateOnly } from "@/lib/datetime";
+import { businessDaysAgo, businessToday, fmtDateOnly } from "@/lib/datetime";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { pageMeta } from "@/nav";
-
-function daysAgo(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  const pad = (v: number) => String(v).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
 
 /** A note ties to a specific lot_code by default (the traceability case) —
  *  leave it blank for a general note not specific to any one lot. */
 function AddNoteForm() {
   // A rolling 60-day window of recent entries, just to seed lot-code
   // suggestions — not a full history view.
-  const recent = useYieldEntries({ date_from: daysAgo(60) });
+  const recent = useYieldEntries({ date_from: businessDaysAgo(60) });
   const create = useCreateYieldNote();
   const [lotCode, setLotCode] = useState("");
   const [date, setDate] = useState(businessToday());

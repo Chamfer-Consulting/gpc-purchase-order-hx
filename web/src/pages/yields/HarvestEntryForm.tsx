@@ -69,7 +69,12 @@ export function HarvestEntryForm() {
   };
   const handleProductChange = (id: string | null) => {
     setProductId(id);
-    applyAutoLot(autoLot(id, date));
+    // A hand-edit only ever made sense in the context of the *previous*
+    // product's prefix — switching crops always gets a fresh auto-fill for
+    // the new one, rather than silently carrying over a stale, wrong-prefix
+    // lot code the employee never actually typed for this product.
+    lotEditedRef.current = false;
+    setLotCode(autoLot(id, date));
   };
   const handleDateChange = (value: string) => {
     setDate(value);

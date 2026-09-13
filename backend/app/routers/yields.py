@@ -64,8 +64,7 @@ def create_product(body: ProductIn, user: AuthedUser = Depends(require_editor)) 
 def update_product(product_id: int, body: ProductPatch, user: AuthedUser = Depends(require_editor)) -> dict:
     with reused_conn() as conn:
         return yields_svc.update_product(
-            conn, product_id, name=body.name, active=body.active, notes=body.notes,
-            lot_code_prefix=body.lot_code_prefix, actor=_actor(user),
+            conn, product_id, body.model_dump(exclude_unset=True), actor=_actor(user),
         )
 
 

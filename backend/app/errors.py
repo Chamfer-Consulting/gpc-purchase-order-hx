@@ -102,6 +102,28 @@ class InUse(ApiProblem):
     code = "in_use"
 
 
+class AlreadyVoided(ApiProblem):
+    """An edit or void was attempted on a yield entry that's already voided —
+    voided is a terminal state, log a new entry instead. 409."""
+
+    status = 409
+    code = "already_voided"
+
+    def __init__(self) -> None:
+        super().__init__("This entry has already been voided.")
+
+
+class NameTaken(ApiProblem):
+    """A create hit a UNIQUE(name) constraint — surfaced as a clean 409
+    instead of an opaque 500 from the underlying psycopg2 UniqueViolation."""
+
+    status = 409
+    code = "name_taken"
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f'"{name}" already exists.', name=name)
+
+
 class Forbidden(ApiProblem):
     """The signed-in user's role can't perform this action. 403."""
 

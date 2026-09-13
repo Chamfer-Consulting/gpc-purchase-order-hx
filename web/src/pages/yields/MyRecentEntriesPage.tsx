@@ -18,11 +18,17 @@ import { EditEntryModal } from "./EditEntryModal";
 export function MyRecentEntriesPage() {
   const { session } = useAuth();
   const email = session?.user.email ?? "";
-  const { data, isLoading, error, refetch } = useYieldEntries({
-    submitted_by: email,
-    date_from: businessToday(),
-    date_to: businessToday(),
-  });
+  const { data, isLoading, error, refetch } = useYieldEntries(
+    {
+      submitted_by: email,
+      date_from: businessToday(),
+      date_to: businessToday(),
+    },
+    // apiGet drops an empty-string param entirely, which would turn a
+    // not-yet-resolved session into an *unfiltered* fetch of every kiosk's
+    // entries for today instead of matching nothing — wait for a real email.
+    { enabled: !!email },
+  );
   const voidEntry = useVoidYieldEntry();
   const [editing, setEditing] = useState<YieldEntry | null>(null);
 

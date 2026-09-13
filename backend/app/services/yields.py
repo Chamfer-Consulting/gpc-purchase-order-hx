@@ -21,7 +21,7 @@ import psycopg2.errors
 import psycopg2.extras
 from business_tz import business_now  # shared/, via app.reuse
 
-from ..errors import Forbidden, InUse, NotFound
+from ..errors import AlreadyVoided, Forbidden, InUse, NameTaken, NotFound
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope
 from . import audit
 
@@ -52,35 +52,52 @@ def list_products(conn, *, include_inactive: bool = False) -> list[dict]:
 
 def create_product(conn, name: str, notes: str | None = None, *, lot_code_prefix: str | None = None,
                     actor: str | None = None) -> dict:
+    name = name.strip()
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(
-            "INSERT INTO yield_products (name, notes, lot_code_prefix) VALUES (%s, %s, %s) "
-            "RETURNING id, name, active, notes, lot_code_prefix",
-            (name.strip(), notes, lot_code_prefix.strip() if lot_code_prefix else None),
-        )
+        try:
+            cur.execute(
+                "INSERT INTO yield_products (name, notes, lot_code_prefix) VALUES (%s, %s, %s) "
+                "RETURNING id, name, active, notes, lot_code_prefix",
+                (name, notes, lot_code_prefix.strip() if lot_code_prefix else None),
+            )
+        except psycopg2.errors.UniqueViolation as exc:
+            # A real trigger path, not just theoretical: YieldsImportPage lets
+            # an admin "+ Create" a product for each unmatched CSV name, and
+            # two concurrent imports (or a name differing only by casing that
+            # the client's own case-insensitive check missed) would otherwise
+            # 500 the whole import batch instead of failing just this row.
+            raise NameTaken(name) from exc
         row = dict(cur.fetchone())
     audit.log(conn, actor=actor, action="create", entity="yield_product", entity_id=row["id"], after=row)
     conn.commit()
     return row
 
 
-def update_product(conn, product_id: int, *, name: str | None = None, active: bool | None = None,
-                    notes: str | None = None, lot_code_prefix: str | None = None,
-                    actor: str | None = None) -> dict:
+_PRODUCT_PATCH_FIELDS = {"name", "active", "notes", "lot_code_prefix"}
+
+
+def update_product(conn, product_id: int, patch: dict, *, actor: str | None = None) -> dict:
+    """`patch` is already `model_dump(exclude_unset=True)`'d by the router.
+    notes/lot_code_prefix are nullable and clearable — an explicit `None` for
+    either must survive (that's how the admin clears them in
+    YieldsAdminPage), unlike the old per-kwarg version which filtered on
+    `is not None` and could never actually clear either field. `name` is
+    NOT NULL at the DB level, so an explicit `None` there (no current caller
+    sends one) is dropped instead of attempting an integrity-violating
+    UPDATE."""
     sets: list[str] = []
     vals: list[object] = []
-    if name is not None:
-        sets.append("name = %s")
-        vals.append(name.strip())
-    if active is not None:
-        sets.append("active = %s")
-        vals.append(active)
-    if notes is not None:
-        sets.append("notes = %s")
-        vals.append(notes)
-    if lot_code_prefix is not None:
-        sets.append("lot_code_prefix = %s")
-        vals.append(lot_code_prefix.strip() or None)
+    for k, v in patch.items():
+        if k not in _PRODUCT_PATCH_FIELDS:
+            continue
+        if k == "name":
+            if v is None:
+                continue
+            v = v.strip()
+        elif k == "lot_code_prefix" and v is not None:
+            v = v.strip() or None
+        sets.append(f"{k} = %s")
+        vals.append(v)
     if not sets:
         raise ValueError("nothing to update")
     sets.append("updated_at = now()")
@@ -336,13 +353,17 @@ def list_entries(conn, *, yield_product_id: int | None = None, date_from: _date 
 def _assert_can_touch(conn, entry_id: int, *, actor: str | None, actor_role: str) -> dict:
     """A 'field'-rank caller may only touch its own same-day entries; every
     other role (viewer and up) is unrestricted — Yields isn't the sensitive
-    domain the 'field' floor exists to protect, PO/financial data is."""
+    domain the 'field' floor exists to protect, PO/financial data is. Voided
+    is a terminal state for every role: a voided entry is a corrected/
+    retracted record, not something to keep editing or re-void."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("SELECT * FROM yield_entries WHERE id = %s", (entry_id,))
         row = cur.fetchone()
     if row is None:
         raise NotFound(f"yield entry {entry_id} not found")
     row = dict(row)
+    if row["voided"]:
+        raise AlreadyVoided()
     if actor_role == "field":
         same_day = row["harvest_date"] == business_now().date()
         own = (row["submitted_by"] or "").lower() == (actor or "").lower()
@@ -363,7 +384,13 @@ def update_entry(conn, entry_id: int, patch: dict, *, actor: str | None, actor_r
     explicit `None` for the nullable columns (lot_code, notes), which is how
     the Edit modal clears them. Don't drop `None` values: a caller that
     wanted a field left alone simply wouldn't include the key at all."""
-    _assert_can_touch(conn, entry_id, actor=actor, actor_role=actor_role)
+    row = _assert_can_touch(conn, entry_id, actor=actor, actor_role=actor_role)
+    if actor_role == "field" and patch.get("harvest_date", row["harvest_date"]) != row["harvest_date"]:
+        # _assert_can_touch only verified the entry's *current* harvest_date is
+        # today — without this, a field-role caller could move their own entry
+        # to a different day in the same request and escape the same-day
+        # self-service window that check exists to enforce.
+        raise Forbidden(need="viewer", have=actor_role)
     sets: list[str] = []
     vals: list[object] = []
     for k, v in patch.items():
@@ -533,10 +560,17 @@ def list_notes(conn, *, lot_code: str | None = None) -> list[dict]:
 
 def create_note(conn, *, lot_code: str | None, note: str, note_date: _date | None = None,
                  submitted_by: str) -> dict:
+    # business_now().date(), not SQL's CURRENT_DATE (the DB session's own
+    # timezone, not necessarily America/Chicago) — matches every other
+    # "today" in this file. The sole UI caller always sends note_date
+    # explicitly today, but a future caller that omits it should still land
+    # on the same business day everything else here uses.
+    if note_date is None:
+        note_date = business_now().date()
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             "INSERT INTO yield_notes (lot_code, note, note_date, submitted_by) "
-            "VALUES (%s, %s, COALESCE(%s, CURRENT_DATE), %s) RETURNING *",
+            "VALUES (%s, %s, %s, %s) RETURNING *",
             (lot_code.strip() if lot_code else None, note, note_date, submitted_by),
         )
         row = _note_row(dict(cur.fetchone()))
@@ -569,11 +603,15 @@ def list_employees(conn, *, include_inactive: bool = False) -> list[dict]:
 
 
 def create_employee(conn, name: str, *, actor: str | None = None) -> dict:
+    name = name.strip()
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(
-            "INSERT INTO yield_employees (name) VALUES (%s) RETURNING id, name, active",
-            (name.strip(),),
-        )
+        try:
+            cur.execute(
+                "INSERT INTO yield_employees (name) VALUES (%s) RETURNING id, name, active",
+                (name,),
+            )
+        except psycopg2.errors.UniqueViolation as exc:
+            raise NameTaken(name) from exc
         row = dict(cur.fetchone())
     audit.log(conn, actor=actor, action="create", entity="yield_employee", entity_id=row["id"], after=row)
     conn.commit()
