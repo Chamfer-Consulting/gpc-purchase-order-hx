@@ -231,17 +231,20 @@ def import_entries(conn, rows: list[dict], *, actor: str) -> dict:
     one per row, so a 500-row import doesn't flood the audit trail.
 
     Skips (doesn't insert) any row that already matches a non-voided entry
-    for the same product + date — by lot_code when the row has one, else by
-    weight+unit *regardless of whether the matching existing entry happens to
-    have a lot_code* (matching only lot-code-less existing entries would
-    miss a real duplicate whose lot_code was simply left off the
-    re-imported row; matching on weight alone without unit would wrongly
-    collide e.g. 5 oz with 5 lb). This is what keeps the "download a template
-    pre-filled with your 5 most recent entries" flow from double-entering
-    those rows if the admin imports the template without deleting/
-    overwriting them. A duplicate row within the same CSV is caught the
-    same way — a row about to be inserted is added to the lookup
-    immediately, before the next row is checked.
+    for the same product + date + weight + unit — by lot_code too when the
+    row has one, else regardless of the matching existing entry's lot_code
+    (matching only lot-code-less existing entries would miss a real
+    duplicate whose lot_code was simply left off the re-imported row).
+    Weight+unit are always part of the match, not just lot_code+product+date
+    — the same lot_code legitimately covers *multiple distinct entries* on
+    the same day (e.g. two different people each harvesting into the same
+    labeled bin with their own weight); matching on lot_code alone would
+    silently collapse those into one and drop real harvest data. This is
+    what keeps the "download a template pre-filled with your 5 most recent
+    entries" flow from double-entering those rows if the admin imports the
+    template without deleting/overwriting them. A duplicate row within the
+    same CSV is caught the same way — a row about to be inserted is added to
+    the lookup immediately, before the next row is checked.
 
     Existing entries are pre-fetched once (scoped to the products/dates in
     this batch) and the whole batch is inserted in one multi-row INSERT — a
@@ -253,7 +256,7 @@ def import_entries(conn, rows: list[dict], *, actor: str) -> dict:
     product_ids = list({r["yield_product_id"] for r in rows})
     dates = list({r["harvest_date"] for r in rows})
 
-    by_lot: set[tuple[int, object, str]] = set()
+    by_lot: set[tuple[int, object, str, float, str]] = set()
     by_weight: set[tuple[int, object, float, str]] = set()
     with conn.cursor() as cur:
         cur.execute(
@@ -262,22 +265,23 @@ def import_entries(conn, rows: list[dict], *, actor: str) -> dict:
             (product_ids, dates),
         )
         for pid, d, lot, w, u in cur.fetchall():
-            by_weight.add((pid, d, round(float(w), 2), u))
+            rw = round(float(w), 2)
+            by_weight.add((pid, d, rw, u))
             if lot:
-                by_lot.add((pid, d, lot))
+                by_lot.add((pid, d, lot, rw, u))
 
     to_insert: list[tuple] = []
     skipped_duplicates = 0
     for r in rows:
         pid, d, w, u = r["yield_product_id"], r["harvest_date"], round(float(r["weight"]), 2), r["unit"]
         lot_code = r.get("lot_code")
-        is_dup = (pid, d, lot_code) in by_lot if lot_code else (pid, d, w, u) in by_weight
+        is_dup = (pid, d, lot_code, w, u) in by_lot if lot_code else (pid, d, w, u) in by_weight
         if is_dup:
             skipped_duplicates += 1
             continue
         by_weight.add((pid, d, w, u))
         if lot_code:
-            by_lot.add((pid, d, lot_code))
+            by_lot.add((pid, d, lot_code, w, u))
         to_insert.append((pid, d, r["weight"], r["unit"], lot_code, r["harvested_by"], actor))
 
     created = 0
