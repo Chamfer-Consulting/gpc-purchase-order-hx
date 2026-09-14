@@ -100,6 +100,12 @@ export function YieldsEntriesPage() {
   const voidEntry = useVoidYieldEntry();
   const [editing, setEditing] = useState<YieldEntry | null>(null);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  // Only one harvest day open at a time (an accordion, not independent
+  // toggles like the lot groups below it) — defaults to the most recent
+  // day with data, and re-defaults there whenever the currently-open one
+  // drops out of view (e.g. the product filter changes) rather than on
+  // every render, so a deliberate choice to look at an older day sticks.
+  const [expandedDate, setExpandedDate] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const meta = pageMeta("/yields/entries");
 
@@ -128,6 +134,12 @@ export function YieldsEntriesPage() {
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
+  useEffect(() => {
+    const stillValid = expandedDate != null && dateSections.some((s) => s.date === expandedDate);
+    if (!stillValid && dateSections.length > 0) setExpandedDate(dateSections[0].date);
+  }, [dateSections, expandedDate]);
+
+  const toggleDate = (date: string) => setExpandedDate((current) => (current === date ? null : date));
 
   const askVoid = (entry: YieldEntry) => {
     promptReason({
@@ -307,11 +319,13 @@ export function YieldsEntriesPage() {
                   {pageSections.map((section) => {
                     const dayEntries = section.groups.flatMap((g) => g.entries);
                     const dayActive = dayEntries.filter((e) => !e.voided).length;
+                    const dayOpen = expandedDate === section.date;
                     return (
                       <Fragment key={section.date}>
-                        <Table.Tr>
+                        <Table.Tr style={{ cursor: "pointer" }} onClick={() => toggleDate(section.date)}>
                           <Table.Td colSpan={8} style={{ borderBottom: "2px solid var(--gp-border)" }} pt="md">
                             <Group gap={8} wrap="nowrap">
+                              {dayOpen ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
                               <Text fw={700} size="sm">
                                 {fmtDateOnly(section.date)}
                               </Text>
@@ -321,7 +335,7 @@ export function YieldsEntriesPage() {
                             </Group>
                           </Table.Td>
                         </Table.Tr>
-                        {section.groups.map((g) => renderGroup(g))}
+                        {dayOpen && section.groups.map((g) => renderGroup(g))}
                       </Fragment>
                     );
                   })}
