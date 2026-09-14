@@ -163,6 +163,7 @@ class EntryImportRow(BaseModel):
     harvest_date: date
     weight: float
     unit: str = "oz"
+    tray_count: int = 0
     lot_code: str | None = None
     harvested_by: str
 

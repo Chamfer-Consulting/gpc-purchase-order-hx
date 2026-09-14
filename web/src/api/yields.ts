@@ -186,13 +186,15 @@ export interface YieldEntryImportRow {
   harvest_date: string;
   weight: number;
   unit: YieldUnit;
+  tray_count?: number;
   lot_code?: string | null;
   harvested_by: string;
 }
 
 /** Admin-only, one-transaction bulk insert for historical data (the CSV
- *  import page) — no tray counts or notes (historical records don't carry
- *  those), and a single audit_log row summarizes the whole batch. The
+ *  import page) — tray_count is optional per row (defaults to 0; most
+ *  historical records don't carry it), discarded_tray_count/notes are
+ *  never set, and a single audit_log row summarizes the whole batch. The
  *  backend skips (doesn't create) any row that already matches a non-voided
  *  entry for the same product + date + weight + unit (also + lot_code when
  *  the row has one) — reported back as skipped_duplicates, so re-importing

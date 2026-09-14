@@ -260,10 +260,11 @@ def create_entry(conn, *, yield_product_id: int, harvest_date: _date, weight: fl
 def import_entries(conn, rows: list[dict], *, actor: str) -> dict:
     """Bulk-insert historical harvest entries in one transaction — the CSV
     import flow. Each row carries the same required fields as create_entry
-    (yield_product_id/harvest_date/weight/unit/harvested_by; lot_code
-    optional); tray counts default 0, notes NULL — historical records don't
-    carry those. One audit_log row summarizes the whole batch rather than
-    one per row, so a 500-row import doesn't flood the audit trail.
+    (yield_product_id/harvest_date/weight/unit/harvested_by; tray_count and
+    lot_code optional) — tray_count defaults 0, discarded_tray_count and
+    notes are never set, since historical records don't carry those. One
+    audit_log row summarizes the whole batch rather than one per row, so a
+    500-row import doesn't flood the audit trail.
 
     Skips (doesn't insert) any row that already matches a non-voided entry
     for the same product + date + weight + unit — by lot_code too when the
@@ -317,7 +318,9 @@ def import_entries(conn, rows: list[dict], *, actor: str) -> dict:
         by_weight.add((pid, d, w, u))
         if lot_code:
             by_lot.add((pid, d, lot_code, w, u))
-        to_insert.append((pid, d, r["weight"], r["unit"], lot_code, r["harvested_by"], actor))
+        to_insert.append(
+            (pid, d, r["weight"], r["unit"], r.get("tray_count") or 0, lot_code, r["harvested_by"], actor)
+        )
 
     created = 0
     if to_insert:
@@ -326,7 +329,8 @@ def import_entries(conn, rows: list[dict], *, actor: str) -> dict:
                 psycopg2.extras.execute_values(
                     cur,
                     "INSERT INTO yield_entries "
-                    "(yield_product_id, harvest_date, weight, unit, lot_code, harvested_by, submitted_by) "
+                    "(yield_product_id, harvest_date, weight, unit, tray_count, lot_code, harvested_by, "
+                    "submitted_by) "
                     "VALUES %s",
                     to_insert,
                 )
