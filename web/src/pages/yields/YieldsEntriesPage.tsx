@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { ActionIcon, Badge, Group, Pagination, Select, Table, Text, Tooltip } from "@mantine/core";
-import { IconChevronDown, IconChevronRight, IconPencil, IconTrash } from "@tabler/icons-react";
+import { IconChevronDown, IconChevronRight, IconNotes, IconPencil, IconTrash } from "@tabler/icons-react";
 import { useVoidYieldEntry, useYieldEntries, useYieldProducts, type YieldEntry, type YieldUnit } from "@/api/yields";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
@@ -150,7 +150,16 @@ export function YieldsEntriesPage() {
   const entryRow = (e: YieldEntry, muted: boolean) => (
     <Table.Tr key={e.id} bg={muted ? "var(--gp-surface-sunken)" : undefined}>
       <Table.Td>{fmtDateOnly(e.harvest_date)}</Table.Td>
-      <Table.Td>{e.product_name}</Table.Td>
+      <Table.Td>
+        <Group gap={6} wrap="nowrap">
+          {e.product_name}
+          {e.notes && (
+            <Tooltip label={e.notes} multiline maw={280}>
+              <IconNotes size={14} color="var(--mantine-color-gpGreen-6)" aria-label="Has a note" />
+            </Tooltip>
+          )}
+        </Group>
+      </Table.Td>
       <Table.Td ta="right">
         {e.weight} {e.unit}
       </Table.Td>
@@ -205,6 +214,7 @@ export function YieldsEntriesPage() {
     const countLabel =
       activeCount === g.entries.length ? `${activeCount} entries` : `${activeCount} of ${g.entries.length} entries`;
     const open = openGroups.has(g.key);
+    const groupHasNotes = g.entries.some((e) => e.notes);
     return (
       <Fragment key={g.key}>
         <Table.Tr
@@ -221,6 +231,11 @@ export function YieldsEntriesPage() {
               <Badge size="xs" variant="light" color="gpGreen">
                 {countLabel}
               </Badge>
+              {groupHasNotes && (
+                <Tooltip label="One or more entries here has a note — expand to see it" multiline maw={280}>
+                  <IconNotes size={14} color="var(--mantine-color-gpGreen-6)" aria-label="Has a note" />
+                </Tooltip>
+              )}
             </Group>
           </Table.Td>
           <Table.Td ta="right">{weightSubtotal(g.entries)}</Table.Td>
