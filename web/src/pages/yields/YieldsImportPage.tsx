@@ -3,7 +3,6 @@ import {
   Alert,
   Badge,
   Button,
-  FileInput,
   Group,
   Select,
   Stack,
@@ -11,7 +10,8 @@ import {
   Text,
   TextInput,
 } from "@mantine/core";
-import { IconArrowRight, IconCheck, IconDownload, IconUpload } from "@tabler/icons-react";
+import { Dropzone } from "@mantine/dropzone";
+import { IconArrowRight, IconCheck, IconDownload, IconUpload, IconX } from "@tabler/icons-react";
 import { useMe } from "@/api/me";
 import {
   useCreateYieldProduct,
@@ -244,6 +244,16 @@ export function YieldsImportPage() {
       setHeaderError(null);
       return;
     }
+    // Dropped files skip the file-picker's own ".csv" filter, and MIME
+    // sniffing for CSV is unreliable across browsers/OSes (a dragged file
+    // can report "text/csv", "application/vnd.ms-excel", or nothing at
+    // all) — the filename extension is the one thing worth checking before
+    // trying to parse it as text.
+    if (!f.name.toLowerCase().endsWith(".csv")) {
+      setHeaderError(`"${f.name}" doesn't look like a CSV file.`);
+      setParsed(null);
+      return;
+    }
     const text = await f.text();
     const table = parseCsv(text);
     if (table.length < 2) {
@@ -451,14 +461,37 @@ export function YieldsImportPage() {
             that already matches an existing entry (same product, date, weight, and unit) is skipped
             automatically.
           </Text>
-          <FileInput
-            placeholder="Choose a .csv file"
-            accept=".csv,text/csv"
-            leftSection={<IconUpload size={16} />}
-            value={file}
-            onChange={handleFile}
-            clearable
-          />
+          <Dropzone
+            onDrop={(files) => void handleFile(files[0] ?? null)}
+            maxFiles={1}
+            multiple={false}
+            p="lg"
+          >
+            <Group justify="center" gap="md" mih={90} wrap="nowrap" style={{ pointerEvents: "none" }}>
+              <IconUpload size={28} style={{ opacity: 0.6, flexShrink: 0 }} />
+              <div style={{ minWidth: 0 }}>
+                <Text size="sm" fw={500} truncate>
+                  {file ? file.name : "Drag a CSV file here, or click to browse"}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {file ? "Drop or choose a different file to replace it" : "Accepts a single .csv file"}
+                </Text>
+              </div>
+            </Group>
+          </Dropzone>
+          {file && (
+            <Group justify="flex-end">
+              <Button
+                size="xs"
+                variant="subtle"
+                color="gray"
+                leftSection={<IconX size={14} />}
+                onClick={() => void handleFile(null)}
+              >
+                Clear file
+              </Button>
+            </Group>
+          )}
 
           {headerError && (
             <Alert color="red" variant="light">
