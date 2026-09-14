@@ -40,6 +40,30 @@ function groupEntries(entries: YieldEntry[]): EntryGroup[] {
   return order.map((k) => map.get(k)!);
 }
 
+interface DateSection {
+  date: string;
+  groups: EntryGroup[];
+}
+
+/** A second, outer grouping tier — a bold date divider above each day's
+ *  product/lot groups, so scanning a long list doesn't mean re-reading the
+ *  same date on every row. */
+function bucketByDate(groups: EntryGroup[]): DateSection[] {
+  const map = new Map<string, DateSection>();
+  const order: string[] = [];
+  for (const g of groups) {
+    const date = g.entries[0].harvest_date;
+    let s = map.get(date);
+    if (!s) {
+      s = { date, groups: [] };
+      map.set(date, s);
+      order.push(date);
+    }
+    s.groups.push(g);
+  }
+  return order.map((d) => map.get(d)!);
+}
+
 const UNIT_ORDER: YieldUnit[] = ["lb", "oz", "g"];
 
 function weightSubtotal(entries: YieldEntry[]): string {
@@ -89,6 +113,7 @@ export function YieldsEntriesPage() {
     [products.data],
   );
   const groups = useMemo(() => groupEntries(entries.data ?? []), [entries.data]);
+  const dateSections = useMemo(() => bucketByDate(groups), [groups]);
 
   const askVoid = (entry: YieldEntry) => {
     promptReason({
@@ -158,6 +183,59 @@ export function YieldsEntriesPage() {
     </Table.Tr>
   );
 
+  const renderGroup = (g: EntryGroup) => {
+    if (g.entries.length === 1) return entryRow(g.entries[0], false);
+    const first = g.entries[0];
+    const by = harvestedBySummary(g.entries);
+    const activeCount = g.entries.filter((e) => !e.voided).length;
+    const countLabel =
+      activeCount === g.entries.length ? `${activeCount} entries` : `${activeCount} of ${g.entries.length} entries`;
+    const open = openGroups.has(g.key);
+    return (
+      <Fragment key={g.key}>
+        <Table.Tr
+          fw={600}
+          bg="var(--mantine-color-gpGreen-light)"
+          style={{ cursor: "pointer" }}
+          onClick={() => toggleGroup(g.key)}
+        >
+          <Table.Td>{fmtDateOnly(first.harvest_date)}</Table.Td>
+          <Table.Td>
+            <Group gap={6} wrap="nowrap">
+              {open ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+              {first.product_name}
+              <Badge size="xs" variant="light" color="gpGreen">
+                {countLabel}
+              </Badge>
+            </Group>
+          </Table.Td>
+          <Table.Td ta="right">{weightSubtotal(g.entries)}</Table.Td>
+          <Table.Td ta="right">{sumField(g.entries, "tray_count")}</Table.Td>
+          <Table.Td ta="right">{sumField(g.entries, "discarded_tray_count") || "—"}</Table.Td>
+          <Table.Td>
+            <Group gap={6} wrap="nowrap">
+              {first.product_lot_code_prefix && (
+                <Badge size="xs" variant="outline" color="gray">
+                  {first.product_lot_code_prefix}
+                </Badge>
+              )}
+              {g.lotCode}
+            </Group>
+          </Table.Td>
+          <Table.Td>
+            <Tooltip label={by.title} disabled={!by.title.includes(",")}>
+              <Text size="sm" fw={600} span>
+                {by.label}
+              </Text>
+            </Tooltip>
+          </Table.Td>
+          <Table.Td />
+        </Table.Tr>
+        {open && g.entries.map((e) => entryRow(e, true))}
+      </Fragment>
+    );
+  };
+
   return (
     <PageLayout
       title={meta?.title ?? "Product Yields"}
@@ -197,55 +275,24 @@ export function YieldsEntriesPage() {
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {groups.map((g) => {
-                    if (g.entries.length === 1) return entryRow(g.entries[0], false);
-                    const first = g.entries[0];
-                    const by = harvestedBySummary(g.entries);
-                    const activeCount = g.entries.filter((e) => !e.voided).length;
-                    const countLabel =
-                      activeCount === g.entries.length ? `${activeCount} entries` : `${activeCount} of ${g.entries.length} entries`;
-                    const open = openGroups.has(g.key);
+                  {dateSections.map((section) => {
+                    const dayEntries = section.groups.flatMap((g) => g.entries);
+                    const dayActive = dayEntries.filter((e) => !e.voided).length;
                     return (
-                      <Fragment key={g.key}>
-                        <Table.Tr
-                          fw={600}
-                          bg="var(--mantine-color-gpGreen-light)"
-                          style={{ cursor: "pointer" }}
-                          onClick={() => toggleGroup(g.key)}
-                        >
-                          <Table.Td>{fmtDateOnly(first.harvest_date)}</Table.Td>
-                          <Table.Td>
-                            <Group gap={6} wrap="nowrap">
-                              {open ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-                              {first.product_name}
-                              <Badge size="xs" variant="light" color="gpGreen">
-                                {countLabel}
-                              </Badge>
-                            </Group>
-                          </Table.Td>
-                          <Table.Td ta="right">{weightSubtotal(g.entries)}</Table.Td>
-                          <Table.Td ta="right">{sumField(g.entries, "tray_count")}</Table.Td>
-                          <Table.Td ta="right">{sumField(g.entries, "discarded_tray_count") || "—"}</Table.Td>
-                          <Table.Td>
-                            <Group gap={6} wrap="nowrap">
-                              {first.product_lot_code_prefix && (
-                                <Badge size="xs" variant="outline" color="gray">
-                                  {first.product_lot_code_prefix}
-                                </Badge>
-                              )}
-                              {g.lotCode}
-                            </Group>
-                          </Table.Td>
-                          <Table.Td>
-                            <Tooltip label={by.title} disabled={!by.title.includes(",")}>
-                              <Text size="sm" fw={600} span>
-                                {by.label}
+                      <Fragment key={section.date}>
+                        <Table.Tr>
+                          <Table.Td colSpan={8} style={{ borderBottom: "2px solid var(--gp-border)" }} pt="md">
+                            <Group gap={8} wrap="nowrap">
+                              <Text fw={700} size="sm">
+                                {fmtDateOnly(section.date)}
                               </Text>
-                            </Tooltip>
+                              <Text size="xs" c="dimmed">
+                                {dayActive} entr{dayActive === 1 ? "y" : "ies"} · {weightSubtotal(dayEntries)}
+                              </Text>
+                            </Group>
                           </Table.Td>
-                          <Table.Td />
                         </Table.Tr>
-                        {open && g.entries.map((e) => entryRow(e, true))}
+                        {section.groups.map((g) => renderGroup(g))}
                       </Fragment>
                     );
                   })}
