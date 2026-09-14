@@ -15,8 +15,10 @@ import { Dropzone } from "@mantine/dropzone";
 import { IconArrowRight, IconCheck, IconDownload, IconUpload, IconX } from "@tabler/icons-react";
 import { useMe } from "@/api/me";
 import {
+  useCreateYieldEmployee,
   useCreateYieldProduct,
   useImportYieldEntries,
+  useYieldEmployees,
   useYieldEntries,
   useYieldProducts,
   type YieldUnit,
@@ -24,6 +26,7 @@ import {
 import { csvCell } from "@/components/DataGrid";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
+import { ApiError } from "@/lib/api";
 import { parseCsv } from "@/lib/csv";
 import { errorMessage } from "@/lib/errors";
 import { notifyError, notifySuccess } from "@/lib/notify";
@@ -55,6 +58,7 @@ type Resolution =
   | { kind: "ignore" };
 
 const CREATE_VALUE = "__create__";
+const HARVESTER_CREATE_VALUE = "__create_employee__";
 const VALID_UNITS: YieldUnit[] = ["oz", "lb", "g"];
 
 function normalizeHeader(s: string): string {
@@ -334,6 +338,8 @@ export function YieldsImportPage() {
   const products = useYieldProducts(true);
   const recent = useYieldEntries({});
   const createProduct = useCreateYieldProduct();
+  const employees = useYieldEmployees();
+  const createEmployee = useCreateYieldEmployee();
   const importEntries = useImportYieldEntries();
 
   const [file, setFile] = useState<File | null>(null);
@@ -351,6 +357,13 @@ export function YieldsImportPage() {
   // match it here too, for rows with no unit column of their own.
   const [unit, setUnit] = useState<YieldUnit>("oz");
   const [harvestedBy, setHarvestedBy] = useState("");
+  // True only after explicitly picking the synthetic "Add as new team
+  // member" option below — plain typing (even a name that happens to not
+  // match anyone) never creates a roster entry on its own, since this
+  // field doubles as a generic label ("Historical Import") as often as a
+  // real person's name, and roster additions should stay a deliberate
+  // choice, not a byproduct of typing a placeholder.
+  const [harvestedByIsNewEmployee, setHarvestedByIsNewEmployee] = useState(false);
   const [importing, setImporting] = useState(false);
   const [lastResult, setLastResult] = useState<{ created: number; duplicates: number } | null>(null);
 
@@ -467,6 +480,26 @@ export function YieldsImportPage() {
     [products.data],
   );
 
+  // Same "type it, pick a match or a synthetic create option" pattern as
+  // the product resolver above, for the batch-wide attribution field — but
+  // value === label (an employee's name), since harvested_by is free text
+  // with no FK, so "map" and "create" only differ in whether picking the
+  // option also adds a yield_employees row.
+  const employeeOptions = useMemo(
+    () => (employees.data ?? []).map((e) => ({ value: e.name, label: e.name })),
+    [employees.data],
+  );
+  const trimmedHarvestedBy = harvestedBy.trim();
+  const harvestedByExists = employeeOptions.some(
+    (e) => e.label.toLowerCase() === trimmedHarvestedBy.toLowerCase(),
+  );
+  const harvesterSelectData = [
+    ...(trimmedHarvestedBy && !harvestedByExists
+      ? [{ value: HARVESTER_CREATE_VALUE, label: trimmedHarvestedBy }]
+      : []),
+    ...employeeOptions,
+  ];
+
   // Keyed by lowercase name — the "already exists" check above (productNameSet)
   // is case-insensitive, so grouping unmatched rows case-sensitively would
   // split one real unmatched product into several undercounted entries (e.g.
@@ -516,6 +549,17 @@ export function YieldsImportPage() {
     if (!parsed || !canImport) return;
     setImporting(true);
     try {
+      if (harvestedByIsNewEmployee && trimmedHarvestedBy && !harvestedByExists) {
+        try {
+          await createEmployee.mutateAsync({ name: trimmedHarvestedBy });
+        } catch (e) {
+          // Someone else added the same name in the meantime — harmless
+          // here, harvested_by has no FK to the roster, so the entries
+          // below don't depend on this row existing. Anything else (a
+          // real failure) should still stop the import.
+          if (!(e instanceof ApiError && e.code === "name_taken")) throw e;
+        }
+      }
       const toCreate = unmatchedNames
         .map(({ key }) => ({ key, res: resolutions[key] }))
         .filter(
@@ -562,6 +606,7 @@ export function YieldsImportPage() {
       setFile(null);
       setParsed(null);
       setResolutions({});
+      setHarvestedByIsNewEmployee(false);
     } catch (e) {
       notifyError(e);
     } finally {
@@ -723,12 +768,40 @@ export function YieldsImportPage() {
                   allowDeselect={false}
                   w={220}
                 />
-                <TextInput
+                <Select
                   label="Attribute these entries to"
                   placeholder="e.g. Historical Import, or a name"
-                  value={harvestedBy}
-                  onChange={(e) => setHarvestedBy(e.currentTarget.value)}
                   description="Used for rows without their own harvester column"
+                  data={harvesterSelectData}
+                  searchValue={harvestedBy}
+                  onSearchChange={(v) => {
+                    setHarvestedBy(v);
+                    setHarvestedByIsNewEmployee(false);
+                  }}
+                  value={
+                    harvestedByIsNewEmployee
+                      ? HARVESTER_CREATE_VALUE
+                      : harvestedByExists
+                        ? trimmedHarvestedBy
+                        : null
+                  }
+                  onChange={(v) => {
+                    if (v == null) return;
+                    if (v === HARVESTER_CREATE_VALUE) {
+                      setHarvestedByIsNewEmployee(true);
+                    } else {
+                      setHarvestedBy(v);
+                      setHarvestedByIsNewEmployee(false);
+                    }
+                  }}
+                  renderOption={({ option }) =>
+                    option.value === HARVESTER_CREATE_VALUE ? (
+                      <Text size="sm">Add &quot;{option.label}&quot; as a new team member</Text>
+                    ) : (
+                      <Text size="sm">{option.label}</Text>
+                    )
+                  }
+                  searchable
                   w={320}
                 />
               </Group>
