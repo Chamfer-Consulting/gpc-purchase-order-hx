@@ -141,7 +141,9 @@ export function YieldsImportPage() {
   const [headerError, setHeaderError] = useState<string | null>(null);
   const [parsed, setParsed] = useState<ParsedRow[] | null>(null);
   const [resolutions, setResolutions] = useState<Record<string, Resolution>>({});
-  const [unit, setUnit] = useState<YieldUnit>("lb");
+  // oz is the app-wide default (HarvestEntryForm, the DB column default) —
+  // match it here too, for rows with no unit column of their own.
+  const [unit, setUnit] = useState<YieldUnit>("oz");
   const [harvestedBy, setHarvestedBy] = useState("");
   const [importing, setImporting] = useState(false);
   const [lastResult, setLastResult] = useState<{ created: number; duplicates: number } | null>(null);
@@ -509,7 +511,7 @@ export function YieldsImportPage() {
                     { value: "g", label: "g" },
                   ]}
                   value={unit}
-                  onChange={(v) => setUnit((v as YieldUnit) ?? "lb")}
+                  onChange={(v) => setUnit((v as YieldUnit) ?? "oz")}
                   allowDeselect={false}
                   w={220}
                 />
