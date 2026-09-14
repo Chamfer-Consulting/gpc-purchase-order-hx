@@ -144,6 +144,11 @@ CREATE INDEX IF NOT EXISTS idx_yield_products_active ON yield_products (active);
 -- lot_code_prefix (0017) — the CREATE TABLE above is a no-op on an
 -- already-existing table, so fix it directly too.
 ALTER TABLE yield_products ADD COLUMN IF NOT EXISTS lot_code_prefix TEXT;
+-- Case-insensitive uniqueness for name + lot_code_prefix (0019) — two
+-- products sharing a prefix would produce identical auto-generated lot
+-- codes on the same day, defeating the whole point of a traceability code.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_yield_products_name_lower ON yield_products (lower(name));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_yield_products_lot_prefix_lower ON yield_products (lower(lot_code_prefix));
 
 CREATE TABLE IF NOT EXISTS yield_product_sales_links (
     id                 SERIAL PRIMARY KEY,

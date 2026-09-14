@@ -124,6 +124,21 @@ class NameTaken(ApiProblem):
         super().__init__(f'"{name}" already exists.', name=name)
 
 
+class LotPrefixTaken(ApiProblem):
+    """A yield product's lot_code_prefix collided (case-insensitively) with
+    another product's — two products sharing a prefix would produce
+    identical auto-generated lot codes (prefix + date) on the same day,
+    defeating the point of a traceability code. 409."""
+
+    status = 409
+    code = "lot_prefix_taken"
+
+    def __init__(self, prefix: str) -> None:
+        super().__init__(
+            f'Lot code prefix "{prefix}" is already used by another product.', prefix=prefix
+        )
+
+
 class ImportFailed(ApiProblem):
     """A bulk import's single multi-row INSERT hit a DB constraint (bad
     product reference, invalid unit/weight) — surfaced as a clean 422

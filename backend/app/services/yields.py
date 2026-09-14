@@ -16,12 +16,22 @@ supabase/migrations/0014_yields.sql.
 from __future__ import annotations
 
 from datetime import date as _date
+from typing import NoReturn
 
 import psycopg2.errors
 import psycopg2.extras
 from business_tz import business_now  # shared/, via app.reuse
 
-from ..errors import AlreadyVoided, EmptyPatch, Forbidden, ImportFailed, InUse, NameTaken, NotFound
+from ..errors import (
+    AlreadyVoided,
+    EmptyPatch,
+    Forbidden,
+    ImportFailed,
+    InUse,
+    LotPrefixTaken,
+    NameTaken,
+    NotFound,
+)
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope
 from . import audit
 
@@ -39,6 +49,20 @@ _OZ_PER_UNIT_SQL = "CASE e.unit " + " ".join(
 GRAINS = ("week", "month", "quarter", "year")
 
 # --- products ----------------------------------------------------------------
+
+
+def _raise_product_unique_violation(exc: psycopg2.errors.UniqueViolation, *, name: str | None,
+                                     lot_code_prefix: str | None) -> NoReturn:
+    """yield_products has two case-insensitive unique indexes — on name
+    (0014, plus the case-insensitive one added in 0019) and on
+    lot_code_prefix (0019, closing a gap: two products sharing a prefix
+    would produce identical auto-generated lot codes on the same day).
+    Postgres reports the violated index's name in the exception's
+    diagnostics regardless of which of the two it was."""
+    constraint = getattr(exc.diag, "constraint_name", "") or ""
+    if "lot_prefix" in constraint:
+        raise LotPrefixTaken((lot_code_prefix or "").strip()) from exc
+    raise NameTaken((name or "").strip()) from exc
 
 
 def list_products(conn, *, include_inactive: bool = False) -> list[dict]:
@@ -75,10 +99,10 @@ def create_product(conn, name: str, notes: str | None = None, *, lot_code_prefix
         except psycopg2.errors.UniqueViolation as exc:
             # A real trigger path, not just theoretical: YieldsImportPage lets
             # an admin "+ Create" a product for each unmatched CSV name, and
-            # two concurrent imports (or a name differing only by casing that
-            # the client's own case-insensitive check missed) would otherwise
+            # two concurrent imports (or a name/prefix differing only by
+            # casing that the client's own check missed) would otherwise
             # 500 the whole import batch instead of failing just this row.
-            raise NameTaken(name) from exc
+            _raise_product_unique_violation(exc, name=name, lot_code_prefix=lot_code_prefix)
         row = dict(cur.fetchone())
     audit.log(conn, actor=actor, action="create", entity="yield_product", entity_id=row["id"], after=row)
     conn.commit()
@@ -115,11 +139,19 @@ def update_product(conn, product_id: int, patch: dict, *, actor: str | None = No
     sets.append("updated_at = now()")
     vals.append(product_id)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(
-            f"UPDATE yield_products SET {', '.join(sets)} WHERE id = %s "
-            "RETURNING id, name, active, notes, lot_code_prefix",
-            vals,
-        )
+        try:
+            cur.execute(
+                f"UPDATE yield_products SET {', '.join(sets)} WHERE id = %s "
+                "RETURNING id, name, active, notes, lot_code_prefix",
+                vals,
+            )
+        except psycopg2.errors.UniqueViolation as exc:
+            # Renaming a product, or changing its lot_code_prefix, to a value
+            # that collides with another product had no handling at all
+            # before — a raw 500 instead of this same clean 409.
+            _raise_product_unique_violation(
+                exc, name=patch.get("name"), lot_code_prefix=patch.get("lot_code_prefix"),
+            )
         row = cur.fetchone()
         if row is None:
             raise NotFound(f"yield product {product_id} not found")
