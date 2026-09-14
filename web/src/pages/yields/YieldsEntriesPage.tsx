@@ -100,7 +100,7 @@ export function YieldsEntriesPage() {
   };
 
   const entryRow = (e: YieldEntry, muted: boolean) => (
-    <Table.Tr key={e.id} bg={muted ? "var(--mantine-color-gray-0)" : undefined}>
+    <Table.Tr key={e.id} bg={muted ? "var(--gp-surface-sunken)" : undefined}>
       <Table.Td>{fmtDateOnly(e.harvest_date)}</Table.Td>
       <Table.Td>{e.product_name}</Table.Td>
       <Table.Td ta="right">
@@ -197,7 +197,7 @@ export function YieldsEntriesPage() {
                       activeCount === g.entries.length ? `${activeCount} entries` : `${activeCount} of ${g.entries.length} entries`;
                     return (
                       <Fragment key={g.key}>
-                        <Table.Tr fw={600} bg="var(--mantine-color-gpGreen-0)">
+                        <Table.Tr fw={600} bg="var(--mantine-color-gpGreen-light)">
                           <Table.Td>{fmtDateOnly(first.harvest_date)}</Table.Td>
                           <Table.Td>
                             <Group gap={6} wrap="nowrap">
