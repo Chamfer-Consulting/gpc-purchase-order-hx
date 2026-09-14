@@ -42,12 +42,24 @@ GRAINS = ("week", "month", "quarter", "year")
 
 
 def list_products(conn, *, include_inactive: bool = False) -> list[dict]:
+    """`has_notes` (not a DB column — computed here) flags a product that has
+    either an entry with its own free-text `notes`, or a yield_notes
+    observation tied to a lot_code any of its entries used. It's about
+    those two "did something worth remembering happen here" note sources,
+    not this table's own `notes` (a catalog description field) below."""
     where = "" if include_inactive else "WHERE active"
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
+            "SELECT DISTINCT yield_product_id FROM yield_entries WHERE notes IS NOT NULL "
+            "UNION "
+            "SELECT DISTINCT e.yield_product_id FROM yield_entries e "
+            "JOIN yield_notes n ON n.lot_code = e.lot_code WHERE n.lot_code IS NOT NULL",
+        )
+        has_notes_ids = {r["yield_product_id"] for r in cur.fetchall()}
+        cur.execute(
             f"SELECT id, name, active, notes, lot_code_prefix FROM yield_products {where} ORDER BY name",
         )
-        return [dict(r) for r in cur.fetchall()]
+        return [{**dict(r), "has_notes": r["id"] in has_notes_ids} for r in cur.fetchall()]
 
 
 def create_product(conn, name: str, notes: str | None = None, *, lot_code_prefix: str | None = None,
@@ -333,7 +345,8 @@ def import_entries(conn, rows: list[dict], *, actor: str) -> dict:
 
 def list_entries(conn, *, yield_product_id: int | None = None, date_from: _date | None = None,
                   date_to: _date | None = None, harvested_by: str | None = None,
-                  submitted_by: str | None = None, include_voided: bool = False) -> list[dict]:
+                  submitted_by: str | None = None, include_voided: bool = False,
+                  has_notes: bool = False) -> list[dict]:
     where: list[str] = [] if include_voided else ["NOT e.voided"]
     vals: list[object] = []
     if yield_product_id is not None:
@@ -353,6 +366,11 @@ def list_entries(conn, *, yield_product_id: int | None = None, date_from: _date 
         # check and the codebase's lower()-everywhere email convention.
         where.append("lower(e.submitted_by) = %s")
         vals.append(submitted_by.lower())
+    if has_notes:
+        # For the Notes page's merged feed — entries carry their own
+        # free-text notes (set in the harvest form / edit modal), separate
+        # from yield_notes' lot-tied grower observations.
+        where.append("e.notes IS NOT NULL")
     sql = ("SELECT e.*, p.name AS product_name, p.lot_code_prefix AS product_lot_code_prefix "
            "FROM yield_entries e JOIN yield_products p ON p.id = e.yield_product_id")
     if where:

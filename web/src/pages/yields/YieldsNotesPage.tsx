@@ -1,8 +1,21 @@
 import { useMemo, useState } from "react";
-import { ActionIcon, Alert, Autocomplete, Badge, Button, Group, Paper, Stack, Text, Textarea, TextInput } from "@mantine/core";
-import { IconTrash } from "@tabler/icons-react";
+import {
+  ActionIcon,
+  Alert,
+  Autocomplete,
+  Badge,
+  Button,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  Textarea,
+  TextInput,
+  Tooltip,
+} from "@mantine/core";
+import { IconPencil, IconTrash } from "@tabler/icons-react";
 import { useMe } from "@/api/me";
-import { useCreateYieldNote, useDeleteYieldNote, useYieldEntries, useYieldNotes } from "@/api/yields";
+import { useCreateYieldNote, useDeleteYieldNote, useYieldEntries, useYieldNotes, type YieldEntry } from "@/api/yields";
 import { EmptyState } from "@/components/EmptyState";
 import { QueryBoundary } from "@/components/ErrorState";
 import { PageLayout } from "@/components/PageLayout";
@@ -10,6 +23,7 @@ import { SectionCard } from "@/components/SectionCard";
 import { businessDaysAgo, businessToday, fmtDateOnly } from "@/lib/datetime";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { pageMeta } from "@/nav";
+import { EditEntryModal } from "./EditEntryModal";
 
 /** A note ties to a specific lot_code by default (the traceability case) —
  *  leave it blank for a general note not specific to any one lot. */
@@ -71,11 +85,52 @@ function AddNoteForm() {
   );
 }
 
+/** A single feed item is either a manually-added grower note, or a harvest
+ *  entry's own free-text `notes` field — the latter never showed up here
+ *  before, only inside that one entry's edit modal. Deleting only makes
+ *  sense for a real note row; an entry-derived item gets an "edit the
+ *  entry" action instead, via the same EditEntryModal the Entries table
+ *  uses. */
+type FeedItem =
+  | { kind: "note"; id: number; date: string; lotCode: string | null; submittedBy: string; text: string }
+  | {
+      kind: "entry";
+      entry: YieldEntry;
+      date: string;
+      lotCode: string | null;
+      submittedBy: string;
+      text: string;
+      productName: string;
+    };
+
 export function YieldsNotesPage() {
   const meta = pageMeta("/yields/notes");
   const { canAdmin, roleKnown } = useMe();
   const notes = useYieldNotes();
+  const entryNotes = useYieldEntries({ has_notes: true });
   const del = useDeleteYieldNote();
+  const [editingEntry, setEditingEntry] = useState<YieldEntry | null>(null);
+
+  const feed = useMemo<FeedItem[]>(() => {
+    const noteItems: FeedItem[] = (notes.data ?? []).map((n) => ({
+      kind: "note",
+      id: n.id,
+      date: n.note_date,
+      lotCode: n.lot_code,
+      submittedBy: n.submitted_by,
+      text: n.note,
+    }));
+    const entryItems: FeedItem[] = (entryNotes.data ?? []).map((e) => ({
+      kind: "entry",
+      entry: e,
+      date: e.harvest_date,
+      lotCode: e.lot_code,
+      submittedBy: e.harvested_by,
+      text: e.notes ?? "",
+      productName: e.product_name,
+    }));
+    return [...noteItems, ...entryItems].sort((a, b) => (a.date === b.date ? 0 : a.date > b.date ? -1 : 1));
+  }, [notes.data, entryNotes.data]);
 
   if (roleKnown && !canAdmin) {
     return (
@@ -103,50 +158,89 @@ export function YieldsNotesPage() {
       </SectionCard>
 
       <SectionCard title="Recent notes">
-        <QueryBoundary loading={notes.isLoading} error={notes.error} onRetry={() => void notes.refetch()}>
-          {!notes.data || notes.data.length === 0 ? (
+        <QueryBoundary
+          loading={notes.isLoading || entryNotes.isLoading}
+          error={notes.error ?? entryNotes.error}
+          onRetry={() => {
+            void notes.refetch();
+            void entryNotes.refetch();
+          }}
+        >
+          {feed.length === 0 ? (
             <EmptyState label="No notes yet" compact />
           ) : (
             <Stack gap="xs">
-              {notes.data.map((n) => (
-                <Paper key={n.id} withBorder radius="md" p="sm" bg="var(--gp-surface)">
+              {feed.map((item) => (
+                <Paper
+                  key={item.kind === "note" ? `note-${item.id}` : `entry-${item.entry.id}`}
+                  withBorder
+                  radius="md"
+                  p="sm"
+                  bg="var(--gp-surface)"
+                >
                   <Group justify="space-between" align="flex-start" wrap="nowrap">
                     <div style={{ minWidth: 0 }}>
                       <Group gap={6} mb={4}>
                         <Text size="xs" c="dimmed">
-                          {fmtDateOnly(n.note_date)}
+                          {fmtDateOnly(item.date)}
                         </Text>
-                        {n.lot_code ? (
-                          <Badge size="xs" variant="light" color="gpGreen">
-                            {n.lot_code}
-                          </Badge>
+                        {item.kind === "note" ? (
+                          item.lotCode ? (
+                            <Badge size="xs" variant="light" color="gpGreen">
+                              {item.lotCode}
+                            </Badge>
+                          ) : (
+                            <Badge size="xs" variant="light" color="gray">
+                              General
+                            </Badge>
+                          )
                         ) : (
-                          <Badge size="xs" variant="light" color="gray">
-                            General
-                          </Badge>
+                          <>
+                            {item.lotCode && (
+                              <Badge size="xs" variant="light" color="gpGreen">
+                                {item.lotCode}
+                              </Badge>
+                            )}
+                            <Badge size="xs" variant="outline" color="gray">
+                              {item.productName}
+                            </Badge>
+                          </>
                         )}
                         <Text size="xs" c="dimmed">
-                          · {n.submitted_by}
+                          · {item.submittedBy}
                         </Text>
                       </Group>
                       <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
-                        {n.note}
+                        {item.text}
                       </Text>
                     </div>
-                    <ActionIcon
-                      size="sm"
-                      variant="subtle"
-                      color="red"
-                      onClick={() =>
-                        del.mutate(n.id, {
-                          onSuccess: () => notifySuccess("Deleted."),
-                          onError: (e) => notifyError(e),
-                        })
-                      }
-                      aria-label="Delete note"
-                    >
-                      <IconTrash size={14} />
-                    </ActionIcon>
+                    {item.kind === "note" ? (
+                      <ActionIcon
+                        size="sm"
+                        variant="subtle"
+                        color="red"
+                        onClick={() =>
+                          del.mutate(item.id, {
+                            onSuccess: () => notifySuccess("Deleted."),
+                            onError: (e) => notifyError(e),
+                          })
+                        }
+                        aria-label="Delete note"
+                      >
+                        <IconTrash size={14} />
+                      </ActionIcon>
+                    ) : (
+                      <Tooltip label="Edit the harvest entry this note is on">
+                        <ActionIcon
+                          size="sm"
+                          variant="subtle"
+                          onClick={() => setEditingEntry(item.entry)}
+                          aria-label="Edit entry"
+                        >
+                          <IconPencil size={14} />
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
                   </Group>
                 </Paper>
               ))}
@@ -154,6 +248,8 @@ export function YieldsNotesPage() {
           )}
         </QueryBoundary>
       </SectionCard>
+
+      <EditEntryModal entry={editingEntry} onClose={() => setEditingEntry(null)} />
     </PageLayout>
   );
 }

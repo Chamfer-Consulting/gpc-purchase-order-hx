@@ -12,6 +12,7 @@ import {
   Table,
   Text,
   TextInput,
+  Tooltip,
 } from "@mantine/core";
 import {
   IconCheck,
@@ -275,6 +276,13 @@ function ProductRow({ product, canEdit }: { product: YieldProduct; canEdit: bool
                 <Badge size="xs" variant="light" color="gray">
                   {product.lot_code_prefix}
                 </Badge>
+              )}
+              {product.has_notes && (
+                <Tooltip label="Has an entry note or a grower observation on one of its lots">
+                  <Badge size="xs" variant="dot" color="gpGreen">
+                    Notes
+                  </Badge>
+                </Tooltip>
               )}
             </Group>
           )}

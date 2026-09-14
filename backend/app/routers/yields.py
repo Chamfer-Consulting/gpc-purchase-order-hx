@@ -194,6 +194,7 @@ def list_entries(
     harvested_by: str | None = None,
     submitted_by: str | None = None,
     include_voided: bool = False,
+    has_notes: bool = False,
     _: AuthedUser = Depends(current_user),
 ) -> list[dict]:
     with reused_conn() as conn:
@@ -205,6 +206,7 @@ def list_entries(
             harvested_by=harvested_by,
             submitted_by=submitted_by,
             include_voided=include_voided,
+            has_notes=has_notes,
         )
 
 

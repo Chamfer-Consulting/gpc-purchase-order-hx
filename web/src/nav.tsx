@@ -127,7 +127,7 @@ export const NAV_SECTIONS: NavSection[] = [
         label: "Notes",
         to: "/yields/notes",
         icon: IconNotes,
-        description: "Freeform growing observations, not tied to a specific harvest.",
+        description: "Grower observations, general or tied to a lot — plus any notes logged on an entry.",
         adminOnly: true,
       },
       {

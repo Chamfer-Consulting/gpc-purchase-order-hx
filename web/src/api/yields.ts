@@ -13,6 +13,11 @@ export interface YieldProduct {
   /** Short lot-code prefix (e.g. "TK") — the entry form auto-fills the lot
    *  code field with this for traceability, without retyping it every time. */
   lot_code_prefix: string | null;
+  /** Computed, not a DB column — true if any of this product's entries has
+   *  its own free-text notes, or shares a lot_code with a yield_notes
+   *  grower observation. Not related to `notes` above (a catalog
+   *  description field on the product itself). */
+  has_notes: boolean;
 }
 
 export interface YieldEntry {
@@ -44,6 +49,9 @@ export interface YieldEntryFilters {
   harvested_by?: string;
   submitted_by?: string;
   include_voided?: boolean;
+  /** Only entries with a non-empty own `notes` field — for the Notes
+   *  page's merged feed. */
+  has_notes?: boolean;
 }
 
 export interface YieldEntryIn {
@@ -66,11 +74,15 @@ export function useYieldProducts(includeInactive = false) {
   });
 }
 
+// create/update's RETURNING clause is yield_products alone — has_notes is
+// computed only by list_products' two-query join, so it's never on these.
+type YieldProductMutationResult = Omit<YieldProduct, "has_notes">;
+
 export function useCreateYieldProduct() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { name: string; notes?: string | null; lot_code_prefix?: string | null }) =>
-      apiSend<YieldProduct>("POST", "/api/yields/products", body),
+      apiSend<YieldProductMutationResult>("POST", "/api/yields/products", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-products"] }),
   });
 }
@@ -87,7 +99,7 @@ export function useUpdateYieldProduct() {
       active?: boolean;
       notes?: string | null;
       lot_code_prefix?: string | null;
-    }) => apiSend<YieldProduct>("POST", `/api/yields/products/${id}`, body),
+    }) => apiSend<YieldProductMutationResult>("POST", `/api/yields/products/${id}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["yield-products"] }),
   });
 }
