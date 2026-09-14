@@ -102,29 +102,85 @@ function parseUnitCell(raw: string): YieldUnit | null {
   return (VALID_UNITS as string[]).includes(s) ? (s as YieldUnit) : null;
 }
 
-/** Accepts "YYYY-MM-DD" or "M/D/YYYY" and returns ISO, but only for a date
- *  that actually exists — the regexes alone accept calendar-invalid values
- *  like month 13 or Feb 30 (which would then fail the backend's strict date
- *  parsing and 422 the *entire* import batch instead of just this row), so
- *  every candidate is round-tripped through Date.UTC to confirm it didn't
- *  get silently normalized (e.g. day 30 in April rolling over to May). */
-function parseDateCell(raw: string): string | null {
-  const s = raw.trim();
-  let y: number, mo: number, da: number;
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  const us = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (iso) {
-    [y, mo, da] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
-  } else if (us) {
-    [mo, da, y] = [Number(us[1]), Number(us[2]), Number(us[3])];
-  } else {
-    return null;
-  }
+const MONTH_NAMES: Record<string, number> = {
+  jan: 1, january: 1,
+  feb: 2, february: 2,
+  mar: 3, march: 3,
+  apr: 4, april: 4,
+  may: 5,
+  jun: 6, june: 6,
+  jul: 7, july: 7,
+  aug: 8, august: 8,
+  sep: 9, sept: 9, september: 9,
+  oct: 10, october: 10,
+  nov: 11, november: 11,
+  dec: 12, december: 12,
+};
+
+/** y/mo/da -> "YYYY-MM-DD", but only for a date that actually exists — a
+ *  regex alone accepts calendar-invalid values like month 13 or Feb 30
+ *  (which would then fail the backend's strict date parsing and 422 the
+ *  *entire* import batch instead of just this row), so every candidate is
+ *  round-tripped through Date.UTC to confirm it didn't get silently
+ *  normalized (e.g. day 30 in April rolling over to May). */
+function ymd(y: number, mo: number, da: number): string | null {
   if (mo < 1 || mo > 12 || da < 1 || da > 31) return null;
   const d = new Date(Date.UTC(y, mo - 1, da));
   if (d.getUTCFullYear() !== y || d.getUTCMonth() !== mo - 1 || d.getUTCDate() !== da) return null;
   const pad = (v: number) => String(v).padStart(2, "0");
   return `${y}-${pad(mo)}-${pad(da)}`;
+}
+
+/** Accepts the date-cell text Excel, Google Sheets, and Apple Numbers most
+ *  commonly produce when saved/exported as CSV:
+ *  - ISO "2026-01-05".
+ *  - Numeric "1/5/2026" or "1-5-2026" — this business is US-based, so an
+ *    ambiguous (day <= 12) numeric date is read month-first, matching all
+ *    three apps' default US-locale export. A day > 12 (unambiguously
+ *    day-first, e.g. a sheet exported under a DD/MM locale) is rejected
+ *    rather than silently reinterpreted — better a flagged row than a
+ *    wrong date shipped silently.
+ *  - A spelled-out month name — "Jan 5, 2026", "5 Jan 2026", "5-Jan-2026",
+ *    "January 5 2026" — unambiguous regardless of day/month order, so
+ *    these don't depend on the US-locale assumption above. Common Excel/
+ *    Numbers custom date formats (e.g. "d-mmm-yyyy").
+ *  - A bare integer, as a last resort — a date cell whose format got reset
+ *    to General before export leaks Excel's internal serial day-count
+ *    instead of text. Only accepted if it decodes to a plausible year, so
+ *    a stray number that isn't actually a date still gets rejected. */
+function parseDateCell(raw: string): string | null {
+  const s = raw.trim();
+  if (!s) return null;
+
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return ymd(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+
+  const numeric = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (numeric) return ymd(Number(numeric[3]), Number(numeric[1]), Number(numeric[2]));
+
+  const monthFirst = s.match(/^([A-Za-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})$/);
+  if (monthFirst) {
+    const mo = MONTH_NAMES[monthFirst[1].toLowerCase()];
+    if (mo) return ymd(Number(monthFirst[3]), mo, Number(monthFirst[2]));
+  }
+
+  const dayFirst = s.match(/^(\d{1,2})(?:st|nd|rd|th)?[\s-]+([A-Za-z]+)\.?[\s,-]+(\d{4})$/);
+  if (dayFirst) {
+    const mo = MONTH_NAMES[dayFirst[2].toLowerCase()];
+    if (mo) return ymd(Number(dayFirst[3]), mo, Number(dayFirst[1]));
+  }
+
+  if (/^\d{4,6}$/.test(s)) {
+    const serial = Number(s);
+    // Excel's day 0 is 1899-12-30 (not -12-31 or 1900-01-01) — the
+    // standard correction for its built-in "1900 was a leap year" bug,
+    // valid for every serial number past that fictitious Feb 29, 1900.
+    const d = new Date(Date.UTC(1899, 11, 30) + serial * 86_400_000);
+    const y = d.getUTCFullYear();
+    if (y >= 1970 && y <= 2200) return ymd(y, d.getUTCMonth() + 1, d.getUTCDate());
+  }
+
+  return null;
 }
 
 const PREVIEW_LIMIT = 50;
@@ -351,7 +407,7 @@ export function YieldsImportPage() {
     >
       <SectionCard
         title="Upload a CSV"
-        subtitle='Columns: "date" (YYYY-MM-DD or M/D/YYYY), "product", "weight" — plus optionally "unit", "trays", "harvester", and "lot_code".'
+        subtitle='Columns: "date" (accepts however Excel, Sheets, or Numbers exports it — e.g. "2026-01-05", "1/5/2026", or "5-Jan-2026"), "product", "weight" — plus optionally "unit", "trays", "harvester", and "lot_code".'
         actions={
           <Button
             size="xs"
