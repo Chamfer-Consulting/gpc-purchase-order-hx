@@ -40,7 +40,10 @@ interface ParsedRow {
   error: string | null;
 }
 
-type Resolution = { kind: "map"; productId: number } | { kind: "create" };
+// "create" carries its own editable `name` — defaults to the CSV's raw
+// name but the admin can retype it (e.g. CSV says "DiCicco", they want the
+// catalog entry to actually be "DiCicco Broccoli") before it's created.
+type Resolution = { kind: "map"; productId: number } | { kind: "create"; name: string };
 
 const CREATE_VALUE = "__create__";
 const VALID_UNITS: YieldUnit[] = ["oz", "lb", "g"];
@@ -336,7 +339,11 @@ export function YieldsImportPage() {
   const validCount = parsed ? parsed.filter((r) => !r.error).length : 0;
   const errorRows = parsed ? parsed.filter((r) => r.error) : [];
 
-  const allResolved = unmatchedNames.every((n) => resolutions[n.key] != null);
+  const allResolved = unmatchedNames.every((n) => {
+    const res = resolutions[n.key];
+    if (!res) return false;
+    return res.kind === "create" ? res.name.trim() !== "" : true;
+  });
   const canImport =
     !!parsed && !headerError && validCount > 0 && allResolved && harvestedBy.trim() !== "" && !importing;
 
@@ -344,9 +351,13 @@ export function YieldsImportPage() {
     if (!parsed || !canImport) return;
     setImporting(true);
     try {
-      const toCreate = unmatchedNames.filter(({ key }) => resolutions[key]?.kind === "create");
+      const toCreate = unmatchedNames
+        .map(({ key }) => ({ key, res: resolutions[key] }))
+        .filter(
+          (x): x is { key: string; res: Extract<Resolution, { kind: "create" }> } => x.res?.kind === "create",
+        );
       const createdProducts = await Promise.all(
-        toCreate.map(({ name }) => createProduct.mutateAsync({ name })),
+        toCreate.map(({ res }) => createProduct.mutateAsync({ name: res.name.trim() })),
       );
       const createdIds: Record<string, number> = {};
       toCreate.forEach(({ key }, i) => {
@@ -499,10 +510,7 @@ export function YieldsImportPage() {
                           </div>
                           <Select
                             placeholder="Map or create…"
-                            data={[
-                              { value: CREATE_VALUE, label: `+ Create "${name}"` },
-                              ...productOptions,
-                            ]}
+                            data={[{ value: CREATE_VALUE, label: "+ Create new product…" }, ...productOptions]}
                             value={
                               resolutions[key]?.kind === "map"
                                 ? String(resolutions[key].productId)
@@ -518,7 +526,7 @@ export function YieldsImportPage() {
                                   : {
                                       [key]:
                                         v === CREATE_VALUE
-                                          ? { kind: "create" }
+                                          ? { kind: "create", name }
                                           : { kind: "map", productId: Number(v) },
                                     }),
                               }))
@@ -528,6 +536,21 @@ export function YieldsImportPage() {
                             w={220}
                           />
                         </Group>
+                        {resolutions[key]?.kind === "create" && (
+                          <TextInput
+                            placeholder="Product name to create"
+                            description="Editable — the new catalog entry doesn't have to match the CSV text exactly"
+                            value={resolutions[key].name}
+                            onChange={(e) =>
+                              setResolutions((r) => ({
+                                ...r,
+                                [key]: { kind: "create", name: e.currentTarget.value },
+                              }))
+                            }
+                            size="xs"
+                            w={320}
+                          />
+                        )}
                         {suggestion && resolutions[key] == null && (
                           <Group gap={6} wrap="nowrap">
                             <Text size="xs" c="dimmed">
