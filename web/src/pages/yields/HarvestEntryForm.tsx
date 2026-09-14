@@ -12,7 +12,13 @@ import {
 } from "@mantine/core";
 import { IconCheck } from "@tabler/icons-react";
 import { useMe } from "@/api/me";
-import { useCreateYieldEntry, useYieldEmployees, useYieldProducts, type YieldUnit } from "@/api/yields";
+import {
+  HISTORICAL_HARVESTER_NAME,
+  useCreateYieldEntry,
+  useYieldEmployees,
+  useYieldProducts,
+  type YieldUnit,
+} from "@/api/yields";
 import { SectionCard } from "@/components/SectionCard";
 import { businessToday } from "@/lib/datetime";
 import { notifySuccess } from "@/lib/notify";
@@ -52,8 +58,14 @@ export function HarvestEntryForm() {
     () => (products.data ?? []).map((p) => ({ value: String(p.id), label: p.name })),
     [products.data],
   );
+  // "Historical Data" is a real roster entry (CSV import's default
+  // attribution for backfilled rows with no known harvester) but never a
+  // real person — nobody logging today's harvest should ever pick it.
   const employeeOptions = useMemo(
-    () => (employees.data ?? []).map((e) => e.name),
+    () =>
+      (employees.data ?? [])
+        .filter((e) => e.name !== HISTORICAL_HARVESTER_NAME)
+        .map((e) => e.name),
     [employees.data],
   );
 

@@ -5,6 +5,15 @@ import type { PageResponse } from "@/api/schema";
 export type YieldUnit = "oz" | "lb" | "g";
 export type YieldGrain = "week" | "month" | "quarter" | "year";
 
+/** The yield_employees roster entry CSV import defaults harvester
+ *  attribution to for historical backfills where the real harvester per
+ *  row isn't known. It's a real name in the roster (so past entries
+ *  attributed to it still display normally) but never a real person, so
+ *  the live "Log Harvest" picker (kiosk + office) excludes it — nobody
+ *  logging today's harvest should ever pick "who harvested this" as
+ *  Historical Data. */
+export const HISTORICAL_HARVESTER_NAME = "Historical Data";
+
 export interface YieldProduct {
   id: number;
   name: string;

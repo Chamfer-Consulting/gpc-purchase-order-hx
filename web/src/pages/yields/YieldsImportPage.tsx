@@ -15,6 +15,7 @@ import { Dropzone } from "@mantine/dropzone";
 import { IconArrowRight, IconCheck, IconDownload, IconUpload, IconX } from "@tabler/icons-react";
 import { useMe } from "@/api/me";
 import {
+  HISTORICAL_HARVESTER_NAME,
   useCreateYieldEmployee,
   useCreateYieldProduct,
   useImportYieldEntries,
@@ -356,13 +357,17 @@ export function YieldsImportPage() {
   // oz is the app-wide default (HarvestEntryForm, the DB column default) —
   // match it here too, for rows with no unit column of their own.
   const [unit, setUnit] = useState<YieldUnit>("oz");
-  const [harvestedBy, setHarvestedBy] = useState("");
+  // Defaults to the roster's own placeholder for "harvester unknown" —
+  // most historical backfills don't have one, and HarvestEntryForm
+  // excludes this exact name from its live picker so it only ever means
+  // "historical/unknown", never a real person.
+  const [harvestedBy, setHarvestedBy] = useState(HISTORICAL_HARVESTER_NAME);
   // True only after explicitly picking the synthetic "Add as new team
   // member" option below — plain typing (even a name that happens to not
   // match anyone) never creates a roster entry on its own, since this
-  // field doubles as a generic label ("Historical Import") as often as a
-  // real person's name, and roster additions should stay a deliberate
-  // choice, not a byproduct of typing a placeholder.
+  // field doubles as a generic label as often as a real person's name,
+  // and roster additions should stay a deliberate choice, not a byproduct
+  // of typing a placeholder.
   const [harvestedByIsNewEmployee, setHarvestedByIsNewEmployee] = useState(false);
   const [importing, setImporting] = useState(false);
   const [lastResult, setLastResult] = useState<{ created: number; duplicates: number } | null>(null);
@@ -770,7 +775,7 @@ export function YieldsImportPage() {
                 />
                 <Select
                   label="Attribute these entries to"
-                  placeholder="e.g. Historical Import, or a name"
+                  placeholder={`e.g. "${HISTORICAL_HARVESTER_NAME}", or a real name`}
                   description="Used for rows without their own harvester column"
                   data={harvesterSelectData}
                   searchValue={harvestedBy}
