@@ -1,5 +1,5 @@
-import { Fragment, useMemo, useState } from "react";
-import { ActionIcon, Badge, Group, Select, Table, Text, Tooltip } from "@mantine/core";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { ActionIcon, Badge, Group, Pagination, Select, Table, Text, Tooltip } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconPencil, IconTrash } from "@tabler/icons-react";
 import { useVoidYieldEntry, useYieldEntries, useYieldProducts, type YieldEntry, type YieldUnit } from "@/api/yields";
 import { PageLayout } from "@/components/PageLayout";
@@ -64,6 +64,8 @@ function bucketByDate(groups: EntryGroup[]): DateSection[] {
   return order.map((d) => map.get(d)!);
 }
 
+const DAYS_PER_PAGE = 10;
+
 const UNIT_ORDER: YieldUnit[] = ["lb", "oz", "g"];
 
 function weightSubtotal(entries: YieldEntry[]): string {
@@ -98,6 +100,7 @@ export function YieldsEntriesPage() {
   const voidEntry = useVoidYieldEntry();
   const [editing, setEditing] = useState<YieldEntry | null>(null);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(1);
   const meta = pageMeta("/yields/entries");
 
   const toggleGroup = (key: string) =>
@@ -114,6 +117,17 @@ export function YieldsEntriesPage() {
   );
   const groups = useMemo(() => groupEntries(entries.data ?? []), [entries.data]);
   const dateSections = useMemo(() => bucketByDate(groups), [groups]);
+  // Paginate by distinct harvest day, not by row — a page always shows whole
+  // days (never splits one day's entries across two pages).
+  const totalPages = Math.max(1, Math.ceil(dateSections.length / DAYS_PER_PAGE));
+  const pageSections = dateSections.slice((page - 1) * DAYS_PER_PAGE, page * DAYS_PER_PAGE);
+
+  useEffect(() => {
+    setPage(1);
+  }, [productId]);
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const askVoid = (entry: YieldEntry) => {
     promptReason({
@@ -275,7 +289,7 @@ export function YieldsEntriesPage() {
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {dateSections.map((section) => {
+                  {pageSections.map((section) => {
                     const dayEntries = section.groups.flatMap((g) => g.entries);
                     const dayActive = dayEntries.filter((e) => !e.voided).length;
                     return (
@@ -299,6 +313,11 @@ export function YieldsEntriesPage() {
                 </Table.Tbody>
               </Table>
             </Table.ScrollContainer>
+          )}
+          {totalPages > 1 && (
+            <Group justify="center" mt="md">
+              <Pagination total={totalPages} value={page} onChange={setPage} size="sm" />
+            </Group>
           )}
         </QueryBoundary>
       </SectionCard>
