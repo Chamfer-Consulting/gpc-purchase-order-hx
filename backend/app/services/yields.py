@@ -21,7 +21,7 @@ import psycopg2.errors
 import psycopg2.extras
 from business_tz import business_now  # shared/, via app.reuse
 
-from ..errors import AlreadyVoided, Forbidden, InUse, NameTaken, NotFound
+from ..errors import AlreadyVoided, EmptyPatch, Forbidden, ImportFailed, InUse, NameTaken, NotFound
 from ..schemas import Chart, ChartSeries, Kpi, PageResponse, Scope
 from . import audit
 
@@ -74,6 +74,9 @@ def create_product(conn, name: str, notes: str | None = None, *, lot_code_prefix
 
 
 _PRODUCT_PATCH_FIELDS = {"name", "active", "notes", "lot_code_prefix"}
+# Only these two are nullable at the DB level — name and active are both
+# NOT NULL, so an explicit `None` for either is dropped rather than applied.
+_PRODUCT_NULLABLE_FIELDS = {"notes", "lot_code_prefix"}
 
 
 def update_product(conn, product_id: int, patch: dict, *, actor: str | None = None) -> dict:
@@ -81,25 +84,22 @@ def update_product(conn, product_id: int, patch: dict, *, actor: str | None = No
     notes/lot_code_prefix are nullable and clearable — an explicit `None` for
     either must survive (that's how the admin clears them in
     YieldsAdminPage), unlike the old per-kwarg version which filtered on
-    `is not None` and could never actually clear either field. `name` is
-    NOT NULL at the DB level, so an explicit `None` there (no current caller
-    sends one) is dropped instead of attempting an integrity-violating
-    UPDATE."""
+    `is not None` and could never actually clear either field."""
     sets: list[str] = []
     vals: list[object] = []
     for k, v in patch.items():
         if k not in _PRODUCT_PATCH_FIELDS:
             continue
+        if v is None and k not in _PRODUCT_NULLABLE_FIELDS:
+            continue
         if k == "name":
-            if v is None:
-                continue
             v = v.strip()
         elif k == "lot_code_prefix" and v is not None:
             v = v.strip() or None
         sets.append(f"{k} = %s")
         vals.append(v)
     if not sets:
-        raise ValueError("nothing to update")
+        raise EmptyPatch()
     sets.append("updated_at = now()")
     vals.append(product_id)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -163,12 +163,17 @@ def create_link(conn, yield_product_id: int, sales_product_name: str, *, actor: 
     rather than erroring on the UNIQUE(yield_product_id, sales_product_name)."""
     name = sales_product_name.strip()
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(
-            "INSERT INTO yield_product_sales_links (yield_product_id, sales_product_name) "
-            "VALUES (%s, %s) ON CONFLICT (yield_product_id, sales_product_name) DO NOTHING "
-            "RETURNING id, yield_product_id, sales_product_name",
-            (yield_product_id, name),
-        )
+        try:
+            cur.execute(
+                "INSERT INTO yield_product_sales_links (yield_product_id, sales_product_name) "
+                "VALUES (%s, %s) ON CONFLICT (yield_product_id, sales_product_name) DO NOTHING "
+                "RETURNING id, yield_product_id, sales_product_name",
+                (yield_product_id, name),
+            )
+        except psycopg2.errors.ForeignKeyViolation as exc:
+            # yield_product_id was deleted (e.g. in another tab) between the
+            # admin picker loading and this submit.
+            raise NotFound(f"yield product {yield_product_id} not found") from exc
         row = cur.fetchone()
         if row is None:
             cur.execute(
@@ -187,8 +192,9 @@ def delete_link(conn, link_id: int, *, actor: str | None = None) -> None:
     with conn.cursor() as cur:
         cur.execute("DELETE FROM yield_product_sales_links WHERE id = %s", (link_id,))
         gone = cur.rowcount
-    if gone:
-        audit.log(conn, actor=actor, action="delete", entity="yield_link", entity_id=link_id)
+    if not gone:
+        raise NotFound(f"yield link {link_id} not found")
+    audit.log(conn, actor=actor, action="delete", entity="yield_link", entity_id=link_id)
     conn.commit()
 
 
@@ -304,13 +310,20 @@ def import_entries(conn, rows: list[dict], *, actor: str) -> dict:
     created = 0
     if to_insert:
         with conn.cursor() as cur:
-            psycopg2.extras.execute_values(
-                cur,
-                "INSERT INTO yield_entries "
-                "(yield_product_id, harvest_date, weight, unit, lot_code, harvested_by, submitted_by) "
-                "VALUES %s",
-                to_insert,
-            )
+            try:
+                psycopg2.extras.execute_values(
+                    cur,
+                    "INSERT INTO yield_entries "
+                    "(yield_product_id, harvest_date, weight, unit, lot_code, harvested_by, submitted_by) "
+                    "VALUES %s",
+                    to_insert,
+                )
+            except psycopg2.errors.IntegrityError as exc:
+                # One multi-row INSERT, one transaction — a single bad row (a
+                # product deleted by another admin mid-import, a value that
+                # slips past the frontend's own validation) would otherwise
+                # 500 the whole batch instead of a clean, actionable error.
+                raise ImportFailed() from exc
         created = len(to_insert)
         audit.log(conn, actor=actor, action="import", entity="yield_entry", entity_id=None,
                   after={"count": created, "skipped_duplicates": skipped_duplicates})
@@ -376,16 +389,22 @@ _ENTRY_PATCH_FIELDS = {
     "weight", "unit", "tray_count", "discarded_tray_count",
     "lot_code", "harvested_by", "notes", "harvest_date",
 }
+# Only these two are nullable at the DB level (yield_entries.lot_code/notes
+# have no NOT NULL) — every other patchable field does, so an explicit
+# `None` for one of those must be dropped rather than applied, or the
+# UPDATE hits a NotNullViolation and 500s.
+_ENTRY_NULLABLE_FIELDS = {"lot_code", "notes"}
 
 
 def update_entry(conn, entry_id: int, patch: dict, *, actor: str | None, actor_role: str) -> dict:
     """`patch` is already `model_dump(exclude_unset=True)`'d by the router, so
     every key present here was explicitly sent by the caller — including an
     explicit `None` for the nullable columns (lot_code, notes), which is how
-    the Edit modal clears them. Don't drop `None` values: a caller that
+    the Edit modal clears them. Don't drop those `None`s: a caller that
     wanted a field left alone simply wouldn't include the key at all."""
     row = _assert_can_touch(conn, entry_id, actor=actor, actor_role=actor_role)
-    if actor_role == "field" and patch.get("harvest_date", row["harvest_date"]) != row["harvest_date"]:
+    new_harvest_date = patch.get("harvest_date")
+    if actor_role == "field" and new_harvest_date is not None and new_harvest_date != row["harvest_date"]:
         # _assert_can_touch only verified the entry's *current* harvest_date is
         # today — without this, a field-role caller could move their own entry
         # to a different day in the same request and escape the same-day
@@ -394,16 +413,28 @@ def update_entry(conn, entry_id: int, patch: dict, *, actor: str | None, actor_r
     sets: list[str] = []
     vals: list[object] = []
     for k, v in patch.items():
-        if k in _ENTRY_PATCH_FIELDS:
-            sets.append(f"{k} = %s")
-            vals.append(v)
+        if k not in _ENTRY_PATCH_FIELDS:
+            continue
+        if v is None and k not in _ENTRY_NULLABLE_FIELDS:
+            continue
+        sets.append(f"{k} = %s")
+        vals.append(v)
     if not sets:
-        raise ValueError("nothing to update")
+        raise EmptyPatch()
     sets.append("updated_at = now()")
     vals.append(entry_id)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(f"UPDATE yield_entries SET {', '.join(sets)} WHERE id = %s RETURNING *", vals)
-        row = _entry_row(dict(cur.fetchone()))
+        # `AND NOT voided` makes this atomic against a concurrent void: without
+        # it, two near-simultaneous requests (an edit racing a void) could both
+        # pass _assert_can_touch's earlier read before either write commits.
+        cur.execute(
+            f"UPDATE yield_entries SET {', '.join(sets)} WHERE id = %s AND NOT voided RETURNING *",
+            vals,
+        )
+        updated = cur.fetchone()
+        if updated is None:
+            raise AlreadyVoided()
+        row = _entry_row(dict(updated))
     audit.log(conn, actor=actor, action="edit", entity="yield_entry", entity_id=entry_id, after=row)
     conn.commit()
     return row
@@ -412,12 +443,19 @@ def update_entry(conn, entry_id: int, patch: dict, *, actor: str | None, actor_r
 def void_entry(conn, entry_id: int, reason: str | None, *, actor: str | None, actor_role: str) -> dict:
     _assert_can_touch(conn, entry_id, actor=actor, actor_role=actor_role)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        # `AND NOT voided` closes the same race as update_entry's — two
+        # near-simultaneous void requests could otherwise both pass
+        # _assert_can_touch's read and both write (the second silently
+        # overwriting the first's void_reason).
         cur.execute(
             "UPDATE yield_entries SET voided = TRUE, void_reason = %s, updated_at = now() "
-            "WHERE id = %s RETURNING *",
+            "WHERE id = %s AND NOT voided RETURNING *",
             (reason, entry_id),
         )
-        row = _entry_row(dict(cur.fetchone()))
+        updated = cur.fetchone()
+        if updated is None:
+            raise AlreadyVoided()
+        row = _entry_row(dict(updated))
     audit.log(conn, actor=actor, action="void", entity="yield_entry", entity_id=entry_id, after=row)
     conn.commit()
     return row
@@ -583,8 +621,9 @@ def delete_note(conn, note_id: int, *, actor: str | None = None) -> None:
     with conn.cursor() as cur:
         cur.execute("DELETE FROM yield_notes WHERE id = %s", (note_id,))
         gone = cur.rowcount
-    if gone:
-        audit.log(conn, actor=actor, action="delete", entity="yield_note", entity_id=note_id)
+    if not gone:
+        raise NotFound(f"yield note {note_id} not found")
+    audit.log(conn, actor=actor, action="delete", entity="yield_note", entity_id=note_id)
     conn.commit()
 
 
@@ -629,7 +668,7 @@ def update_employee(conn, employee_id: int, *, name: str | None = None, active: 
         sets.append("active = %s")
         vals.append(active)
     if not sets:
-        raise ValueError("nothing to update")
+        raise EmptyPatch()
     sets.append("updated_at = now()")
     vals.append(employee_id)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:

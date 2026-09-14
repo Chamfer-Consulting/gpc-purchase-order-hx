@@ -11,6 +11,7 @@ import {
   TextInput,
 } from "@mantine/core";
 import { IconCheck } from "@tabler/icons-react";
+import { useMe } from "@/api/me";
 import { useCreateYieldEntry, useYieldEmployees, useYieldProducts, type YieldUnit } from "@/api/yields";
 import { SectionCard } from "@/components/SectionCard";
 import { businessToday } from "@/lib/datetime";
@@ -24,9 +25,17 @@ import { errorMessage } from "@/lib/errors";
  *  office "Log harvest" page (YieldsLogPage) — same form either way, just a
  *  different chrome around it. */
 export function HarvestEntryForm() {
+  const { role } = useMe();
   const products = useYieldProducts();
   const employees = useYieldEmployees();
   const create = useCreateYieldEntry();
+  // A 'field' (kiosk) account can only edit/void its own *same-day* entries
+  // (backend: _assert_can_touch) — so letting them freely change the date on
+  // create risks a mis-tap silently logging to yesterday, invisible in "My
+  // recent entries" and then unfixable from the kiosk (the same-day check
+  // would reject the correction too). Lock the field to today for that role;
+  // the office "Log harvest" page (editor/admin) still needs to backfill.
+  const dateLocked = role === "field";
 
   const [productId, setProductId] = useState<string | null>(null);
   const [date, setDate] = useState(businessToday());
@@ -147,9 +156,11 @@ export function HarvestEntryForm() {
           <TextInput
             type="date"
             label="Harvest date"
+            description={dateLocked ? "Kiosk entries always log to today" : undefined}
             value={date}
             onChange={(e) => handleDateChange(e.currentTarget.value)}
             size="md"
+            disabled={dateLocked}
           />
           <Group grow align="flex-end">
             <NumberInput

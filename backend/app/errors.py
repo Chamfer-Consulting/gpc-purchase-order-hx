@@ -124,6 +124,34 @@ class NameTaken(ApiProblem):
         super().__init__(f'"{name}" already exists.', name=name)
 
 
+class ImportFailed(ApiProblem):
+    """A bulk import's single multi-row INSERT hit a DB constraint (bad
+    product reference, invalid unit/weight) — surfaced as a clean 422
+    instead of an opaque 500. The whole batch is one transaction, so nothing
+    was inserted; re-check the file and retry. 422."""
+
+    status = 422
+    code = "import_failed"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Import failed — one or more rows had an invalid value or referenced a product that "
+            "no longer exists. Nothing was imported; fix the file and try again."
+        )
+
+
+class EmptyPatch(ApiProblem):
+    """A PATCH-style request had no recognized fields to apply — a bare
+    `raise ValueError` here would 500 via main.py's generic handler instead
+    of a clean 422 like every other validation failure. 422."""
+
+    status = 422
+    code = "empty_patch"
+
+    def __init__(self) -> None:
+        super().__init__("Nothing to update.")
+
+
 class Forbidden(ApiProblem):
     """The signed-in user's role can't perform this action. 403."""
 
