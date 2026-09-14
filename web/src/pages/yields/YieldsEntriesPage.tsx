@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from "react";
 import { ActionIcon, Badge, Group, Select, Table, Text, Tooltip } from "@mantine/core";
-import { IconPencil, IconTrash } from "@tabler/icons-react";
+import { IconChevronDown, IconChevronRight, IconPencil, IconTrash } from "@tabler/icons-react";
 import { useVoidYieldEntry, useYieldEntries, useYieldProducts, type YieldEntry, type YieldUnit } from "@/api/yields";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
@@ -73,7 +73,16 @@ export function YieldsEntriesPage() {
   });
   const voidEntry = useVoidYieldEntry();
   const [editing, setEditing] = useState<YieldEntry | null>(null);
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const meta = pageMeta("/yields/entries");
+
+  const toggleGroup = (key: string) =>
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const productOptions = useMemo(
     () => (products.data ?? []).map((p) => ({ value: String(p.id), label: p.name })),
@@ -195,12 +204,19 @@ export function YieldsEntriesPage() {
                     const activeCount = g.entries.filter((e) => !e.voided).length;
                     const countLabel =
                       activeCount === g.entries.length ? `${activeCount} entries` : `${activeCount} of ${g.entries.length} entries`;
+                    const open = openGroups.has(g.key);
                     return (
                       <Fragment key={g.key}>
-                        <Table.Tr fw={600} bg="var(--mantine-color-gpGreen-light)">
+                        <Table.Tr
+                          fw={600}
+                          bg="var(--mantine-color-gpGreen-light)"
+                          style={{ cursor: "pointer" }}
+                          onClick={() => toggleGroup(g.key)}
+                        >
                           <Table.Td>{fmtDateOnly(first.harvest_date)}</Table.Td>
                           <Table.Td>
                             <Group gap={6} wrap="nowrap">
+                              {open ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
                               {first.product_name}
                               <Badge size="xs" variant="light" color="gpGreen">
                                 {countLabel}
@@ -229,7 +245,7 @@ export function YieldsEntriesPage() {
                           </Table.Td>
                           <Table.Td />
                         </Table.Tr>
-                        {g.entries.map((e) => entryRow(e, true))}
+                        {open && g.entries.map((e) => entryRow(e, true))}
                       </Fragment>
                     );
                   })}
