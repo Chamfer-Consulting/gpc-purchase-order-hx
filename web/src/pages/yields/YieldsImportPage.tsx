@@ -3,6 +3,7 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   Group,
   Select,
   Stack,
@@ -40,17 +41,20 @@ interface ParsedRow {
   error: string | null;
 }
 
-// "create" carries its own editable `name` — defaults to the CSV's raw
-// name but the admin can retype it (e.g. CSV says "DiCicco", they want the
-// catalog entry to actually be "DiCicco Broccoli") before it's created.
-// "ignore" drops every row with this name from the import entirely —
-// resolveProductId returns null for it, same as an unresolved name, and
-// the entries list already filters those out; the only difference is
-// "ignore" counts as resolved, so it doesn't block the import.
-type Resolution = { kind: "map"; productId: number } | { kind: "create"; name: string } | { kind: "ignore" };
+// "create" carries its own editable `name` — typed directly into the same
+// map/create combobox rather than a separate always-visible text field —
+// plus an optional `lotCodePrefix` for the new catalog entry (same field
+// Products admin sets via update_product). "ignore" drops every row with
+// this name from the import entirely — resolveProductId returns null for
+// it, same as an unresolved name, and the entries list already filters
+// those out; the only difference is "ignore" counts as resolved, so it
+// doesn't block the import.
+type Resolution =
+  | { kind: "map"; productId: number }
+  | { kind: "create"; name: string; lotCodePrefix: string }
+  | { kind: "ignore" };
 
 const CREATE_VALUE = "__create__";
-const IGNORE_VALUE = "__ignore__";
 const VALID_UNITS: YieldUnit[] = ["oz", "lb", "g"];
 
 function normalizeHeader(s: string): string {
@@ -193,6 +197,137 @@ function parseDateCell(raw: string): string | null {
 
 const PREVIEW_LIMIT = 50;
 
+/** One row of the "Resolve unmatched products" list — a single searchable
+ *  combobox doubles as both map-to-existing and create-new: type a name,
+ *  pick a matching product to map to it, or pick the synthetic "+ Create"
+ *  entry (only offered when nothing matches) to create a new product
+ *  under whatever's currently typed — no separate always-visible "name to
+ *  create" field. Nothing is resolved just by typing; an explicit pick
+ *  from the dropdown (or the ignore checkbox) is still required. */
+function UnmatchedProductRow({
+  entry,
+  count,
+  resolution,
+  onResolve,
+  productOptions,
+}: {
+  entry: { key: string; name: string; suggestion: { id: number; name: string } | null };
+  count: number;
+  resolution: Resolution | undefined;
+  onResolve: (key: string, res: Resolution | undefined) => void;
+  productOptions: { value: string; label: string }[];
+}) {
+  const { key, name, suggestion } = entry;
+  const [searchValue, setSearchValue] = useState(
+    resolution?.kind === "map"
+      ? productOptions.find((p) => p.value === String(resolution.productId))?.label ?? name
+      : resolution?.kind === "create"
+        ? resolution.name
+        : name,
+  );
+
+  const trimmed = searchValue.trim();
+  const exactMatch = productOptions.find((p) => p.label.toLowerCase() === trimmed.toLowerCase());
+  const selectData = [
+    ...(trimmed && !exactMatch ? [{ value: CREATE_VALUE, label: trimmed }] : []),
+    ...productOptions,
+  ];
+  const ignoring = resolution?.kind === "ignore";
+
+  const handleSelect = (v: string | null) => {
+    if (v == null) return;
+    if (v === CREATE_VALUE) {
+      onResolve(key, { kind: "create", name: trimmed, lotCodePrefix: "" });
+    } else {
+      const picked = productOptions.find((p) => p.value === v);
+      setSearchValue(picked?.label ?? "");
+      onResolve(key, { kind: "map", productId: Number(v) });
+    }
+  };
+
+  return (
+    <Stack gap={4}>
+      <Group wrap="nowrap" gap="sm" align="flex-start">
+        <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+          <Text size="sm" fw={500} truncate>
+            {name}
+          </Text>
+          <Text size="xs" c="dimmed">
+            {count} row{count === 1 ? "" : "s"}
+          </Text>
+        </div>
+        <Select
+          placeholder="Type to map or create…"
+          data={selectData}
+          searchValue={searchValue}
+          onSearchChange={setSearchValue}
+          value={
+            resolution?.kind === "map"
+              ? String(resolution.productId)
+              : resolution?.kind === "create"
+                ? CREATE_VALUE
+                : null
+          }
+          onChange={handleSelect}
+          renderOption={({ option }) =>
+            option.value === CREATE_VALUE ? (
+              <Text size="sm">Create &quot;{option.label}&quot;</Text>
+            ) : (
+              <Text size="sm">{option.label}</Text>
+            )
+          }
+          searchable
+          disabled={ignoring}
+          size="xs"
+          w={240}
+        />
+        <Checkbox
+          label="Ignore"
+          checked={ignoring}
+          onChange={(e) => onResolve(key, e.currentTarget.checked ? { kind: "ignore" } : undefined)}
+        />
+      </Group>
+      {ignoring && (
+        <Text size="xs" c="dimmed">
+          {count} row{count === 1 ? "" : "s"} will be skipped, not imported.
+        </Text>
+      )}
+      {resolution?.kind === "create" && (
+        <TextInput
+          label="Lot code prefix"
+          placeholder="e.g. DCB"
+          description="Optional — short traceability code for the new product"
+          value={resolution.lotCodePrefix}
+          onChange={(e) => onResolve(key, { ...resolution, lotCodePrefix: e.currentTarget.value })}
+          size="xs"
+          w={220}
+        />
+      )}
+      {suggestion && !resolution && (
+        <Group gap={6} wrap="nowrap">
+          <Text size="xs" c="dimmed">
+            Possible spelling mistake — did you mean
+          </Text>
+          <IconArrowRight size={12} style={{ opacity: 0.6 }} />
+          <Badge size="xs" variant="light" color="gpGreen">
+            {suggestion.name}
+          </Badge>
+          <Button
+            size="compact-xs"
+            variant="subtle"
+            onClick={() => {
+              setSearchValue(suggestion.name);
+              onResolve(key, { kind: "map", productId: suggestion.id });
+            }}
+          >
+            Use this
+          </Button>
+        </Group>
+      )}
+    </Stack>
+  );
+}
+
 export function YieldsImportPage() {
   const meta = pageMeta("/yields/import");
   const { canAdmin, roleKnown } = useMe();
@@ -205,6 +340,13 @@ export function YieldsImportPage() {
   const [headerError, setHeaderError] = useState<string | null>(null);
   const [parsed, setParsed] = useState<ParsedRow[] | null>(null);
   const [resolutions, setResolutions] = useState<Record<string, Resolution>>({});
+  const resolve = (key: string, res: Resolution | undefined) =>
+    setResolutions((r) => {
+      const next = { ...r };
+      if (res === undefined) delete next[key];
+      else next[key] = res;
+      return next;
+    });
   // oz is the app-wide default (HarvestEntryForm, the DB column default) —
   // match it here too, for rows with no unit column of their own.
   const [unit, setUnit] = useState<YieldUnit>("oz");
@@ -380,7 +522,12 @@ export function YieldsImportPage() {
           (x): x is { key: string; res: Extract<Resolution, { kind: "create" }> } => x.res?.kind === "create",
         );
       const createdProducts = await Promise.all(
-        toCreate.map(({ res }) => createProduct.mutateAsync({ name: res.name.trim() })),
+        toCreate.map(({ res }) =>
+          createProduct.mutateAsync({
+            name: res.name.trim(),
+            lot_code_prefix: res.lotCodePrefix.trim() || null,
+          }),
+        ),
       );
       const createdIds: Record<string, number> = {};
       toCreate.forEach(({ key }, i) => {
@@ -548,97 +695,15 @@ export function YieldsImportPage() {
                   subtitle="These names don't match anything in your product catalog yet — map each to an existing product, create a new one, or ignore its rows to leave them out of the import. Nothing is added automatically."
                 >
                   <Stack gap="sm">
-                    {unmatchedNames.map(({ key, name, suggestion }) => (
-                      <Stack key={key} gap={4}>
-                        <Group justify="space-between" wrap="nowrap" gap="sm">
-                          <div style={{ minWidth: 0, flex: "1 1 auto" }}>
-                            <Text size="sm" fw={500} truncate>
-                              {name}
-                            </Text>
-                            <Text size="xs" c="dimmed">
-                              {countFor(key)} row{countFor(key) === 1 ? "" : "s"}
-                            </Text>
-                          </div>
-                          <Select
-                            placeholder="Map, create, or ignore…"
-                            data={[
-                              { value: CREATE_VALUE, label: "+ Create new product…" },
-                              { value: IGNORE_VALUE, label: "Ignore these rows" },
-                              ...productOptions,
-                            ]}
-                            value={
-                              resolutions[key]?.kind === "map"
-                                ? String(resolutions[key].productId)
-                                : resolutions[key]?.kind === "create"
-                                  ? CREATE_VALUE
-                                  : resolutions[key]?.kind === "ignore"
-                                    ? IGNORE_VALUE
-                                    : null
-                            }
-                            onChange={(v) =>
-                              setResolutions((r) => ({
-                                ...r,
-                                ...(v == null
-                                  ? {}
-                                  : {
-                                      [key]:
-                                        v === CREATE_VALUE
-                                          ? { kind: "create", name }
-                                          : v === IGNORE_VALUE
-                                            ? { kind: "ignore" }
-                                            : { kind: "map", productId: Number(v) },
-                                    }),
-                              }))
-                            }
-                            searchable
-                            size="xs"
-                            w={220}
-                          />
-                        </Group>
-                        {resolutions[key]?.kind === "ignore" && (
-                          <Text size="xs" c="dimmed">
-                            {countFor(key)} row{countFor(key) === 1 ? "" : "s"} will be skipped, not imported.
-                          </Text>
-                        )}
-                        {resolutions[key]?.kind === "create" && (
-                          <TextInput
-                            placeholder="Product name to create"
-                            description="Editable — the new catalog entry doesn't have to match the CSV text exactly"
-                            value={resolutions[key].name}
-                            onChange={(e) =>
-                              setResolutions((r) => ({
-                                ...r,
-                                [key]: { kind: "create", name: e.currentTarget.value },
-                              }))
-                            }
-                            size="xs"
-                            w={320}
-                          />
-                        )}
-                        {suggestion && resolutions[key] == null && (
-                          <Group gap={6} wrap="nowrap">
-                            <Text size="xs" c="dimmed">
-                              Possible spelling mistake — did you mean
-                            </Text>
-                            <IconArrowRight size={12} style={{ opacity: 0.6 }} />
-                            <Badge size="xs" variant="light" color="gpGreen">
-                              {suggestion.name}
-                            </Badge>
-                            <Button
-                              size="compact-xs"
-                              variant="subtle"
-                              onClick={() =>
-                                setResolutions((r) => ({
-                                  ...r,
-                                  [key]: { kind: "map", productId: suggestion.id },
-                                }))
-                              }
-                            >
-                              Use this
-                            </Button>
-                          </Group>
-                        )}
-                      </Stack>
+                    {unmatchedNames.map((entry) => (
+                      <UnmatchedProductRow
+                        key={entry.key}
+                        entry={entry}
+                        count={countFor(entry.key)}
+                        resolution={resolutions[entry.key]}
+                        onResolve={resolve}
+                        productOptions={productOptions}
+                      />
                     ))}
                   </Stack>
                 </SectionCard>
