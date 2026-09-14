@@ -43,9 +43,14 @@ interface ParsedRow {
 // "create" carries its own editable `name` — defaults to the CSV's raw
 // name but the admin can retype it (e.g. CSV says "DiCicco", they want the
 // catalog entry to actually be "DiCicco Broccoli") before it's created.
-type Resolution = { kind: "map"; productId: number } | { kind: "create"; name: string };
+// "ignore" drops every row with this name from the import entirely —
+// resolveProductId returns null for it, same as an unresolved name, and
+// the entries list already filters those out; the only difference is
+// "ignore" counts as resolved, so it doesn't block the import.
+type Resolution = { kind: "map"; productId: number } | { kind: "create"; name: string } | { kind: "ignore" };
 
 const CREATE_VALUE = "__create__";
+const IGNORE_VALUE = "__ignore__";
 const VALID_UNITS: YieldUnit[] = ["oz", "lb", "g"];
 
 function normalizeHeader(s: string): string {
@@ -336,7 +341,15 @@ export function YieldsImportPage() {
 
   const countFor = (key: string) => parsed?.filter((r) => r.product.toLowerCase() === key).length ?? 0;
 
+  const ignoredKeys = useMemo(
+    () => new Set(unmatchedNames.filter(({ key }) => resolutions[key]?.kind === "ignore").map(({ key }) => key)),
+    [unmatchedNames, resolutions],
+  );
   const validCount = parsed ? parsed.filter((r) => !r.error).length : 0;
+  const ignoredCount = parsed
+    ? parsed.filter((r) => !r.error && ignoredKeys.has(r.product.toLowerCase())).length
+    : 0;
+  const importCount = validCount - ignoredCount;
   const errorRows = parsed ? parsed.filter((r) => r.error) : [];
 
   const allResolved = unmatchedNames.every((n) => {
@@ -345,7 +358,7 @@ export function YieldsImportPage() {
     return res.kind === "create" ? res.name.trim() !== "" : true;
   });
   const canImport =
-    !!parsed && !headerError && validCount > 0 && allResolved && harvestedBy.trim() !== "" && !importing;
+    !!parsed && !headerError && importCount > 0 && allResolved && harvestedBy.trim() !== "" && !importing;
 
   const handleImport = async () => {
     if (!parsed || !canImport) return;
@@ -469,7 +482,12 @@ export function YieldsImportPage() {
                 </Badge>
                 {errorRows.length > 0 && (
                   <Badge variant="light" color="red">
-                    {errorRows.length} skipped
+                    {errorRows.length} skipped (error)
+                  </Badge>
+                )}
+                {ignoredCount > 0 && (
+                  <Badge variant="light" color="gray">
+                    {ignoredCount} skipped (ignored product)
                   </Badge>
                 )}
               </Group>
@@ -494,7 +512,7 @@ export function YieldsImportPage() {
               {unmatchedNames.length > 0 && (
                 <SectionCard
                   title="Resolve unmatched products"
-                  subtitle="These names don't match anything in your product catalog yet — map each to an existing product or create a new one. Nothing is added automatically."
+                  subtitle="These names don't match anything in your product catalog yet — map each to an existing product, create a new one, or ignore its rows to leave them out of the import. Nothing is added automatically."
                 >
                   <Stack gap="sm">
                     {unmatchedNames.map(({ key, name, suggestion }) => (
@@ -509,14 +527,20 @@ export function YieldsImportPage() {
                             </Text>
                           </div>
                           <Select
-                            placeholder="Map or create…"
-                            data={[{ value: CREATE_VALUE, label: "+ Create new product…" }, ...productOptions]}
+                            placeholder="Map, create, or ignore…"
+                            data={[
+                              { value: CREATE_VALUE, label: "+ Create new product…" },
+                              { value: IGNORE_VALUE, label: "Ignore these rows" },
+                              ...productOptions,
+                            ]}
                             value={
                               resolutions[key]?.kind === "map"
                                 ? String(resolutions[key].productId)
                                 : resolutions[key]?.kind === "create"
                                   ? CREATE_VALUE
-                                  : null
+                                  : resolutions[key]?.kind === "ignore"
+                                    ? IGNORE_VALUE
+                                    : null
                             }
                             onChange={(v) =>
                               setResolutions((r) => ({
@@ -527,7 +551,9 @@ export function YieldsImportPage() {
                                       [key]:
                                         v === CREATE_VALUE
                                           ? { kind: "create", name }
-                                          : { kind: "map", productId: Number(v) },
+                                          : v === IGNORE_VALUE
+                                            ? { kind: "ignore" }
+                                            : { kind: "map", productId: Number(v) },
                                     }),
                               }))
                             }
@@ -536,6 +562,11 @@ export function YieldsImportPage() {
                             w={220}
                           />
                         </Group>
+                        {resolutions[key]?.kind === "ignore" && (
+                          <Text size="xs" c="dimmed">
+                            {countFor(key)} row{countFor(key) === 1 ? "" : "s"} will be skipped, not imported.
+                          </Text>
+                        )}
                         {resolutions[key]?.kind === "create" && (
                           <TextInput
                             placeholder="Product name to create"
@@ -622,19 +653,31 @@ export function YieldsImportPage() {
                       {parsed
                         .filter((r) => !r.error)
                         .slice(0, PREVIEW_LIMIT)
-                        .map((r) => (
-                          <Table.Tr key={r.rowNum}>
-                            <Table.Td>{r.rowNum}</Table.Td>
-                            <Table.Td>{r.date}</Table.Td>
-                            <Table.Td>{r.product}</Table.Td>
-                            <Table.Td ta="right">
-                              {r.weight} {r.unit ?? unit}
-                            </Table.Td>
-                            <Table.Td ta="right">{r.trayCount ?? 0}</Table.Td>
-                            <Table.Td>{r.harvestedBy ?? (harvestedBy.trim() || "—")}</Table.Td>
-                            <Table.Td>{r.lotCode ?? "—"}</Table.Td>
-                          </Table.Tr>
-                        ))}
+                        .map((r) => {
+                          const skipped = ignoredKeys.has(r.product.toLowerCase());
+                          return (
+                            <Table.Tr key={r.rowNum} bg={skipped ? "var(--gp-surface-sunken)" : undefined}>
+                              <Table.Td>{r.rowNum}</Table.Td>
+                              <Table.Td>{r.date}</Table.Td>
+                              <Table.Td>
+                                <Group gap={6} wrap="nowrap">
+                                  {r.product}
+                                  {skipped && (
+                                    <Badge size="xs" variant="light" color="gray">
+                                      skipped
+                                    </Badge>
+                                  )}
+                                </Group>
+                              </Table.Td>
+                              <Table.Td ta="right">
+                                {r.weight} {r.unit ?? unit}
+                              </Table.Td>
+                              <Table.Td ta="right">{r.trayCount ?? 0}</Table.Td>
+                              <Table.Td>{r.harvestedBy ?? (harvestedBy.trim() || "—")}</Table.Td>
+                              <Table.Td>{r.lotCode ?? "—"}</Table.Td>
+                            </Table.Tr>
+                          );
+                        })}
                     </Table.Tbody>
                   </Table>
                   {validCount > PREVIEW_LIMIT && (
@@ -649,7 +692,7 @@ export function YieldsImportPage() {
 
               <Group justify="flex-end">
                 <Button loading={importing} disabled={!canImport} onClick={handleImport}>
-                  Import {validCount} entr{validCount === 1 ? "y" : "ies"}
+                  Import {importCount} entr{importCount === 1 ? "y" : "ies"}
                 </Button>
               </Group>
             </>
