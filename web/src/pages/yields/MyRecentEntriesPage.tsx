@@ -52,14 +52,12 @@ export function MyRecentEntriesPage() {
 
   return (
     <Stack gap="lg">
-      <div>
-        <Text fw={700} fz={22}>
-          Today's entries
-        </Text>
-        <Text size="sm" c="dimmed">
-          Everything logged from this device today. Made a mistake? Void it and log it again.
-        </Text>
-      </div>
+      {/* No page title here — the kiosk shell's tab bar already reads
+       *  "Recent entries" for the active tab, and every line saved here is
+       *  one more the no-scroll shell doesn't have to fit a scrollbar for. */}
+      <Text size="sm" c="dimmed">
+        Everything logged from this device today. Made a mistake? Void it and log it again.
+      </Text>
 
       <QueryBoundary loading={isLoading} error={error} onRetry={() => void refetch()}>
         {!data || data.length === 0 ? (

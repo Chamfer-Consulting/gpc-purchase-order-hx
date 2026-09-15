@@ -17,13 +17,20 @@ const TABS = [
  * tablet, not a desk. See web/src/App.tsx's RoleRouter for how this replaces
  * AppShell entirely for 'field' accounts (a security boundary lives in the
  * backend's router-level role floor, not here — this is UX only).
+ *
+ * Fixed to the device's exact viewport height (100dvh — the *dynamic*
+ * viewport unit, so a mobile browser showing/hiding its own address bar
+ * doesn't leave a sliver of dead space or double-scroll) with the brand
+ * header and tab bar pinned via flex — only the content area beneath them
+ * scrolls, and only if a given page's content genuinely doesn't fit. The
+ * chrome (and critically, "which tab am I on") is never lost to scrolling.
  */
 export function KioskShell({ children }: { children: ReactNode }) {
   const { session, signOut } = useAuth();
 
   return (
-    <Box mih="100vh" bg="var(--gp-page)">
-      <Box bg="var(--gp-canopy)" py="sm" px={{ base: "sm", sm: "lg" }}>
+    <Box h="100dvh" bg="var(--gp-page)" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <Box bg="var(--gp-canopy)" py="sm" px={{ base: "sm", sm: "lg" }} style={{ flexShrink: 0 }}>
         <Group justify="space-between" wrap="nowrap">
           <Brand size={30} onDark markOnly />
           <Group gap="xs" wrap="nowrap">
@@ -54,7 +61,7 @@ export function KioskShell({ children }: { children: ReactNode }) {
         )}
       </Box>
 
-      <Group gap={0} px={{ base: "sm", sm: "lg" }} pt="sm" wrap="nowrap">
+      <Group gap={0} px={{ base: "sm", sm: "lg" }} pt="sm" wrap="nowrap" style={{ flexShrink: 0 }}>
         {TABS.map((t) => {
           const Icon = t.icon;
           return (
@@ -69,7 +76,12 @@ export function KioskShell({ children }: { children: ReactNode }) {
                 padding: "14px 8px",
                 fontWeight: 650,
                 fontSize: 15,
-                color: isActive ? "var(--gp-canopy)" : "var(--gp-ink-muted)",
+                // --gp-canopy is a *background* token (the dark header bar) —
+                // in dark mode it's the same near-black as --gp-page, so using
+                // it as the active tab's text color made the label invisible
+                // there (identical to the page behind it). --gp-ink is the
+                // correct text-ink token, dark-mode-aware on both sides.
+                color: isActive ? "var(--gp-ink)" : "var(--gp-ink-muted)",
                 borderBottom: `3px solid ${isActive ? "var(--gp-accent)" : "transparent"}`,
               })}
             >
@@ -82,7 +94,13 @@ export function KioskShell({ children }: { children: ReactNode }) {
         })}
       </Group>
 
-      <Box p={{ base: "sm", sm: "lg" }} maw={720} mx="auto">
+      <Box
+        p={{ base: "sm", sm: "lg" }}
+        maw={720}
+        mx="auto"
+        w="100%"
+        style={{ flex: 1, overflowY: "auto", minHeight: 0 }}
+      >
         {children}
       </Box>
     </Box>

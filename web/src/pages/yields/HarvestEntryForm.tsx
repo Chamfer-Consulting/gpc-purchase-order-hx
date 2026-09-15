@@ -157,7 +157,7 @@ export function HarvestEntryForm() {
         </Alert>
       )}
 
-      <SectionCard title="Harvest">
+      <SectionCard>
         <Stack gap="xl">
           <Select
             label="Product"
