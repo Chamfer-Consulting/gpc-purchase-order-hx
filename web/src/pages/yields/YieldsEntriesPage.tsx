@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ActionIcon, Badge, Group, Pagination, Select, Table, Text, Tooltip } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconNotes, IconPencil, IconTrash } from "@tabler/icons-react";
 import { useVoidYieldEntry, useYieldEntries, useYieldProducts, type YieldEntry, type YieldUnit } from "@/api/yields";
@@ -134,12 +134,26 @@ export function YieldsEntriesPage() {
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
+  // Auto-expand only applies before the user has touched a day, or when
+  // the day they had open drops out of view entirely (e.g. a product
+  // filter change). It must NOT re-fire just because a deliberate collapse
+  // set expandedDate to null — otherwise closing the open day snaps it
+  // right back open, since null would otherwise look identical to
+  // "nothing auto-expanded yet".
+  const hasInteractedRef = useRef(false);
   useEffect(() => {
-    const stillValid = expandedDate != null && dateSections.some((s) => s.date === expandedDate);
-    if (!stillValid && dateSections.length > 0) setExpandedDate(dateSections[0].date);
+    if (dateSections.length === 0) return;
+    if (!hasInteractedRef.current) {
+      setExpandedDate(dateSections[0].date);
+    } else if (expandedDate != null && !dateSections.some((s) => s.date === expandedDate)) {
+      setExpandedDate(dateSections[0].date);
+    }
   }, [dateSections, expandedDate]);
 
-  const toggleDate = (date: string) => setExpandedDate((current) => (current === date ? null : date));
+  const toggleDate = (date: string) => {
+    hasInteractedRef.current = true;
+    setExpandedDate((current) => (current === date ? null : date));
+  };
 
   const askVoid = (entry: YieldEntry) => {
     promptReason({
