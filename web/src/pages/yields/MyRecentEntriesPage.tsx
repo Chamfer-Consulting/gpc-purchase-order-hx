@@ -65,12 +65,14 @@ export function MyRecentEntriesPage() {
         {!data || data.length === 0 ? (
           <EmptyState label="Nothing logged yet today" />
         ) : (
-          <Stack gap="sm">
+          <Stack gap="md">
             {data.map((e) => (
-              <Card key={e.id} withBorder radius="md" p="md" bg="var(--gp-surface)">
-                <Group justify="space-between" align="flex-start" wrap="nowrap">
+              <Card key={e.id} withBorder radius="md" p="lg" bg="var(--gp-surface)">
+                <Group justify="space-between" align="flex-start" wrap="wrap" gap="md">
                   <div>
-                    <Text fw={650}>{e.product_name}</Text>
+                    <Text fw={650} fz="lg">
+                      {e.product_name}
+                    </Text>
                     <Text size="sm" c="dimmed">
                       {e.weight} {e.unit} · {e.tray_count} tray{e.tray_count === 1 ? "" : "s"}
                       {e.discarded_tray_count > 0 && ` · ${e.discarded_tray_count} discarded`}
@@ -87,20 +89,20 @@ export function MyRecentEntriesPage() {
                       </Badge>
                     </Group>
                   </div>
-                  <Group gap="xs" wrap="nowrap">
+                  <Group gap="sm" wrap="nowrap">
                     <Button
-                      size="xs"
-                      variant="subtle"
-                      leftSection={<IconPencil size={14} />}
+                      size="md"
+                      variant="light"
+                      leftSection={<IconPencil size={16} />}
                       onClick={() => setEditing(e)}
                     >
                       Edit
                     </Button>
                     <Button
-                      size="xs"
+                      size="md"
                       color="red"
-                      variant="subtle"
-                      leftSection={<IconTrash size={14} />}
+                      variant="light"
+                      leftSection={<IconTrash size={16} />}
                       onClick={() => askVoid(e.id, e.product_name)}
                     >
                       Void

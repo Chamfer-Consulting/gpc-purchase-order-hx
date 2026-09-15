@@ -12,6 +12,7 @@ import {
   Textarea,
   TextInput,
 } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import { errorMessage } from "@/lib/errors";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { useUpdateYieldEntry, useYieldEmployees, type YieldEntry, type YieldUnit } from "@/api/yields";
@@ -59,18 +60,26 @@ function EditEntryForm({ entry, employees, onClose }: {
   };
 
   return (
-    <Stack gap="md">
+    <Stack gap="lg">
       <Text size="sm" c="dimmed">
         {entry.product_name}
       </Text>
-      <TextInput type="date" label="Harvest date" value={date} onChange={(e) => setDate(e.currentTarget.value)} />
-      <Group grow align="flex-end">
+      <TextInput
+        type="date"
+        label="Harvest date"
+        value={date}
+        onChange={(e) => setDate(e.currentTarget.value)}
+        size="lg"
+      />
+      <Group grow align="flex-end" gap="md">
         <NumberInput
           label="Weight"
           value={weight}
           onChange={(v) => setWeight(v === "" ? "" : Number(v))}
           min={0}
           decimalScale={2}
+          inputMode="decimal"
+          size="lg"
           required
         />
         <SegmentedControl
@@ -81,15 +90,18 @@ function EditEntryForm({ entry, employees, onClose }: {
             { value: "lb", label: "lb" },
             { value: "g", label: "g" },
           ]}
+          size="lg"
         />
       </Group>
-      <Group grow>
+      <Group grow gap="md">
         <NumberInput
           label="Trays harvested"
           description="Number of trays in bin"
           value={trayCount}
           onChange={(v) => setTrayCount(v === "" ? "" : Number(v))}
           min={0}
+          inputMode="numeric"
+          size="lg"
         />
         <NumberInput
           label="Trays discarded"
@@ -97,26 +109,41 @@ function EditEntryForm({ entry, employees, onClose }: {
           value={discardedTrayCount}
           onChange={(v) => setDiscardedTrayCount(v === "" ? "" : Number(v))}
           min={0}
+          inputMode="numeric"
+          size="lg"
         />
       </Group>
-      <TextInput label="Lot code" value={lotCode} onChange={(e) => setLotCode(e.currentTarget.value)} />
+      <TextInput
+        label="Lot code"
+        value={lotCode}
+        onChange={(e) => setLotCode(e.currentTarget.value)}
+        size="lg"
+      />
       <Select
         label="Harvested by"
         data={employees}
         value={harvestedBy || null}
         onChange={(v) => setHarvestedBy(v ?? "")}
         searchable
+        size="lg"
         required
       />
-      <Textarea label="Notes" value={notes} onChange={(e) => setNotes(e.currentTarget.value)} autosize minRows={2} />
+      <Textarea
+        label="Notes"
+        value={notes}
+        onChange={(e) => setNotes(e.currentTarget.value)}
+        autosize
+        minRows={2}
+        size="lg"
+      />
 
       {update.error && <Alert color="red">{errorMessage(update.error)}</Alert>}
 
-      <Group justify="flex-end">
-        <Button variant="default" onClick={onClose}>
+      <Group justify="flex-end" gap="md">
+        <Button size="lg" variant="default" onClick={onClose}>
           Cancel
         </Button>
-        <Button loading={update.isPending} disabled={!canSave} onClick={save}>
+        <Button size="lg" loading={update.isPending} disabled={!canSave} onClick={save}>
           Save
         </Button>
       </Group>
@@ -131,9 +158,18 @@ function EditEntryForm({ entry, employees, onClose }: {
 export function EditEntryModal({ entry, onClose }: { entry: YieldEntry | null; onClose: () => void }) {
   const employees = useYieldEmployees();
   const employeeOptions = useMemo(() => (employees.data ?? []).map((e) => e.name), [employees.data]);
+  // Full-screen on a phone-width viewport — the now-larger touch-friendly
+  // fields inside would otherwise feel cramped in a fixed-width modal.
+  const fullScreen = useMediaQuery("(max-width: 48em)");
 
   return (
-    <Modal opened={entry != null} onClose={onClose} title="Edit harvest entry" size="md">
+    <Modal
+      opened={entry != null}
+      onClose={onClose}
+      title="Edit harvest entry"
+      size="lg"
+      fullScreen={fullScreen}
+    >
       {entry && <EditEntryForm key={entry.id} entry={entry} employees={employeeOptions} onClose={onClose} />}
     </Modal>
   );

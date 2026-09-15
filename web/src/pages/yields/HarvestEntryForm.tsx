@@ -53,6 +53,10 @@ export function HarvestEntryForm() {
   const [harvestedBy, setHarvestedBy] = useState("");
   const [notes, setNotes] = useState("");
   const [justLogged, setJustLogged] = useState(false);
+  // Product/unit/worker persist across submits for a packing run's several
+  // entries in a row (see the file doc comment) — jump focus straight back
+  // to Weight after each one so that rhythm doesn't need a tap in between.
+  const weightInputRef = useRef<HTMLInputElement>(null);
 
   const productOptions = useMemo(
     () => (products.data ?? []).map((p) => ({ value: String(p.id), label: p.name })),
@@ -126,6 +130,7 @@ export function HarvestEntryForm() {
           setDiscardedTrayCount(0);
           setNotes("");
           setJustLogged(true);
+          weightInputRef.current?.focus();
           setTimeout(() => setJustLogged(false), 2500);
         },
       },
@@ -153,7 +158,7 @@ export function HarvestEntryForm() {
       )}
 
       <SectionCard title="Harvest">
-        <Stack gap="md">
+        <Stack gap="xl">
           <Select
             label="Product"
             placeholder="Choose a crop"
@@ -161,7 +166,7 @@ export function HarvestEntryForm() {
             value={productId}
             onChange={handleProductChange}
             searchable
-            size="md"
+            size="lg"
             disabled={products.isLoading}
             required
           />
@@ -171,17 +176,19 @@ export function HarvestEntryForm() {
             description={dateLocked ? "Kiosk entries always log to today" : undefined}
             value={date}
             onChange={(e) => handleDateChange(e.currentTarget.value)}
-            size="md"
+            size="lg"
             disabled={dateLocked}
           />
-          <Group grow align="flex-end">
+          <Group grow align="flex-end" gap="md">
             <NumberInput
+              ref={weightInputRef}
               label="Weight"
               value={weight}
               onChange={(v) => setWeight(v === "" ? "" : Number(v))}
               min={0}
               decimalScale={2}
-              size="md"
+              inputMode="decimal"
+              size="lg"
               required
             />
             <SegmentedControl
@@ -192,17 +199,18 @@ export function HarvestEntryForm() {
                 { value: "lb", label: "lb" },
                 { value: "g", label: "g" },
               ]}
-              size="md"
+              size="lg"
             />
           </Group>
-          <Group grow>
+          <Group grow gap="md">
             <NumberInput
               label="Trays harvested"
               description="Number of trays in bin"
               value={trayCount}
               onChange={(v) => setTrayCount(v === "" ? "" : Number(v))}
               min={0}
-              size="md"
+              inputMode="numeric"
+              size="lg"
             />
             <NumberInput
               label="Trays discarded"
@@ -210,14 +218,15 @@ export function HarvestEntryForm() {
               value={discardedTrayCount}
               onChange={(v) => setDiscardedTrayCount(v === "" ? "" : Number(v))}
               min={0}
-              size="md"
+              inputMode="numeric"
+              size="lg"
             />
           </Group>
           <TextInput
             label="Lot code"
             value={lotCode}
             onChange={(e) => handleLotCodeChange(e.currentTarget.value)}
-            size="md"
+            size="lg"
           />
           <Select
             label="Harvested by"
@@ -226,7 +235,7 @@ export function HarvestEntryForm() {
             value={harvestedBy || null}
             onChange={(v) => setHarvestedBy(v ?? "")}
             searchable
-            size="md"
+            size="lg"
             disabled={employees.isLoading}
             required
           />
@@ -236,11 +245,12 @@ export function HarvestEntryForm() {
             onChange={(e) => setNotes(e.currentTarget.value)}
             autosize
             minRows={2}
+            size="lg"
           />
 
           {create.error && <Alert color="red">{errorMessage(create.error)}</Alert>}
 
-          <Button size="lg" loading={create.isPending} disabled={!canSubmit} onClick={submit}>
+          <Button size="xl" loading={create.isPending} disabled={!canSubmit} onClick={submit}>
             Log harvest
           </Button>
         </Stack>
