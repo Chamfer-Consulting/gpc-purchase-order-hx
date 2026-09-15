@@ -253,6 +253,30 @@ def sales_product_names(conn) -> list[str]:
     return [r["name"] for r in settings_svc.list_products(conn) if not r["hidden"]]
 
 
+def list_mixes(conn) -> list[dict]:
+    """Sales SKUs fed by more than one yield product (e.g. "Rainbow Mix" =
+    Broccoli + Kale + Radish + Mustard, via yield_product_sales_links) —
+    the Trends page's "mix" picker, to see a blend's collective total
+    plus each crop's own breakdown together. A sales name linked to only
+    one yield product isn't a real mix; picking that one product directly
+    on the existing filter already does the same thing, so it's excluded
+    here rather than listed redundantly."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT l.sales_product_name AS name,
+                   array_agg(p.id ORDER BY p.name) AS yield_product_ids,
+                   array_agg(p.name ORDER BY p.name) AS product_names
+            FROM yield_product_sales_links l
+            JOIN yield_products p ON p.id = l.yield_product_id
+            GROUP BY l.sales_product_name
+            HAVING count(*) > 1
+            ORDER BY l.sales_product_name
+            """
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
 # --- entries -------------------------------------------------------------
 
 
@@ -573,8 +597,21 @@ def trends(conn, *, date_from: _date | None, date_to: _date | None,
 
     # One line per selected product when the caller filtered to specific ones
     # (otherwise a busy multi-crop chart is more confusing than useful) — else
-    # a single "All products" total.
-    if yield_product_ids:
+    # a single "All products" total. When more than one product is in view
+    # (e.g. every yield product feeding a blend sales SKU like "Rainbow
+    # Mix", picked via the mix selector below), a "Total" series comes
+    # first — the collective figure — with each product's own line still
+    # broken out right alongside it, rather than forcing a choice between
+    # the combined number and the per-crop detail.
+    if yield_product_ids and len(by_product) > 1:
+        weight_series = [
+            ChartSeries(name="Total", data=[round(total_by_period[p], 1) for p in periods]),
+            *(
+                ChartSeries(name=name, data=[round(vals[p], 1) for p in periods])
+                for name, vals in sorted(by_product.items())
+            ),
+        ]
+    elif yield_product_ids:
         weight_series = [
             ChartSeries(name=name, data=[round(vals[p], 1) for p in periods])
             for name, vals in sorted(by_product.items())

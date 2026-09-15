@@ -1,7 +1,16 @@
 import { useMemo } from "react";
-import { Group, MultiSelect, SegmentedControl, SimpleGrid, Stack, TextInput, useComputedColorScheme } from "@mantine/core";
+import {
+  Group,
+  MultiSelect,
+  Select,
+  SegmentedControl,
+  SimpleGrid,
+  Stack,
+  TextInput,
+  useComputedColorScheme,
+} from "@mantine/core";
 import type { ChartSpec, Kpi } from "@/api/schema";
-import { useYieldProducts, useYieldTrends, type YieldGrain } from "@/api/yields";
+import { useYieldMixes, useYieldProducts, useYieldTrends, type YieldGrain } from "@/api/yields";
 import { barOption, lineOption } from "@/charts/options";
 import { Chart } from "@/charts/Chart";
 import { paletteFor } from "@/charts/theme";
@@ -37,6 +46,7 @@ const GRAIN_OPTIONS = [
 export function YieldsTrendsPage() {
   const { filters, setFilters } = useYieldFilters();
   const products = useYieldProducts();
+  const mixes = useYieldMixes();
   const meta = pageMeta("/yields");
   const palette = paletteFor(useComputedColorScheme("light"));
 
@@ -53,11 +63,28 @@ export function YieldsTrendsPage() {
     [products.data],
   );
 
+  const mixOptions = useMemo(
+    () => (mixes.data ?? []).map((m) => ({ value: m.name, label: m.name })),
+    [mixes.data],
+  );
+  // Controlled purely by comparison, not its own state — reflects "Rainbow
+  // Mix" as selected only while the Products filter still exactly matches
+  // that blend's full set, and clears itself the moment the admin tweaks
+  // the individual selection away from it (add/remove a crop).
+  const selectedMixName = useMemo(() => {
+    const current = new Set(filters.productIds);
+    const match = (mixes.data ?? []).find(
+      (m) => m.yield_product_ids.length === current.size && m.yield_product_ids.every((id) => current.has(id)),
+    );
+    return match?.name ?? null;
+  }, [mixes.data, filters.productIds]);
+
   const exportScope = [
     filters.dateFrom && filters.dateTo ? `${filters.dateFrom} – ${filters.dateTo}` : "All time",
-    filters.productIds.length
-      ? `${filters.productIds.length} product${filters.productIds.length > 1 ? "s" : ""}`
-      : null,
+    selectedMixName ??
+      (filters.productIds.length
+        ? `${filters.productIds.length} product${filters.productIds.length > 1 ? "s" : ""}`
+        : null),
   ]
     .filter(Boolean)
     .join("  ·  ");
@@ -83,6 +110,23 @@ export function YieldsTrendsPage() {
             value={filters.dateTo ?? ""}
             onChange={(e) => setFilters({ dateTo: e.currentTarget.value || null })}
           />
+          {mixOptions.length > 0 && (
+            <Select
+              label="Mix"
+              placeholder="Pick a blend…"
+              description="Sets Products below to that blend's crops"
+              data={mixOptions}
+              value={selectedMixName}
+              onChange={(v) => {
+                const mix = (mixes.data ?? []).find((m) => m.name === v);
+                setFilters({ productIds: mix?.yield_product_ids ?? [] });
+              }}
+              clearable
+              searchable
+              size="xs"
+              w={200}
+            />
+          )}
           <MultiSelect
             label="Products"
             placeholder="All products"

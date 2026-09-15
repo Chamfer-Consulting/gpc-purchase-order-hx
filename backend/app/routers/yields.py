@@ -110,6 +110,12 @@ def sales_product_names(_: AuthedUser = Depends(require_editor)) -> list[str]:
         return yields_svc.sales_product_names(conn)
 
 
+@router.get("/mixes")
+def list_mixes(_: AuthedUser = Depends(current_user)) -> list[dict]:
+    with reused_conn() as conn:
+        return yields_svc.list_mixes(conn)
+
+
 # --- entries -----------------------------------------------------------------
 
 

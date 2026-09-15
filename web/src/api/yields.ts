@@ -147,6 +147,25 @@ export function useYieldSalesProductNames() {
   });
 }
 
+/** A sales SKU fed by more than one yield product — e.g. "Rainbow Mix" =
+ *  Broccoli + Kale + Radish + Mustard, via yield_product_sales_links. The
+ *  Trends page's "Mix" picker uses this to show a blend's collective
+ *  total alongside each crop's own breakdown. A sales name linked to only
+ *  one yield product isn't a real mix, so it's never in this list. */
+export interface YieldMix {
+  name: string;
+  yield_product_ids: number[];
+  product_names: string[];
+}
+
+export function useYieldMixes() {
+  return useQuery({
+    queryKey: ["yield-mixes"],
+    queryFn: () => apiGet<YieldMix[]>("/api/yields/mixes"),
+    staleTime: 60_000,
+  });
+}
+
 export function useCreateYieldLink() {
   const qc = useQueryClient();
   return useMutation({
