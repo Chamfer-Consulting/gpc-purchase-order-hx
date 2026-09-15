@@ -1,7 +1,16 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ActionIcon, Badge, Group, Pagination, Select, Table, Text, Tooltip } from "@mantine/core";
+import { ActionIcon, Badge, Group, Pagination, Select, Table, Text, Tooltip, useComputedColorScheme } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconNotes, IconPencil, IconTrash } from "@tabler/icons-react";
-import { useVoidYieldEntry, useYieldEntries, useYieldProducts, type YieldEntry, type YieldUnit } from "@/api/yields";
+import {
+  useVoidYieldEntry,
+  useYieldEntries,
+  useYieldMixes,
+  useYieldProducts,
+  type YieldEntry,
+  type YieldUnit,
+} from "@/api/yields";
+import { colorMapFor } from "@/charts/palette";
+import { paletteFor } from "@/charts/theme";
 import { PageLayout } from "@/components/PageLayout";
 import { SectionCard } from "@/components/SectionCard";
 import { EmptyState } from "@/components/EmptyState";
@@ -90,8 +99,50 @@ function harvestedBySummary(entries: YieldEntry[]): { label: string; title: stri
   return { label: `${names.length} people`, title: names.join(", ") };
 }
 
+/** Reorders a day's groups so products belonging to the same blend/mix
+ *  (e.g. "Rainbow Mix" = Broccoli + Kale + Radish + Mustard, via
+ *  yield_product_sales_links) sit next to each other — grouping on top of
+ *  the color coding below, not just a shared color scattered across
+ *  unrelated rows. Relative order within a mix, and among non-mix
+ *  products, is otherwise unchanged. */
+function clusterByMix(groups: EntryGroup[], mixByProduct: Map<number, string>): EntryGroup[] {
+  return groups
+    .map((g, i) => ({ g, i, mix: mixByProduct.get(g.entries[0].yield_product_id) ?? null }))
+    .sort((a, b) => {
+      if (a.mix === b.mix) return a.i - b.i;
+      if (a.mix === null) return 1;
+      if (b.mix === null) return -1;
+      return a.mix < b.mix ? -1 : a.mix > b.mix ? 1 : a.i - b.i;
+    })
+    .map((x) => x.g);
+}
+
+function mixTag(name: string, color: string) {
+  return (
+    <Tooltip key="mix" label={`Part of the "${name}" mix`}>
+      <Group gap={4} wrap="nowrap">
+        <span
+          style={{
+            display: "inline-block",
+            width: 8,
+            height: 8,
+            borderRadius: 2,
+            backgroundColor: color,
+            flexShrink: 0,
+          }}
+        />
+        <Text size="xs" c="dimmed">
+          {name}
+        </Text>
+      </Group>
+    </Tooltip>
+  );
+}
+
 export function YieldsEntriesPage() {
   const products = useYieldProducts();
+  const mixes = useYieldMixes();
+  const palette = paletteFor(useComputedColorScheme("light"));
   const [productId, setProductId] = useState<string | null>(null);
   const entries = useYieldEntries({
     yield_product_id: productId ? Number(productId) : undefined,
@@ -120,6 +171,21 @@ export function YieldsEntriesPage() {
   const productOptions = useMemo(
     () => (products.data ?? []).map((p) => ({ value: String(p.id), label: p.name })),
     [products.data],
+  );
+  // Which mix (if any) each yield product belongs to, and a stable color
+  // per mix name (the house categorical palette, same one charts use —
+  // colorMapFor assigns by alphabetical order so it's consistent without
+  // having to store a color anywhere).
+  const mixByProduct = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const mix of mixes.data ?? []) {
+      for (const id of mix.yield_product_ids) if (!m.has(id)) m.set(id, mix.name);
+    }
+    return m;
+  }, [mixes.data]);
+  const mixColorMap = useMemo(
+    () => colorMapFor((mixes.data ?? []).map((m) => m.name), palette),
+    [mixes.data, palette],
   );
   const groups = useMemo(() => groupEntries(entries.data ?? []), [entries.data]);
   const dateSections = useMemo(() => bucketByDate(groups), [groups]);
@@ -173,64 +239,73 @@ export function YieldsEntriesPage() {
     });
   };
 
-  const entryRow = (e: YieldEntry, muted: boolean) => (
-    <Table.Tr key={e.id} bg={muted ? "var(--gp-surface-sunken)" : undefined}>
-      <Table.Td>{fmtDateOnly(e.harvest_date)}</Table.Td>
-      <Table.Td>
-        <Group gap={6} wrap="nowrap">
-          {e.product_name}
-          {e.notes && (
-            <Tooltip label={e.notes} multiline maw={280}>
-              <IconNotes size={14} color="var(--mantine-color-gpGreen-6)" aria-label="Has a note" />
-            </Tooltip>
-          )}
-        </Group>
-      </Table.Td>
-      <Table.Td ta="right">
-        {e.weight} {e.unit}
-      </Table.Td>
-      <Table.Td ta="right">{e.tray_count}</Table.Td>
-      <Table.Td ta="right">{e.discarded_tray_count || "—"}</Table.Td>
-      <Table.Td>
-        <Group gap={6} wrap="nowrap">
-          {e.product_lot_code_prefix && (
-            <Badge size="xs" variant="outline" color="gray">
-              {e.product_lot_code_prefix}
-            </Badge>
-          )}
-          {e.lot_code ?? "—"}
-        </Group>
-      </Table.Td>
-      <Table.Td>
-        <Group gap={6} wrap="nowrap">
-          {e.harvested_by}
-          {e.voided && (
-            <Badge size="xs" color="red" variant="light">
-              voided
-            </Badge>
-          )}
-        </Group>
-      </Table.Td>
-      <Table.Td>
-        {!e.voided && (
-          <Group gap={4} wrap="nowrap">
-            <ActionIcon size="sm" variant="subtle" onClick={() => setEditing(e)} aria-label="Edit entry">
-              <IconPencil size={14} />
-            </ActionIcon>
-            <ActionIcon
-              size="sm"
-              variant="subtle"
-              color="red"
-              onClick={() => askVoid(e)}
-              aria-label="Void entry"
-            >
-              <IconTrash size={14} />
-            </ActionIcon>
+  const entryRow = (e: YieldEntry, muted: boolean) => {
+    const mixName = mixByProduct.get(e.yield_product_id);
+    const mixColor = mixName ? mixColorMap[mixName] : undefined;
+    return (
+      <Table.Tr
+        key={e.id}
+        bg={muted ? "var(--gp-surface-sunken)" : undefined}
+        style={mixColor ? { borderLeft: `3px solid ${mixColor}` } : undefined}
+      >
+        <Table.Td>{fmtDateOnly(e.harvest_date)}</Table.Td>
+        <Table.Td>
+          <Group gap={6} wrap="nowrap">
+            {e.product_name}
+            {mixName && mixColor && mixTag(mixName, mixColor)}
+            {e.notes && (
+              <Tooltip label={e.notes} multiline maw={280}>
+                <IconNotes size={14} color="var(--mantine-color-gpGreen-6)" aria-label="Has a note" />
+              </Tooltip>
+            )}
           </Group>
-        )}
-      </Table.Td>
-    </Table.Tr>
-  );
+        </Table.Td>
+        <Table.Td ta="right">
+          {e.weight} {e.unit}
+        </Table.Td>
+        <Table.Td ta="right">{e.tray_count}</Table.Td>
+        <Table.Td ta="right">{e.discarded_tray_count || "—"}</Table.Td>
+        <Table.Td>
+          <Group gap={6} wrap="nowrap">
+            {e.product_lot_code_prefix && (
+              <Badge size="xs" variant="outline" color="gray">
+                {e.product_lot_code_prefix}
+              </Badge>
+            )}
+            {e.lot_code ?? "—"}
+          </Group>
+        </Table.Td>
+        <Table.Td>
+          <Group gap={6} wrap="nowrap">
+            {e.harvested_by}
+            {e.voided && (
+              <Badge size="xs" color="red" variant="light">
+                voided
+              </Badge>
+            )}
+          </Group>
+        </Table.Td>
+        <Table.Td>
+          {!e.voided && (
+            <Group gap={4} wrap="nowrap">
+              <ActionIcon size="sm" variant="subtle" onClick={() => setEditing(e)} aria-label="Edit entry">
+                <IconPencil size={14} />
+              </ActionIcon>
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                color="red"
+                onClick={() => askVoid(e)}
+                aria-label="Void entry"
+              >
+                <IconTrash size={14} />
+              </ActionIcon>
+            </Group>
+          )}
+        </Table.Td>
+      </Table.Tr>
+    );
+  };
 
   const renderGroup = (g: EntryGroup) => {
     if (g.entries.length === 1) return entryRow(g.entries[0], false);
@@ -241,12 +316,14 @@ export function YieldsEntriesPage() {
       activeCount === g.entries.length ? `${activeCount} entries` : `${activeCount} of ${g.entries.length} entries`;
     const open = openGroups.has(g.key);
     const groupHasNotes = g.entries.some((e) => e.notes);
+    const mixName = mixByProduct.get(first.yield_product_id);
+    const mixColor = mixName ? mixColorMap[mixName] : undefined;
     return (
       <Fragment key={g.key}>
         <Table.Tr
           fw={600}
           bg="var(--mantine-color-gpGreen-light)"
-          style={{ cursor: "pointer" }}
+          style={{ cursor: "pointer", ...(mixColor ? { borderLeft: `3px solid ${mixColor}` } : {}) }}
           onClick={() => toggleGroup(g.key)}
         >
           <Table.Td>{fmtDateOnly(first.harvest_date)}</Table.Td>
@@ -257,6 +334,7 @@ export function YieldsEntriesPage() {
               <Badge size="xs" variant="light" color="gpGreen">
                 {countLabel}
               </Badge>
+              {mixName && mixColor && mixTag(mixName, mixColor)}
               {groupHasNotes && (
                 <Tooltip label="One or more entries here has a note — expand to see it" multiline maw={280}>
                   <IconNotes size={14} color="var(--mantine-color-gpGreen-6)" aria-label="Has a note" />
@@ -349,7 +427,7 @@ export function YieldsEntriesPage() {
                             </Group>
                           </Table.Td>
                         </Table.Tr>
-                        {dayOpen && section.groups.map((g) => renderGroup(g))}
+                        {dayOpen && clusterByMix(section.groups, mixByProduct).map((g) => renderGroup(g))}
                       </Fragment>
                     );
                   })}
