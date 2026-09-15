@@ -5,7 +5,6 @@ import {
   Group,
   NumberInput,
   SegmentedControl,
-  Select,
   Stack,
   Textarea,
   TextInput,
@@ -23,6 +22,7 @@ import { SectionCard } from "@/components/SectionCard";
 import { businessToday } from "@/lib/datetime";
 import { notifySuccess } from "@/lib/notify";
 import { errorMessage } from "@/lib/errors";
+import { GridPickerField } from "./GridPickerField";
 
 /** The harvest-logging form: product, weight, tray counts, who/where.
  *  Submitting resets weight/trays/notes but keeps product/unit/worker
@@ -69,7 +69,7 @@ export function HarvestEntryForm() {
     () =>
       (employees.data ?? [])
         .filter((e) => e.name !== HISTORICAL_HARVESTER_NAME)
-        .map((e) => e.name),
+        .map((e) => ({ value: e.name, label: e.name })),
     [employees.data],
   );
 
@@ -159,14 +159,13 @@ export function HarvestEntryForm() {
 
       <SectionCard>
         <Stack gap="xl">
-          <Select
+          <GridPickerField
             label="Product"
             placeholder="Choose a crop"
-            data={productOptions}
+            searchPlaceholder="Search products…"
+            options={productOptions}
             value={productId}
             onChange={handleProductChange}
-            searchable
-            size="lg"
             disabled={products.isLoading}
             required
           />
@@ -228,14 +227,13 @@ export function HarvestEntryForm() {
             onChange={(e) => handleLotCodeChange(e.currentTarget.value)}
             size="lg"
           />
-          <Select
+          <GridPickerField
             label="Harvested by"
             placeholder="Choose who's harvesting"
-            data={employeeOptions}
+            searchPlaceholder="Search team…"
+            options={employeeOptions}
             value={harvestedBy || null}
-            onChange={(v) => setHarvestedBy(v ?? "")}
-            searchable
-            size="lg"
+            onChange={setHarvestedBy}
             disabled={employees.isLoading}
             required
           />

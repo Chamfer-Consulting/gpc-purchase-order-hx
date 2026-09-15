@@ -6,7 +6,6 @@ import {
   Modal,
   NumberInput,
   SegmentedControl,
-  Select,
   Stack,
   Text,
   Textarea,
@@ -16,10 +15,11 @@ import { useMediaQuery } from "@mantine/hooks";
 import { errorMessage } from "@/lib/errors";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { useUpdateYieldEntry, useYieldEmployees, type YieldEntry, type YieldUnit } from "@/api/yields";
+import { GridPickerField, type GridPickerOption } from "./GridPickerField";
 
 function EditEntryForm({ entry, employees, onClose }: {
   entry: YieldEntry;
-  employees: string[];
+  employees: GridPickerOption[];
   onClose: () => void;
 }) {
   const update = useUpdateYieldEntry();
@@ -119,13 +119,12 @@ function EditEntryForm({ entry, employees, onClose }: {
         onChange={(e) => setLotCode(e.currentTarget.value)}
         size="lg"
       />
-      <Select
+      <GridPickerField
         label="Harvested by"
-        data={employees}
+        searchPlaceholder="Search team…"
+        options={employees}
         value={harvestedBy || null}
-        onChange={(v) => setHarvestedBy(v ?? "")}
-        searchable
-        size="lg"
+        onChange={setHarvestedBy}
         required
       />
       <Textarea
@@ -157,7 +156,10 @@ function EditEntryForm({ entry, employees, onClose }: {
  *  form to that row's values instead of carrying over stale edits. */
 export function EditEntryModal({ entry, onClose }: { entry: YieldEntry | null; onClose: () => void }) {
   const employees = useYieldEmployees();
-  const employeeOptions = useMemo(() => (employees.data ?? []).map((e) => e.name), [employees.data]);
+  const employeeOptions = useMemo(
+    () => (employees.data ?? []).map((e) => ({ value: e.name, label: e.name })),
+    [employees.data],
+  );
   // Full-screen on a phone-width viewport — the now-larger touch-friendly
   // fields inside would otherwise feel cramped in a fixed-width modal.
   const fullScreen = useMediaQuery("(max-width: 48em)");
