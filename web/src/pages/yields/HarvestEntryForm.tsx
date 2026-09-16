@@ -23,6 +23,7 @@ import { SectionCard } from "@/components/SectionCard";
 import { businessToday } from "@/lib/datetime";
 import { notifySuccess } from "@/lib/notify";
 import { errorMessage } from "@/lib/errors";
+import { useTouchUi } from "@/hooks/useTouchUi";
 import { GridPickerField, type GridPickerOption } from "./GridPickerField";
 
 /** Moves the option matching `value` (if any, and if not already first) to
@@ -47,6 +48,13 @@ function moveToFront(options: GridPickerOption[], value: string | undefined): Gr
  *  different chrome around it. */
 export function HarvestEntryForm() {
   const { role } = useMe();
+  // Large touch-sized fields make sense on the kiosk/tablet/phone this form
+  // was built for, but are oversized on a mouse/keyboard desktop (the office
+  // "Log harvest" page renders this exact same form) — scale down there.
+  const isTouch = useTouchUi();
+  const fieldSize = isTouch ? "lg" : "sm";
+  const submitSize = isTouch ? "xl" : "sm";
+  const stackGap = isTouch ? "xl" : "md";
   const products = useYieldProducts();
   const employees = useYieldEmployees();
   const create = useCreateYieldEntry();
@@ -182,7 +190,7 @@ export function HarvestEntryForm() {
       )}
 
       <SectionCard>
-        <Stack gap="xl">
+        <Stack gap={stackGap}>
           <GridPickerField
             label="Product"
             placeholder="Choose a crop"
@@ -199,7 +207,7 @@ export function HarvestEntryForm() {
             description={dateLocked ? "Kiosk entries always log to today" : undefined}
             value={date}
             onChange={(e) => handleDateChange(e.currentTarget.value)}
-            size="lg"
+            size={fieldSize}
             disabled={dateLocked}
           />
           <Group grow align="flex-end" gap="md">
@@ -211,7 +219,7 @@ export function HarvestEntryForm() {
               min={0}
               decimalScale={2}
               inputMode="decimal"
-              size="lg"
+              size={fieldSize}
               required
             />
             <SegmentedControl
@@ -222,7 +230,7 @@ export function HarvestEntryForm() {
                 { value: "lb", label: "lb" },
                 { value: "g", label: "g" },
               ]}
-              size="lg"
+              size={fieldSize}
             />
           </Group>
           <Group grow gap="md">
@@ -233,7 +241,7 @@ export function HarvestEntryForm() {
               onChange={(v) => setTrayCount(v === "" ? "" : Number(v))}
               min={0}
               inputMode="numeric"
-              size="lg"
+              size={fieldSize}
             />
             <NumberInput
               label="Trays discarded"
@@ -242,14 +250,14 @@ export function HarvestEntryForm() {
               onChange={(v) => setDiscardedTrayCount(v === "" ? "" : Number(v))}
               min={0}
               inputMode="numeric"
-              size="lg"
+              size={fieldSize}
             />
           </Group>
           <TextInput
             label="Lot code"
             value={lotCode}
             onChange={(e) => handleLotCodeChange(e.currentTarget.value)}
-            size="lg"
+            size={fieldSize}
           />
           <GridPickerField
             label="Harvested by"
@@ -267,12 +275,12 @@ export function HarvestEntryForm() {
             onChange={(e) => setNotes(e.currentTarget.value)}
             autosize
             minRows={2}
-            size="lg"
+            size={fieldSize}
           />
 
           {create.error && <Alert color="red">{errorMessage(create.error)}</Alert>}
 
-          <Button size="xl" loading={create.isPending} disabled={!canSubmit} onClick={submit}>
+          <Button size={submitSize} loading={create.isPending} disabled={!canSubmit} onClick={submit}>
             Log harvest
           </Button>
         </Stack>

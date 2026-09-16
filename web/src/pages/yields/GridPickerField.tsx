@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { Button, Modal, SimpleGrid, Stack, Text, TextInput } from "@mantine/core";
+import { Button, Modal, Select, SimpleGrid, Stack, Text, TextInput } from "@mantine/core";
 import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import { IconChevronDown, IconSearch } from "@tabler/icons-react";
+import { useTouchUi } from "@/hooks/useTouchUi";
 
 export interface GridPickerOption {
   value: string;
@@ -14,7 +15,11 @@ export interface GridPickerOption {
  *  a full-screen grid of large buttons instead of a small dropdown list.
  *  Picking one is a single tap on a target several times the size of a
  *  normal Select option row. A search box up top keeps a long roster
- *  (many products, many employees) just as fast to narrow down. */
+ *  (many products, many employees) just as fast to narrow down.
+ *
+ *  On a mouse/keyboard desktop (`useTouchUi` false) this renders as a plain
+ *  compact searchable `Select` instead — the full-screen tap grid has no
+ *  benefit there and just looks oversized next to a normal desktop form. */
 export function GridPickerField({
   label,
   placeholder,
@@ -36,9 +41,27 @@ export function GridPickerField({
   required?: boolean;
   searchPlaceholder?: string;
 }) {
+  const isTouch = useTouchUi();
   const [opened, { open, close }] = useDisclosure(false);
   const [search, setSearch] = useState("");
   const fullScreen = useMediaQuery("(max-width: 48em)");
+
+  if (!isTouch) {
+    return (
+      <Select
+        label={label}
+        description={description}
+        placeholder={placeholder}
+        required={required}
+        data={options}
+        value={value}
+        onChange={(v) => v && onChange(v)}
+        disabled={disabled}
+        searchable
+        size="sm"
+      />
+    );
+  }
 
   const selectedLabel = options.find((o) => o.value === value)?.label ?? "";
   const filtered = useMemo(() => {

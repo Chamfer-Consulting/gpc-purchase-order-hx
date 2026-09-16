@@ -15,6 +15,7 @@ import { useMediaQuery } from "@mantine/hooks";
 import { errorMessage } from "@/lib/errors";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { useUpdateYieldEntry, useYieldEmployees, type YieldEntry, type YieldUnit } from "@/api/yields";
+import { useTouchUi } from "@/hooks/useTouchUi";
 import { GridPickerField, type GridPickerOption } from "./GridPickerField";
 
 function EditEntryForm({ entry, employees, onClose }: {
@@ -23,6 +24,12 @@ function EditEntryForm({ entry, employees, onClose }: {
   onClose: () => void;
 }) {
   const update = useUpdateYieldEntry();
+  // Same reasoning as HarvestEntryForm: this modal is reachable from both
+  // the kiosk (touch) and the office Entries table (mouse/keyboard) — only
+  // scale the fields up on the former.
+  const isTouch = useTouchUi();
+  const fieldSize = isTouch ? "lg" : "sm";
+  const buttonSize = isTouch ? "lg" : "sm";
 
   const [date, setDate] = useState(entry.harvest_date);
   const [weight, setWeight] = useState<number | "">(entry.weight);
@@ -69,7 +76,7 @@ function EditEntryForm({ entry, employees, onClose }: {
         label="Harvest date"
         value={date}
         onChange={(e) => setDate(e.currentTarget.value)}
-        size="lg"
+        size={fieldSize}
       />
       <Group grow align="flex-end" gap="md">
         <NumberInput
@@ -79,7 +86,7 @@ function EditEntryForm({ entry, employees, onClose }: {
           min={0}
           decimalScale={2}
           inputMode="decimal"
-          size="lg"
+          size={fieldSize}
           required
         />
         <SegmentedControl
@@ -90,7 +97,7 @@ function EditEntryForm({ entry, employees, onClose }: {
             { value: "lb", label: "lb" },
             { value: "g", label: "g" },
           ]}
-          size="lg"
+          size={fieldSize}
         />
       </Group>
       <Group grow gap="md">
@@ -101,7 +108,7 @@ function EditEntryForm({ entry, employees, onClose }: {
           onChange={(v) => setTrayCount(v === "" ? "" : Number(v))}
           min={0}
           inputMode="numeric"
-          size="lg"
+          size={fieldSize}
         />
         <NumberInput
           label="Trays discarded"
@@ -110,14 +117,14 @@ function EditEntryForm({ entry, employees, onClose }: {
           onChange={(v) => setDiscardedTrayCount(v === "" ? "" : Number(v))}
           min={0}
           inputMode="numeric"
-          size="lg"
+          size={fieldSize}
         />
       </Group>
       <TextInput
         label="Lot code"
         value={lotCode}
         onChange={(e) => setLotCode(e.currentTarget.value)}
-        size="lg"
+        size={fieldSize}
       />
       <GridPickerField
         label="Harvested by"
@@ -133,16 +140,16 @@ function EditEntryForm({ entry, employees, onClose }: {
         onChange={(e) => setNotes(e.currentTarget.value)}
         autosize
         minRows={2}
-        size="lg"
+        size={fieldSize}
       />
 
       {update.error && <Alert color="red">{errorMessage(update.error)}</Alert>}
 
       <Group justify="flex-end" gap="md">
-        <Button size="lg" variant="default" onClick={onClose}>
+        <Button size={buttonSize} variant="default" onClick={onClose}>
           Cancel
         </Button>
-        <Button size="lg" loading={update.isPending} disabled={!canSave} onClick={save}>
+        <Button size={buttonSize} loading={update.isPending} disabled={!canSave} onClick={save}>
           Save
         </Button>
       </Group>
