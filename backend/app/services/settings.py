@@ -260,7 +260,7 @@ def set_invoice_hidden(conn, qbo_invoice_id: str, hidden: bool,
 
 # --- team / access control (app_users) -----------------------------------
 
-_TEAM_ROLES = ("field", "viewer", "editor", "admin")
+_TEAM_ROLES = ("field", "viewer", "editor", "admin", "external_viewer")
 
 
 class TeamError(ValueError):
@@ -278,7 +278,7 @@ def list_team(conn) -> list[dict]:
         cur.execute(
             """
             SELECT lower(COALESCE(u.email, a.email))  AS email,
-                   a.role, a.note,
+                   a.role, a.note, a.external_pages,
                    u.created_at       AS signed_up_at,
                    u.last_sign_in_at  AS last_sign_in_at,
                    (u.id IS NOT NULL) AS has_account
@@ -303,10 +303,11 @@ def list_team(conn) -> list[dict]:
             "has_role": r["role"] is not None,
             "has_account": r["has_account"],
             "note": r["note"],
+            "external_pages": list(r["external_pages"] or []),
             "signed_up_at": _iso(r["signed_up_at"]),
             "last_sign_in_at": _iso(r["last_sign_in_at"]),
         })
-    _RANK = {"admin": 0, "editor": 1, "viewer": 2, "field": 3, None: 4}
+    _RANK = {"admin": 0, "editor": 1, "viewer": 2, "external_viewer": 3, "field": 4, None: 5}
     out.sort(key=lambda x: (_RANK.get(x["effective_role"], 3), not x["allowed"], x["email"]))
     return out
 
@@ -316,27 +317,38 @@ def _admin_emails(cur) -> set[str]:
     return {r[0] for r in cur.fetchall()}
 
 
-def set_team_member(conn, actor: str | None, email: str, role: str, note: str | None) -> None:
+def set_team_member(conn, actor: str | None, email: str, role: str, note: str | None,
+                     external_pages: list[str] | None = None) -> None:
+    from ..auth import EXTERNAL_VIEWABLE_PAGES
+
     email = (email or "").strip().lower()
     role = (role or "").strip().lower()
     if "@" not in email:
         raise TeamError("a valid email is required")
     if role not in _TEAM_ROLES:
         raise TeamError(f"role must be one of {', '.join(_TEAM_ROLES)}")
+    # Only meaningful for external_viewer — a role switch away from it drops
+    # any pages that were granted, so flipping back later starts from a
+    # deliberately blank slate rather than resurrecting a stale grant.
+    pages = sorted(set(external_pages or [])) if role == "external_viewer" else []
+    invalid = [p for p in pages if p not in EXTERNAL_VIEWABLE_PAGES]
+    if invalid:
+        raise TeamError(f"not a grantable page: {', '.join(invalid)}")
     with conn.cursor() as cur:
         admins = _admin_emails(cur)
         if role != "admin" and admins == {email}:
             raise TeamError("can't demote the last admin")
         cur.execute(
             """
-            INSERT INTO app_users (email, role, note) VALUES (%s, %s, %s)
+            INSERT INTO app_users (email, role, note, external_pages) VALUES (%s, %s, %s, %s)
             ON CONFLICT (email) DO UPDATE
-                SET role = EXCLUDED.role, note = EXCLUDED.note, updated_at = now()
+                SET role = EXCLUDED.role, note = EXCLUDED.note,
+                    external_pages = EXCLUDED.external_pages, updated_at = now()
             """,
-            (email, role, note or None),
+            (email, role, note or None, pages),
         )
     audit.log(conn, actor=actor, action="team_set", entity="app_user", entity_id=email,
-              after={"role": role, "note": note})
+              after={"role": role, "note": note, "external_pages": pages})
     conn.commit()
 
 

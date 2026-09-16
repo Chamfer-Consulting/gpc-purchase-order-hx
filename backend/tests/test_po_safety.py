@@ -125,13 +125,13 @@ def _tok_for(email: str) -> str:
 def test_me_reflects_the_app_users_role():
     r = _client.get("/api/me", headers={"Authorization": f"Bearer {_tok()}"})
     assert r.status_code == 200
-    assert r.json() == {"email": "nobody@example.com", "role": "editor"}
+    assert r.json() == {"email": "nobody@example.com", "role": "editor", "external_pages": []}
 
 
 def test_me_defaults_to_viewer_for_an_allowed_user_with_no_row():
     r = _client.get("/api/me", headers={"Authorization": f"Bearer {_tok_for('stranger@example.com')}"})
     assert r.status_code == 200
-    assert r.json() == {"email": "stranger@example.com", "role": "viewer"}
+    assert r.json() == {"email": "stranger@example.com", "role": "viewer", "external_pages": []}
 
 
 def test_admin_route_forbidden_for_editor():

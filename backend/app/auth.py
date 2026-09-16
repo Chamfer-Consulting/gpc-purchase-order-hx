@@ -133,36 +133,64 @@ def current_user(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> Auth
 # granted. 'field' is the kiosk-only role (Product Yields harvest tablets) —
 # it sits below 'viewer' and is never the implicit default, only ever an
 # explicit grant, since it's *more* restricted than an ungranted signed-in user.
-_ROLE_RANK = {"field": 0, "viewer": 1, "editor": 2, "admin": 3}
+#
+# 'external_viewer' sits at the same rank 0 floor, for the same "never
+# implicit, more restricted than an ungranted user" reason, but it isn't
+# actually a rung on this ladder — its access isn't "at least rank N", it's
+# an admin-granted set of individual nav pages (app_users.external_pages),
+# checked by require_page() below rather than by _ROLE_RANK comparison.
+_ROLE_RANK = {"field": 0, "external_viewer": 0, "viewer": 1, "editor": 2, "admin": 3}
 _DEFAULT_ROLE = "viewer"
 
-# Per-email: the app_users role string, or "" for "no row". Cached ~60s so both
-# the allow-list check and the role check cost one small query per user per minute.
-_NO_ROW = ""
+# Nav pages (web/src/nav.tsx `to` paths) an admin can grant one at a time to
+# an external_viewer account, via Settings -> Team. Keep in sync with
+# nav.tsx's `externalViewable` flag — that's what builds the admin's
+# checkbox list; this is the server-side allow-list set_team_member
+# validates against and require_page checks membership against.
+EXTERNAL_VIEWABLE_PAGES = (
+    "/", "/customers", "/products", "/explore", "/lifecycle", "/pricing",
+    "/yields", "/yields/entries",
+)
+
+# Per-email: (app_users role string, or "" for "no row"; external_pages list).
+# Cached ~60s so the allow-list check, role check and page-grant check all
+# share one small query per user per minute.
+_NO_ROW: tuple[str, list[str]] = ("", [])
 _role_cache: TTLCache = TTLCache(maxsize=512, ttl=60)
 
 
-def _app_user_role(email: str | None) -> str:
-    """The email's app_users.role, or "" if there's no row. Cached."""
+def _app_user_row(email: str | None) -> tuple[str, list[str]]:
+    """(role, external_pages) from app_users, or ("", []) if there's no row."""
     key = (email or "").lower()
     if not key:
         return _NO_ROW
     hit = _role_cache.get(key)
     if hit is not None:
         return hit
-    role = _NO_ROW
+    result = _NO_ROW
     try:
         from .reused_db import reused_conn
 
         with reused_conn() as conn, conn.cursor() as cur:
-            cur.execute("SELECT role FROM app_users WHERE lower(email) = %s", (key,))
+            cur.execute("SELECT role, external_pages FROM app_users WHERE lower(email) = %s", (key,))
             row = cur.fetchone()
             if row and row[0] in _ROLE_RANK:
-                role = row[0]
+                result = (row[0], list(row[1] or []))
     except Exception:  # app_users missing / DB blip
         pass
-    _role_cache[key] = role
-    return role
+    _role_cache[key] = result
+    return result
+
+
+def _app_user_role(email: str | None) -> str:
+    """The email's app_users.role, or "" if there's no row. Cached."""
+    return _app_user_row(email)[0]
+
+
+def external_pages(email: str | None) -> list[str]:
+    """The email's admin-granted nav-page list — always empty for every role
+    other than external_viewer."""
+    return _app_user_row(email)[1]
 
 
 def clear_role_cache(email: str | None = None) -> None:
@@ -184,7 +212,7 @@ def email_allowed(email: str | None) -> bool:
     domain = key.rsplit("@", 1)[1]
     if domain in s.allow_domains or key in s.allow_emails:
         return True
-    if _app_user_role(key) != _NO_ROW:
+    if _app_user_role(key) != "":
         return True
     if not s.allow_domains and not s.allow_emails:
         _log.warning(
@@ -216,3 +244,31 @@ def require_role(minimum: str):
 require_viewer = require_role("viewer")
 require_editor = require_role("editor")
 require_admin = require_role("admin")
+
+
+def require_page(*page_keys: str, bare: bool = False):
+    """FastAPI dependency gating a specific nav page's data for external_viewer.
+
+    Real staff (rank >= viewer — editor/admin too) always pass, completely
+    unaffected either way. An external_viewer passes only if the admin
+    granted at least one of `page_keys` (app_users.external_pages). Every
+    other role (today, just 'field') passes when `bare=True` — for a route
+    that already had a bare current_user floor the kiosk needs to keep
+    reaching (see routers/yields.py) — and is denied when `bare=False`, the
+    normal case for a route that used to sit behind require_viewer.
+    """
+    keys = set(page_keys)
+
+    def _dep(user: AuthedUser = Depends(current_user)) -> AuthedUser:
+        role = app_role(user.email)
+        if _ROLE_RANK.get(role, -1) >= _ROLE_RANK["viewer"]:
+            return user
+        if role == "external_viewer":
+            if keys & set(external_pages(user.email)):
+                return user
+            raise Forbidden(need="viewer", have=role)
+        if bare:
+            return user
+        raise Forbidden(need="viewer", have=role)
+
+    return _dep

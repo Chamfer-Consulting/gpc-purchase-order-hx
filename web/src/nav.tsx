@@ -26,6 +26,11 @@ export interface NavItem {
   description: string;
   /** only render the sidebar link for admins (the route/API guard themselves too) */
   adminOnly?: boolean;
+  /** an admin can grant this specific page to an "external viewer" account
+   *  (Settings -> Team) — builds that checkbox list. Keep in sync with the
+   *  backend's EXTERNAL_VIEWABLE_PAGES (backend/app/auth.py); every route
+   *  behind one of these also has its own require_page(...) dependency. */
+  externalViewable?: boolean;
 }
 
 export interface NavSection {
@@ -42,30 +47,35 @@ export const NAV_SECTIONS: NavSection[] = [
         to: "/",
         icon: IconLayoutDashboard,
         description: "Revenue and order health across the selected scope.",
+        externalViewable: true,
       },
       {
         label: "Customers",
         to: "/customers",
         icon: IconUsers,
         description: "Revenue, orders, average order value and recency per customer.",
+        externalViewable: true,
       },
       {
         label: "Products & Sizes",
         to: "/products",
         icon: IconLeaf,
         description: "Volume and revenue by product and container size.",
+        externalViewable: true,
       },
       {
         label: "Explore",
         to: "/explore",
         icon: IconTable,
         description: "Pivot revenue, orders and quantity by any dimension and grain.",
+        externalViewable: true,
       },
       {
         label: "Order Lifecycle",
         to: "/lifecycle",
         icon: IconRoute,
         description: "Lost sales from requested (PO) to shipped (invoice) — trended, by customer and product.",
+        externalViewable: true,
       },
     ],
   },
@@ -90,6 +100,7 @@ export const NAV_SECTIONS: NavSection[] = [
         to: "/pricing",
         icon: IconTag,
         description: "Reference prices per customer and product, with price history.",
+        externalViewable: true,
       },
     ],
   },
@@ -101,6 +112,7 @@ export const NAV_SECTIONS: NavSection[] = [
         to: "/yields",
         icon: IconChartLine,
         description: "Harvest weight and tray trends — weekly, monthly, quarterly, yearly.",
+        externalViewable: true,
       },
       {
         label: "Entries",
@@ -109,6 +121,7 @@ export const NAV_SECTIONS: NavSection[] = [
         description:
           "Harvest log entries from the field kiosk — weight, trays, who and where. Admins can also log a " +
           "harvest or manage grower notes from here.",
+        externalViewable: true,
       },
       {
         label: "Products",
@@ -152,6 +165,13 @@ export const NAV_SECTIONS: NavSection[] = [
 ];
 
 const ALL_ITEMS = NAV_SECTIONS.flatMap((s) => s.items.map((i) => ({ ...i, section: s.label })));
+
+/** The pages an admin can grant to an external_viewer account — builds the
+ *  checkbox list in Settings -> Team. See NavItem.externalViewable. */
+export const EXTERNAL_VIEWABLE_PAGES = ALL_ITEMS.filter((i) => i.externalViewable).map((i) => ({
+  to: i.to,
+  label: i.label,
+}));
 
 export interface PageMeta {
   title: string;

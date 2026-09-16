@@ -18,12 +18,17 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, app_role, current_user, require_admin, require_editor
+from ..auth import AuthedUser, app_role, current_user, require_admin, require_editor, require_page
 from ..reused_db import reused_conn
 from ..schemas import PageResponse
 from ..services import yields as yields_svc
 
 router = APIRouter(prefix="/api/yields", tags=["yields"], dependencies=[Depends(current_user)])
+
+# The two office-side nav pages this domain can be shared with an
+# external_viewer under (Trends, Entries) — catalog reads (products, mixes,
+# employees) are needed by both, so they accept a grant for either one.
+_YIELDS_PAGES = ("/yields", "/yields/entries")
 
 
 def _actor(user: AuthedUser) -> str | None:
@@ -47,7 +52,7 @@ class ProductPatch(BaseModel):
 
 
 @router.get("/products")
-def list_products(include_inactive: bool = False, _: AuthedUser = Depends(current_user)) -> list[dict]:
+def list_products(include_inactive: bool = False, _: AuthedUser = Depends(require_page(*_YIELDS_PAGES, bare=True))) -> list[dict]:
     with reused_conn() as conn:
         return yields_svc.list_products(conn, include_inactive=include_inactive)
 
@@ -111,7 +116,7 @@ def sales_product_names(_: AuthedUser = Depends(require_editor)) -> list[str]:
 
 
 @router.get("/mixes")
-def list_mixes(_: AuthedUser = Depends(current_user)) -> list[dict]:
+def list_mixes(_: AuthedUser = Depends(require_page(*_YIELDS_PAGES, bare=True))) -> list[dict]:
     with reused_conn() as conn:
         return yields_svc.list_mixes(conn)
 
@@ -147,7 +152,7 @@ class VoidIn(BaseModel):
 
 
 @router.post("/entries")
-def create_entry(body: EntryIn, user: AuthedUser = Depends(current_user)) -> dict:
+def create_entry(body: EntryIn, user: AuthedUser = Depends(require_page("/yields/entries", bare=True))) -> dict:
     with reused_conn() as conn:
         return yields_svc.create_entry(
             conn,
@@ -203,7 +208,7 @@ def list_entries(
     include_voided: bool = False,
     has_notes: bool = False,
     limit: int | None = None,
-    _: AuthedUser = Depends(current_user),
+    _: AuthedUser = Depends(require_page("/yields/entries", bare=True)),
 ) -> list[dict]:
     with reused_conn() as conn:
         return yields_svc.list_entries(
@@ -220,7 +225,7 @@ def list_entries(
 
 
 @router.post("/entries/{entry_id}")
-def update_entry(entry_id: int, body: EntryPatch, user: AuthedUser = Depends(current_user)) -> dict:
+def update_entry(entry_id: int, body: EntryPatch, user: AuthedUser = Depends(require_page("/yields/entries", bare=True))) -> dict:
     with reused_conn() as conn:
         return yields_svc.update_entry(
             conn, entry_id, body.model_dump(exclude_unset=True),
@@ -229,7 +234,7 @@ def update_entry(entry_id: int, body: EntryPatch, user: AuthedUser = Depends(cur
 
 
 @router.post("/entries/{entry_id}/void")
-def void_entry(entry_id: int, body: VoidIn, user: AuthedUser = Depends(current_user)) -> dict:
+def void_entry(entry_id: int, body: VoidIn, user: AuthedUser = Depends(require_page("/yields/entries", bare=True))) -> dict:
     with reused_conn() as conn:
         return yields_svc.void_entry(
             conn, entry_id, body.reason, actor=_actor(user), actor_role=app_role(user.email),
@@ -245,7 +250,7 @@ def trends(
     date_to: date | None = None,
     yield_product_id: list[int] | None = Query(None),
     grain: str = "month",
-    _: AuthedUser = Depends(current_user),
+    _: AuthedUser = Depends(require_page("/yields", bare=True)),
 ) -> PageResponse:
     if grain not in yields_svc.GRAINS:
         raise HTTPException(422, f"grain must be one of {', '.join(yields_svc.GRAINS)}")
@@ -305,7 +310,7 @@ class EmployeePatch(BaseModel):
 
 
 @router.get("/employees")
-def list_employees(include_inactive: bool = False, _: AuthedUser = Depends(current_user)) -> list[dict]:
+def list_employees(include_inactive: bool = False, _: AuthedUser = Depends(require_page(*_YIELDS_PAGES, bare=True))) -> list[dict]:
     with reused_conn() as conn:
         return yields_svc.list_employees(conn, include_inactive=include_inactive)
 

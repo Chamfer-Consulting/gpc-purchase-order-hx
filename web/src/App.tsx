@@ -5,6 +5,7 @@ import { LoginPage } from "@/auth/LoginPage";
 import { AuthCallback } from "@/auth/AuthCallback";
 import { RequireAuth } from "@/auth/RequireAuth";
 import { AccountGate } from "@/auth/AccountGate";
+import { PageAccessGate } from "@/auth/PageAccessGate";
 import { useMe } from "@/api/me";
 import { KioskShell } from "@/kiosk/KioskShell";
 import { HarvestEntryPage } from "@/pages/yields/HarvestEntryPage";
@@ -53,14 +54,26 @@ function RoleRouter() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<OverviewPage />} />
-        <Route path="/customers" element={<AnalyticsPage name="customers" title="Customers" />} />
-        <Route path="/customers/:name" element={<CustomerDetailPage />} />
-        <Route path="/products" element={<AnalyticsPage name="products" title="Products & Sizes" />} />
-        <Route path="/explore" element={<ExplorePage />} />
-        <Route path="/lifecycle" element={<AnalyticsPage name="lifecycle" title="Order Lifecycle" />} />
+        <Route path="/" element={<PageAccessGate pageKey="/"><OverviewPage /></PageAccessGate>} />
+        <Route
+          path="/customers"
+          element={<PageAccessGate pageKey="/customers"><AnalyticsPage name="customers" title="Customers" /></PageAccessGate>}
+        />
+        <Route
+          path="/customers/:name"
+          element={<PageAccessGate pageKey="/customers"><CustomerDetailPage /></PageAccessGate>}
+        />
+        <Route
+          path="/products"
+          element={<PageAccessGate pageKey="/products"><AnalyticsPage name="products" title="Products & Sizes" /></PageAccessGate>}
+        />
+        <Route path="/explore" element={<PageAccessGate pageKey="/explore"><ExplorePage /></PageAccessGate>} />
+        <Route
+          path="/lifecycle"
+          element={<PageAccessGate pageKey="/lifecycle"><AnalyticsPage name="lifecycle" title="Order Lifecycle" /></PageAccessGate>}
+        />
         <Route path="/data-quality" element={<DataQualityPage />} />
-        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/pricing" element={<PageAccessGate pageKey="/pricing"><PricingPage /></PageAccessGate>} />
         <Route path="/reconcile" element={<ReconcilePage />} />
         <Route path="/reconcile/:poId" element={<ReconcilePage />} />
         <Route path="/match" element={<Navigate to="/reconcile" replace />} />
@@ -69,12 +82,15 @@ function RoleRouter() {
         <Route path="/po/:id" element={<EditPoPage />} />
         <Route path="/archive" element={<ArchivePage />} />
         <Route path="/audit" element={<AuditPage />} />
-        <Route path="/yields" element={<YieldsTrendsPage />} />
+        <Route path="/yields" element={<PageAccessGate pageKey="/yields"><YieldsTrendsPage /></PageAccessGate>} />
         {/* Log Harvest and Notes moved into the Entries page (a button and a
          *  tab, respectively) — redirect any bookmarked/old links there. */}
         <Route path="/yields/log" element={<Navigate to="/yields/entries" replace />} />
         <Route path="/yields/notes" element={<Navigate to="/yields/entries" replace />} />
-        <Route path="/yields/entries" element={<YieldsEntriesPage />} />
+        <Route
+          path="/yields/entries"
+          element={<PageAccessGate pageKey="/yields/entries"><YieldsEntriesPage /></PageAccessGate>}
+        />
         <Route path="/yields/admin" element={<YieldsAdminPage />} />
         <Route path="/yields/import" element={<YieldsImportPage />} />
         <Route path="/settings" element={<SettingsPage />} />

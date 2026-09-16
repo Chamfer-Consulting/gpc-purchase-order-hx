@@ -6,7 +6,7 @@ flags as anomalous). See services/pricing.py."""
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, current_user, require_admin
+from ..auth import AuthedUser, require_admin, require_page
 from ..reused_db import reused_conn
 from ..services import pricing
 
@@ -30,7 +30,7 @@ class SaveIn(BaseModel):
 
 
 @router.get("")
-def list_prices(_: AuthedUser = Depends(current_user)) -> dict:
+def list_prices(_: AuthedUser = Depends(require_page("/pricing"))) -> dict:
     with reused_conn() as conn:
         return {
             "reference_prices": pricing.list_reference_prices(conn),
@@ -39,7 +39,7 @@ def list_prices(_: AuthedUser = Depends(current_user)) -> dict:
 
 
 @router.get("/history")
-def history(product: str, size: str, _: AuthedUser = Depends(current_user)) -> dict:
+def history(product: str, size: str, _: AuthedUser = Depends(require_page("/pricing"))) -> dict:
     with reused_conn() as conn:
         return pricing.price_history(conn, product, size)
 

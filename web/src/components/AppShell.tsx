@@ -21,11 +21,13 @@ import { ThemeToggle } from "./ThemeToggle";
 import styles from "./AppShell.module.css";
 
 function NavList({ onNavigate }: { onNavigate?: () => void }) {
-  const { canAdmin } = useMe();
+  const { canAdmin, role, externalPages } = useMe();
   return (
     <MantineAppShell.Section grow component="nav" aria-label="Primary">
       {NAV_SECTIONS.map((section) => {
-        const items = section.items.filter((i) => !i.adminOnly || canAdmin);
+        const items = section.items.filter(
+          (i) => (!i.adminOnly || canAdmin) && (role !== "external_viewer" || externalPages.includes(i.to)),
+        );
         if (items.length === 0) return null;
         return (
         <Box key={section.label} mb={4}>

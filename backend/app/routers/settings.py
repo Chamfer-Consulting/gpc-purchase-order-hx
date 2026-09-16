@@ -158,8 +158,11 @@ def set_invoice_hidden(body: HideInvoiceIn, user: AuthedUser = Depends(require_e
 
 class TeamMemberIn(BaseModel):
     email: str
-    role: str  # field | viewer | editor | admin
+    role: str  # field | viewer | editor | admin | external_viewer
     note: str | None = None
+    # Only meaningful when role == "external_viewer" — see
+    # services.settings.set_team_member.
+    external_pages: list[str] = []
 
 
 @router.get("/team")
@@ -172,7 +175,7 @@ def list_team(_: AuthedUser = Depends(require_admin)) -> list[dict]:
 def set_team_member(body: TeamMemberIn, user: AuthedUser = Depends(require_admin)) -> dict:
     try:
         with reused_conn() as conn:
-            svc.set_team_member(conn, _owner(user), body.email, body.role, body.note)
+            svc.set_team_member(conn, _owner(user), body.email, body.role, body.note, body.external_pages)
     except svc.TeamError as e:
         raise HTTPException(422, str(e))
     clear_role_cache(body.email)

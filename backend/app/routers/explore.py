@@ -3,7 +3,7 @@ GET /api/explore (default PageResponse) stays in routers/analytics.py."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..auth import AuthedUser, current_user
+from ..auth import AuthedUser, require_page
 from ..cache import cached
 from ..deps import FilterParams, filter_params
 from ..schemas import PageResponse
@@ -26,7 +26,7 @@ def pivot(
     grain: str = Query("month"),
     dims: str = Query("customer", description="comma list: customer, product, size"),
     fp: FilterParams = Depends(filter_params),
-    _: AuthedUser = Depends(current_user),
+    _: AuthedUser = Depends(require_page("/explore")),
 ) -> PageResponse:
     dim_list = [d.strip() for d in dims.split(",") if d.strip()]
     return pivot_svc(fp, measure, grain, dim_list)
@@ -40,7 +40,7 @@ def compare(
     b_start: str = Query(...),
     b_end: str = Query(...),
     fp: FilterParams = Depends(filter_params),
-    _: AuthedUser = Depends(current_user),
+    _: AuthedUser = Depends(require_page("/explore")),
 ) -> PageResponse:
     for v in (a_start, a_end, b_start, b_end):
         if len(v) != 10 or v[4] != "-" or v[7] != "-":

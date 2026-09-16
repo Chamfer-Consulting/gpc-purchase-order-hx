@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, app_role, current_user
+from ..auth import AuthedUser, app_role, current_user, external_pages
 from ..reused_db import reused_conn
 from ..services import audit
 
@@ -15,7 +15,13 @@ router = APIRouter(prefix="/api", tags=["me"])
 
 @router.get("/me")
 def me(user: AuthedUser = Depends(current_user)) -> dict:
-    return {"email": user.email, "role": app_role(user.email)}
+    return {
+        "email": user.email,
+        "role": app_role(user.email),
+        # Only ever non-empty for role == "external_viewer" — cheap to
+        # always include (same cached app_users row the role lookup reads).
+        "external_pages": external_pages(user.email),
+    }
 
 
 class ActivityIn(BaseModel):

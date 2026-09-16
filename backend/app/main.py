@@ -73,12 +73,20 @@ app.add_middleware(
 # nothing enforces that at the router-definition level. me/oauth (pre-role,
 # pre-auth) and yields (needs the 'field' role to reach its own endpoints,
 # see routers/yields.py) are deliberately excluded.
+#
+# overview / analytics / explore / pricing / filters are ALSO excluded, for a
+# different reason: they back the specific nav pages an admin can grant an
+# 'external_viewer' account (auth.EXTERNAL_VIEWABLE_PAGES) one page at a
+# time, which a blanket router-level floor can't express (analytics.router
+# alone serves four different pages). Each of those routers' own routes now
+# carries its own require_page(...) dependency instead — same net floor for
+# every existing role (viewer+ still required), just resolved per-route.
 _viewer_floor = [Depends(require_viewer)]
 app.include_router(me_router.router)
-app.include_router(overview.router, dependencies=_viewer_floor)
-app.include_router(analytics.router, dependencies=_viewer_floor)
-app.include_router(explore.router, dependencies=_viewer_floor)
-app.include_router(filters.router, dependencies=_viewer_floor)
+app.include_router(overview.router)
+app.include_router(analytics.router)
+app.include_router(explore.router)
+app.include_router(filters.router)
 app.include_router(quality.router, dependencies=_viewer_floor)
 app.include_router(matching.router, dependencies=_viewer_floor)
 app.include_router(reconcile.router, dependencies=_viewer_floor)
@@ -86,7 +94,7 @@ app.include_router(review.router, dependencies=_viewer_floor)
 app.include_router(po_edit.router, dependencies=_viewer_floor)
 app.include_router(po_admin.router, dependencies=_viewer_floor)
 app.include_router(po_docs.router, dependencies=_viewer_floor)
-app.include_router(pricing.router, dependencies=_viewer_floor)
+app.include_router(pricing.router)
 app.include_router(settings_router.router, dependencies=_viewer_floor)
 app.include_router(connections.router, dependencies=_viewer_floor)
 app.include_router(oauth.router)

@@ -13,6 +13,8 @@ export interface TeamMember {
   has_role: boolean;
   has_account: boolean;
   note: string | null;
+  /** Only meaningful when role === "external_viewer". */
+  external_pages: string[];
   signed_up_at: string | null;
   last_sign_in_at: string | null;
 }
@@ -30,7 +32,7 @@ export function useTeam(enabled = true) {
 export function useSetTeamMember() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { email: string; role: Role; note?: string | null }) =>
+    mutationFn: (body: { email: string; role: Role; note?: string | null; external_pages?: string[] }) =>
       apiSend<{ ok: boolean }>("POST", "/api/settings/team", body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["team"] });

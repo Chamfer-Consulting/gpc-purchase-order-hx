@@ -28,9 +28,13 @@ INSERT INTO app_users (email, role, note) VALUES ('jcaternolo@gmail.com', 'admin
 ON CONFLICT (email) DO NOTHING;
 -- 'field' role (0014) added after this table already existed in deployed DBs —
 -- CREATE TABLE IF NOT EXISTS above is a no-op there, so fix the constraint directly.
+-- 'external_viewer' role (0020) added the same way.
 ALTER TABLE app_users DROP CONSTRAINT IF EXISTS app_users_role_check;
 ALTER TABLE app_users ADD CONSTRAINT app_users_role_check
-    CHECK (role IN ('field','viewer','editor','admin'));
+    CHECK (role IN ('field','viewer','editor','admin','external_viewer'));
+-- 0020 — per-account nav-page grant list for 'external_viewer' (empty/unused
+-- for every other role). See supabase/migrations/0020_external_viewer_role.sql.
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS external_pages TEXT[] NOT NULL DEFAULT '{}';
 
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS voided BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE line_items ADD COLUMN IF NOT EXISTS void_reason TEXT;

@@ -5,6 +5,7 @@ import {
   Alert,
   Badge,
   Button,
+  Chip,
   CloseButton,
   Code,
   Divider,
@@ -42,6 +43,7 @@ import { useRemoveTeamMember, useSetTeamMember, useTeam } from "@/api/team";
 import { fmtDateOnly, fmtDateTime } from "@/lib/datetime";
 import { confirmAction, promptReason } from "@/lib/modals";
 import { notifyError, notifySuccess } from "@/lib/notify";
+import { EXTERNAL_VIEWABLE_PAGES } from "@/nav";
 import { PageLayout } from "@/components/PageLayout";
 import { QueryBoundary } from "@/components/ErrorState";
 import { SectionCard } from "@/components/SectionCard";
@@ -149,10 +151,36 @@ export function SettingsPage() {
 
 const ROLE_DATA = [
   { value: "field", label: "Field (Yields kiosk only)" },
+  { value: "external_viewer", label: "External viewer (page-by-page)" },
   { value: "viewer", label: "Viewer" },
   { value: "editor", label: "Editor" },
   { value: "admin", label: "Admin" },
 ];
+
+/** Toggleable page chips for an external_viewer account — one Chip per
+ *  nav.tsx page flagged externalViewable, matching the backend's
+ *  EXTERNAL_VIEWABLE_PAGES allow-list exactly. */
+function ExternalPagesChips({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string[];
+  onChange: (pages: string[]) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Chip.Group multiple value={value} onChange={(v) => onChange(v as string[])}>
+      <Group gap={4} mt={6}>
+        {EXTERNAL_VIEWABLE_PAGES.map((p) => (
+          <Chip key={p.to} value={p.to} size="xs" disabled={disabled}>
+            {p.label}
+          </Chip>
+        ))}
+      </Group>
+    </Chip.Group>
+  );
+}
 
 function whenText(m: {
   last_sign_in_at: string | null;
@@ -171,13 +199,14 @@ function TeamCard() {
   const removeMember = useRemoveTeamMember();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("viewer");
+  const [newPages, setNewPages] = useState<string[]>([]);
 
   const rows = data ?? [];
   const adminCount = rows.filter((r) => r.effective_role === "admin").length;
 
-  function grant(target: string, r: Role, existingNote?: string | null) {
+  function grant(target: string, r: Role, existingNote?: string | null, pages?: string[]) {
     setMember.mutate(
-      { email: target, role: r, note: existingNote },
+      { email: target, role: r, note: existingNote, external_pages: pages },
       { onError: (err) => notifyError(err) },
     );
   }
@@ -186,11 +215,12 @@ function TeamCard() {
     const e = email.trim().toLowerCase();
     if (!e.includes("@")) return;
     setMember.mutate(
-      { email: e, role },
+      { email: e, role, external_pages: newPages },
       {
         onSuccess: () => {
           notifySuccess(`${e} set to ${role}.`);
           setEmail("");
+          setNewPages([]);
         },
         onError: (err) => notifyError(err),
       },
@@ -209,7 +239,7 @@ function TeamCard() {
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>User</Table.Th>
-                  <Table.Th w={230}>Role</Table.Th>
+                  <Table.Th w={280}>Role</Table.Th>
                   <Table.Th w={64} />
                 </Table.Tr>
               </Table.Thead>
@@ -248,17 +278,26 @@ function TeamCard() {
                         </Stack>
                       </Table.Td>
                       <Table.Td>
-                        <SegmentedControl
+                        <Select
                           size="xs"
+                          w={200}
                           value={m.effective_role ?? ""}
                           disabled={lastAdmin || setMember.isPending}
-                          onChange={(v) => grant(m.email, v as Role, m.note)}
+                          onChange={(v) => v && grant(m.email, v as Role, m.note, m.external_pages)}
                           data={ROLE_DATA}
+                          allowDeselect={false}
                         />
                         {!m.allowed && (
                           <Text size="xs" c="dimmed" mt={2}>
                             off-domain — pick a role to grant access
                           </Text>
+                        )}
+                        {m.effective_role === "external_viewer" && (
+                          <ExternalPagesChips
+                            value={m.external_pages}
+                            disabled={setMember.isPending}
+                            onChange={(pages) => grant(m.email, "external_viewer", m.note, pages)}
+                          />
                         )}
                       </Table.Td>
                       <Table.Td>
@@ -293,26 +332,33 @@ function TeamCard() {
             </Table>
           </Table.ScrollContainer>
 
-          <Group gap="xs" align="flex-end">
-            <TextInput
-              label="Add / set someone by email"
-              placeholder="name@garfieldproduce.com"
-              size="xs"
-              w={280}
-              value={email}
-              onChange={(e) => setEmail(e.currentTarget.value)}
-              onKeyDown={(e) => e.key === "Enter" && add()}
-            />
-            <SegmentedControl
-              size="xs"
-              value={role}
-              onChange={(v) => setRole(v as Role)}
-              data={ROLE_DATA}
-            />
-            <Button size="xs" onClick={add} loading={setMember.isPending} disabled={!email.includes("@")}>
-              Save
-            </Button>
-          </Group>
+          <Stack gap={4}>
+            <Group gap="xs" align="flex-end">
+              <TextInput
+                label="Add / set someone by email"
+                placeholder="name@garfieldproduce.com"
+                size="xs"
+                w={280}
+                value={email}
+                onChange={(e) => setEmail(e.currentTarget.value)}
+                onKeyDown={(e) => e.key === "Enter" && add()}
+              />
+              <Select
+                size="xs"
+                w={200}
+                value={role}
+                onChange={(v) => v && setRole(v as Role)}
+                data={ROLE_DATA}
+                allowDeselect={false}
+              />
+              <Button size="xs" onClick={add} loading={setMember.isPending} disabled={!email.includes("@")}>
+                Save
+              </Button>
+            </Group>
+            {role === "external_viewer" && (
+              <ExternalPagesChips value={newPages} onChange={setNewPages} disabled={setMember.isPending} />
+            )}
+          </Stack>
           <Text size="xs" c="dimmed">
             Sign-in domains (<Code>garfieldproduce.com</Code>, <Code>adelantecenter.org</Code>) are set
             on the API as <Code>ALLOWED_EMAIL_DOMAINS</Code>. Giving someone a role here also lets an

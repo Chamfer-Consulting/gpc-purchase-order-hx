@@ -10,7 +10,7 @@ import qbo_client  # shared/, via app.reuse
 import qbo_matcher  # shared/, via app.reuse
 from fastapi import APIRouter, Depends
 
-from ..auth import AuthedUser, current_user
+from ..auth import AuthedUser, require_page
 from ..deps import FilterParams, filter_params
 from ..reused_db import reused_conn
 from ..schemas import AttentionItem, Chart, ChartSeries, PageResponse
@@ -159,7 +159,7 @@ def _attention(conn) -> list[AttentionItem]:
 
 @router.get("/overview", response_model=PageResponse)
 def overview(
-    fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)
+    fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(require_page("/"))
 ) -> PageResponse:
     # No response cache here: the digest is live and the analytics half must not
     # trail a PO edit / invoice link / QBO sync (the SPA already de-dupes with a

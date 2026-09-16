@@ -3,7 +3,7 @@ FilterParams. All four are wired to services that call dashboard/data.py headles
 
 from fastapi import APIRouter, Depends
 
-from ..auth import AuthedUser, current_user
+from ..auth import AuthedUser, require_page
 from ..cache import cached
 from ..deps import FilterParams, filter_params
 from ..schemas import PageResponse
@@ -24,7 +24,7 @@ def _key(*args, **kwargs):
 
 @router.get("/customers", response_model=PageResponse)
 @cached(_key)
-def customers(fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)) -> PageResponse:
+def customers(fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(require_page("/customers"))) -> PageResponse:
     return customers_page(fp)
 
 
@@ -37,24 +37,24 @@ def _cust_detail_key(*args, **kwargs):
 @router.get("/customers/{name}", response_model=PageResponse)
 @cached(_cust_detail_key)
 def customer_one(
-    name: str, fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)
+    name: str, fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(require_page("/customers"))
 ) -> PageResponse:
     return customer_detail(fp, name)
 
 
 @router.get("/products", response_model=PageResponse)
 @cached(_key)
-def products(fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)) -> PageResponse:
+def products(fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(require_page("/products"))) -> PageResponse:
     return products_and_sizes(fp)
 
 
 @router.get("/explore", response_model=PageResponse)
 @cached(_key)
-def explore(fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)) -> PageResponse:
+def explore(fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(require_page("/explore"))) -> PageResponse:
     return explore_svc(fp)
 
 
 @router.get("/lifecycle", response_model=PageResponse)
 @cached(_key)
-def lifecycle(fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(current_user)) -> PageResponse:
+def lifecycle(fp: FilterParams = Depends(filter_params), _: AuthedUser = Depends(require_page("/lifecycle"))) -> PageResponse:
     return order_lifecycle(fp)
