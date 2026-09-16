@@ -15,6 +15,7 @@ import {
   HISTORICAL_HARVESTER_NAME,
   useCreateYieldEntry,
   useYieldEmployees,
+  useYieldEntries,
   useYieldProducts,
   type YieldUnit,
 } from "@/api/yields";
@@ -35,6 +36,15 @@ export function HarvestEntryForm() {
   const products = useYieldProducts();
   const employees = useYieldEmployees();
   const create = useCreateYieldEntry();
+  // Whoever logged the single most recent entry (any product, any device) is
+  // most likely still the one standing at the kiosk — bubble their name to
+  // the top of the Harvested-by grid instead of leaving it alphabetical, so
+  // the common "same person, several entries in a row" case is a one-tap
+  // pick without hunting/searching. Never auto-*selects* it, though — only
+  // reorders the options — since silently pre-filling who harvested risks a
+  // wrong attribution nobody notices.
+  const lastEntry = useYieldEntries({ include_voided: false, limit: 1 });
+  const lastHarvestedBy = lastEntry.data?.[0]?.harvested_by;
   // A 'field' (kiosk) account can only edit/void its own *same-day* entries
   // (backend: _assert_can_touch) — so letting them freely change the date on
   // create risks a mis-tap silently logging to yesterday, invisible in "My
@@ -65,13 +75,18 @@ export function HarvestEntryForm() {
   // "Historical Data" is a real roster entry (CSV import's default
   // attribution for backfilled rows with no known harvester) but never a
   // real person — nobody logging today's harvest should ever pick it.
-  const employeeOptions = useMemo(
-    () =>
-      (employees.data ?? [])
-        .filter((e) => e.name !== HISTORICAL_HARVESTER_NAME)
-        .map((e) => ({ value: e.name, label: e.name })),
-    [employees.data],
-  );
+  const employeeOptions = useMemo(() => {
+    const base = (employees.data ?? [])
+      .filter((e) => e.name !== HISTORICAL_HARVESTER_NAME)
+      .map((e) => ({ value: e.name, label: e.name }));
+    if (!lastHarvestedBy) return base;
+    const idx = base.findIndex((o) => o.value === lastHarvestedBy);
+    if (idx <= 0) return base;
+    const reordered = [...base];
+    const [mostRecent] = reordered.splice(idx, 1);
+    reordered.unshift(mostRecent);
+    return reordered;
+  }, [employees.data, lastHarvestedBy]);
 
   // Auto-fill the lot code as the selected product's prefix + the harvest
   // date's MMDD (e.g. "TK0911"), but only until the employee types something

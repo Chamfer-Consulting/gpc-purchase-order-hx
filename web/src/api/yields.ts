@@ -61,6 +61,10 @@ export interface YieldEntryFilters {
   /** Only entries with a non-empty own `notes` field — for the Notes
    *  page's merged feed. */
   has_notes?: boolean;
+  /** Caps the result to the N most recent (already ORDER BY harvest_date
+   *  DESC, created_at DESC) — for callers that only need e.g. "the last
+   *  entry logged," not the whole table. */
+  limit?: number;
 }
 
 export interface YieldEntryIn {

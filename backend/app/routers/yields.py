@@ -202,6 +202,7 @@ def list_entries(
     submitted_by: str | None = None,
     include_voided: bool = False,
     has_notes: bool = False,
+    limit: int | None = None,
     _: AuthedUser = Depends(current_user),
 ) -> list[dict]:
     with reused_conn() as conn:
@@ -214,6 +215,7 @@ def list_entries(
             submitted_by=submitted_by,
             include_voided=include_voided,
             has_notes=has_notes,
+            limit=limit,
         )
 
 

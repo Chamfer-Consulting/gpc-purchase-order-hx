@@ -406,7 +406,7 @@ def import_entries(conn, rows: list[dict], *, actor: str) -> dict:
 def list_entries(conn, *, yield_product_id: int | None = None, date_from: _date | None = None,
                   date_to: _date | None = None, harvested_by: str | None = None,
                   submitted_by: str | None = None, include_voided: bool = False,
-                  has_notes: bool = False) -> list[dict]:
+                  has_notes: bool = False, limit: int | None = None) -> list[dict]:
     where: list[str] = [] if include_voided else ["NOT e.voided"]
     vals: list[object] = []
     if yield_product_id is not None:
@@ -436,6 +436,9 @@ def list_entries(conn, *, yield_product_id: int | None = None, date_from: _date 
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY e.harvest_date DESC, e.created_at DESC"
+    if limit is not None:
+        sql += " LIMIT %s"
+        vals.append(limit)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(sql, vals)
         return [_entry_row(dict(r)) for r in cur.fetchall()]
