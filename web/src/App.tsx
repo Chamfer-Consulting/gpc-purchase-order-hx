@@ -10,7 +10,6 @@ import { useMe } from "@/api/me";
 import { KioskShell } from "@/kiosk/KioskShell";
 import { HarvestEntryPage } from "@/pages/yields/HarvestEntryPage";
 import { MyRecentEntriesPage } from "@/pages/yields/MyRecentEntriesPage";
-import { YieldsAdminPage } from "@/pages/yields/YieldsAdminPage";
 import { YieldsEntriesPage } from "@/pages/yields/YieldsEntriesPage";
 import { YieldsImportPage } from "@/pages/yields/YieldsImportPage";
 import { YieldsTrendsPage } from "@/pages/yields/YieldsTrendsPage";
@@ -91,7 +90,9 @@ function RoleRouter() {
           path="/yields/entries"
           element={<PageAccessGate pageKey="/yields/entries"><YieldsEntriesPage /></PageAccessGate>}
         />
-        <Route path="/yields/admin" element={<YieldsAdminPage />} />
+        {/* Harvest products + team moved into Settings — redirect any
+         *  bookmarked/old links there. */}
+        <Route path="/yields/admin" element={<Navigate to="/settings" replace />} />
         <Route path="/yields/import" element={<YieldsImportPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/_kitchen-sink" element={<KitchenSink />} />

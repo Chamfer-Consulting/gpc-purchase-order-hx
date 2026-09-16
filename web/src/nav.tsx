@@ -7,7 +7,6 @@ import {
   IconLeaf,
   IconFileImport,
   IconListDetails,
-  IconPlant2,
   IconRoute,
   IconSettings,
   IconShieldCheck,
@@ -122,12 +121,6 @@ export const NAV_SECTIONS: NavSection[] = [
           "Harvest log entries from the field kiosk — weight, trays, who and where. Admins can also log a " +
           "harvest or manage grower notes from here.",
         externalViewable: true,
-      },
-      {
-        label: "Products",
-        to: "/yields/admin",
-        icon: IconPlant2,
-        description: "Manage the kiosk's harvest product catalog and its sales-SKU links.",
       },
       {
         label: "Import",
