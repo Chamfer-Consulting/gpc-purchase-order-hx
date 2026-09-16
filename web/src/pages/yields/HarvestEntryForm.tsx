@@ -23,7 +23,21 @@ import { SectionCard } from "@/components/SectionCard";
 import { businessToday } from "@/lib/datetime";
 import { notifySuccess } from "@/lib/notify";
 import { errorMessage } from "@/lib/errors";
-import { GridPickerField } from "./GridPickerField";
+import { GridPickerField, type GridPickerOption } from "./GridPickerField";
+
+/** Moves the option matching `value` (if any, and if not already first) to
+ *  the front of the list — used to bubble "whatever was used last" to the
+ *  top of a GridPickerField's grid without disturbing the rest of the
+ *  order. */
+function moveToFront(options: GridPickerOption[], value: string | undefined): GridPickerOption[] {
+  if (!value) return options;
+  const idx = options.findIndex((o) => o.value === value);
+  if (idx <= 0) return options;
+  const reordered = [...options];
+  const [match] = reordered.splice(idx, 1);
+  reordered.unshift(match);
+  return reordered;
+}
 
 /** The harvest-logging form: product, weight, tray counts, who/where.
  *  Submitting resets weight/trays/notes but keeps product/unit/worker
@@ -36,15 +50,16 @@ export function HarvestEntryForm() {
   const products = useYieldProducts();
   const employees = useYieldEmployees();
   const create = useCreateYieldEntry();
-  // Whoever logged the single most recent entry (any product, any device) is
-  // most likely still the one standing at the kiosk — bubble their name to
-  // the top of the Harvested-by grid instead of leaving it alphabetical, so
-  // the common "same person, several entries in a row" case is a one-tap
-  // pick without hunting/searching. Never auto-*selects* it, though — only
-  // reorders the options — since silently pre-filling who harvested risks a
-  // wrong attribution nobody notices.
+  // The single most recent entry (any product, any device) — whoever/
+  // whatever it was is most likely still what's being packed at the kiosk,
+  // so both the Product and Harvested-by pickers bubble it to the top of
+  // their grid instead of leaving them alphabetical. Same "reorder, never
+  // auto-select" rule for both: a wrong silent default for either field
+  // (crop or harvester) is a real traceability risk, not just a cosmetic
+  // one.
   const lastEntry = useYieldEntries({ include_voided: false, limit: 1 });
   const lastHarvestedBy = lastEntry.data?.[0]?.harvested_by;
+  const lastProductId = lastEntry.data?.[0]?.yield_product_id;
   // A 'field' (kiosk) account can only edit/void its own *same-day* entries
   // (backend: _assert_can_touch) — so letting them freely change the date on
   // create risks a mis-tap silently logging to yesterday, invisible in "My
@@ -68,10 +83,10 @@ export function HarvestEntryForm() {
   // to Weight after each one so that rhythm doesn't need a tap in between.
   const weightInputRef = useRef<HTMLInputElement>(null);
 
-  const productOptions = useMemo(
-    () => (products.data ?? []).map((p) => ({ value: String(p.id), label: p.name })),
-    [products.data],
-  );
+  const productOptions = useMemo(() => {
+    const base = (products.data ?? []).map((p) => ({ value: String(p.id), label: p.name }));
+    return moveToFront(base, lastProductId != null ? String(lastProductId) : undefined);
+  }, [products.data, lastProductId]);
   // "Historical Data" is a real roster entry (CSV import's default
   // attribution for backfilled rows with no known harvester) but never a
   // real person — nobody logging today's harvest should ever pick it.
@@ -79,13 +94,7 @@ export function HarvestEntryForm() {
     const base = (employees.data ?? [])
       .filter((e) => e.name !== HISTORICAL_HARVESTER_NAME)
       .map((e) => ({ value: e.name, label: e.name }));
-    if (!lastHarvestedBy) return base;
-    const idx = base.findIndex((o) => o.value === lastHarvestedBy);
-    if (idx <= 0) return base;
-    const reordered = [...base];
-    const [mostRecent] = reordered.splice(idx, 1);
-    reordered.unshift(mostRecent);
-    return reordered;
+    return moveToFront(base, lastHarvestedBy);
   }, [employees.data, lastHarvestedBy]);
 
   // Auto-fill the lot code as the selected product's prefix + the harvest
