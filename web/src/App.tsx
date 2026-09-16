@@ -12,8 +12,6 @@ import { MyRecentEntriesPage } from "@/pages/yields/MyRecentEntriesPage";
 import { YieldsAdminPage } from "@/pages/yields/YieldsAdminPage";
 import { YieldsEntriesPage } from "@/pages/yields/YieldsEntriesPage";
 import { YieldsImportPage } from "@/pages/yields/YieldsImportPage";
-import { YieldsLogPage } from "@/pages/yields/YieldsLogPage";
-import { YieldsNotesPage } from "@/pages/yields/YieldsNotesPage";
 import { YieldsTrendsPage } from "@/pages/yields/YieldsTrendsPage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { AnalyticsPage } from "@/pages/AnalyticsPage";
@@ -72,10 +70,12 @@ function RoleRouter() {
         <Route path="/archive" element={<ArchivePage />} />
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/yields" element={<YieldsTrendsPage />} />
-        <Route path="/yields/log" element={<YieldsLogPage />} />
+        {/* Log Harvest and Notes moved into the Entries page (a button and a
+         *  tab, respectively) — redirect any bookmarked/old links there. */}
+        <Route path="/yields/log" element={<Navigate to="/yields/entries" replace />} />
+        <Route path="/yields/notes" element={<Navigate to="/yields/entries" replace />} />
         <Route path="/yields/entries" element={<YieldsEntriesPage />} />
         <Route path="/yields/admin" element={<YieldsAdminPage />} />
-        <Route path="/yields/notes" element={<YieldsNotesPage />} />
         <Route path="/yields/import" element={<YieldsImportPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/_kitchen-sink" element={<KitchenSink />} />

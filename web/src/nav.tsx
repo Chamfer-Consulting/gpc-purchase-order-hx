@@ -5,10 +5,8 @@ import {
   IconHistory,
   IconLayoutDashboard,
   IconLeaf,
-  IconClipboardPlus,
   IconFileImport,
   IconListDetails,
-  IconNotes,
   IconPlant2,
   IconRoute,
   IconSettings,
@@ -105,30 +103,18 @@ export const NAV_SECTIONS: NavSection[] = [
         description: "Harvest weight and tray trends — weekly, monthly, quarterly, yearly.",
       },
       {
-        label: "Log Harvest",
-        to: "/yields/log",
-        icon: IconClipboardPlus,
-        description: "The same form the field kiosk uses, for testing from the office.",
-        adminOnly: true,
-      },
-      {
         label: "Entries",
         to: "/yields/entries",
         icon: IconListDetails,
-        description: "Harvest log entries from the field kiosk — weight, trays, who and where.",
+        description:
+          "Harvest log entries from the field kiosk — weight, trays, who and where. Admins can also log a " +
+          "harvest or manage grower notes from here.",
       },
       {
         label: "Products",
         to: "/yields/admin",
         icon: IconPlant2,
         description: "Manage the kiosk's harvest product catalog and its sales-SKU links.",
-      },
-      {
-        label: "Notes",
-        to: "/yields/notes",
-        icon: IconNotes,
-        description: "Grower observations, general or tied to a lot — plus any notes logged on an entry.",
-        adminOnly: true,
       },
       {
         label: "Import",
