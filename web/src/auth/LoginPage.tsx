@@ -25,14 +25,20 @@ function GoogleG() {
   );
 }
 
+type LoginMode = "password" | "magic";
+
 export function LoginPage() {
   const { session } = useAuth();
   const loc = useLocation();
+  const [mode, setMode] = useState<LoginMode>("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
+  // Set once a magic link has actually been sent — swaps the form for a
+  // "check your email" message rather than letting them just resend blindly.
+  const [magicSentTo, setMagicSentTo] = useState<string | null>(null);
 
   if (session) {
     const to = (loc.state as { from?: string })?.from ?? "/";
@@ -43,7 +49,24 @@ export function LoginPage() {
     e.preventDefault();
     setBusy(true);
     setErr(null);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const trimmed = email.trim();
+    if (mode === "magic") {
+      // No password required, and no separate "sign up" step — Supabase
+      // creates the auth.users row on first use here exactly like Google
+      // OAuth's implicit signup does (shouldCreateUser defaults to true),
+      // running through the same before-user-created domain hook. This is
+      // the only path a first-time non-Google external viewer has, since
+      // there's no self-service password-creation flow in this app.
+      const { error } = await supabase.auth.signInWithOtp({
+        email: trimmed,
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      });
+      setBusy(false);
+      if (error) setErr(error.message);
+      else setMagicSentTo(trimmed);
+      return;
+    }
+    const { error } = await supabase.auth.signInWithPassword({ email: trimmed, password });
     setBusy(false);
     if (error) setErr(error.message);
     else pingLoginOnce();
@@ -61,6 +84,12 @@ export function LoginPage() {
       setErr(error.message);
       setGoogleBusy(false);
     }
+  }
+
+  function switchMode(next: LoginMode) {
+    setMode(next);
+    setErr(null);
+    setMagicSentTo(null);
   }
 
   return (
@@ -99,31 +128,55 @@ export function LoginPage() {
 
             <Divider label="or" labelPosition="center" />
 
-            <form onSubmit={submit}>
-              <Stack>
-                <TextInput
-                  label="Email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.currentTarget.value)}
-                  required
-                />
-                <PasswordInput
-                  label="Password"
-                  value={password}
-                  onChange={(e) => setPassword(e.currentTarget.value)}
-                  required
-                />
-                {err && (
-                  <Text c="red" size="sm">
-                    {err}
-                  </Text>
-                )}
-                <Button type="submit" loading={busy} fullWidth>
-                  Sign in
+            {magicSentTo ? (
+              <Stack gap="xs" align="center" py="sm">
+                <Text size="sm" ta="center">
+                  Check <b>{magicSentTo}</b> for a sign-in link.
+                </Text>
+                <Text size="xs" c="dimmed" ta="center">
+                  It can take a minute, and might land in spam.
+                </Text>
+                <Button variant="subtle" size="xs" onClick={() => switchMode("magic")}>
+                  Use a different email
                 </Button>
               </Stack>
-            </form>
+            ) : (
+              <form onSubmit={submit}>
+                <Stack>
+                  <TextInput
+                    label="Email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.currentTarget.value)}
+                    required
+                  />
+                  {mode === "password" && (
+                    <PasswordInput
+                      label="Password"
+                      value={password}
+                      onChange={(e) => setPassword(e.currentTarget.value)}
+                      required
+                    />
+                  )}
+                  {err && (
+                    <Text c="red" size="sm">
+                      {err}
+                    </Text>
+                  )}
+                  <Button type="submit" loading={busy} fullWidth>
+                    {mode === "password" ? "Sign in" : "Email me a sign-in link"}
+                  </Button>
+                  {/* No self-service password creation exists in this app — a
+                   *  first-time sign-in that isn't Google has to be this
+                   *  passwordless path instead. */}
+                  <Button variant="subtle" size="xs" onClick={() => switchMode(mode === "password" ? "magic" : "password")}>
+                    {mode === "password"
+                      ? "Don't have a password? Email me a sign-in link"
+                      : "Have a password instead? Sign in with it"}
+                  </Button>
+                </Stack>
+              </form>
+            )}
           </Stack>
         </Paper>
 
