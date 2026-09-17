@@ -15,6 +15,7 @@ from ..auth import (
     require_editor,
 )
 from ..cache import clear as clear_cache
+from ..config import get_settings
 from ..reused_db import reused_conn
 from ..services import settings as svc
 
@@ -166,9 +167,14 @@ class TeamMemberIn(BaseModel):
 
 
 @router.get("/team")
-def list_team(_: AuthedUser = Depends(require_admin)) -> list[dict]:
+def list_team(_: AuthedUser = Depends(require_admin)) -> dict:
     with reused_conn() as conn:
-        return svc.list_team(conn)
+        members = svc.list_team(conn)
+    # Lets the Team UI default a new off-domain member's role suggestion to
+    # external_viewer instead of viewer — the sign-in allow-list itself
+    # (also enforced by auth.email_allowed and the Supabase before-user-
+    # created hook) isn't otherwise exposed to the frontend.
+    return {"members": members, "allowed_domains": sorted(get_settings().allow_domains)}
 
 
 @router.post("/team")

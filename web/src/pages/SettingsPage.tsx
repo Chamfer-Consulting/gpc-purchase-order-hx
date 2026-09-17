@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -229,9 +229,24 @@ function TeamCard() {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("viewer");
   const [newPages, setNewPages] = useState<string[]>([]);
+  // Only auto-suggest a role while the admin hasn't explicitly picked one for
+  // this email — an off-domain address is more likely meant as a restricted
+  // external_viewer than a full viewer, but a deliberate manual choice (the
+  // footer note below already documents granting any role to an off-domain
+  // address as a supported, intentional flow) must never be silently
+  // overridden by this suggestion re-running on every keystroke.
+  const roleTouchedRef = useRef(false);
 
-  const rows = data ?? [];
+  const rows = data?.members ?? [];
+  const allowedDomains = data?.allowed_domains ?? [];
   const adminCount = rows.filter((r) => r.effective_role === "admin").length;
+  const newEmailDomain = email.trim().toLowerCase().split("@")[1];
+  const newEmailOffDomain = !!newEmailDomain && !allowedDomains.includes(newEmailDomain);
+
+  useEffect(() => {
+    if (roleTouchedRef.current || !newEmailDomain) return;
+    setRole(newEmailOffDomain ? "external_viewer" : "viewer");
+  }, [newEmailDomain, newEmailOffDomain]);
 
   function grant(target: string, r: Role, existingNote?: string | null, pages?: string[]) {
     setMember.mutate(
@@ -250,6 +265,8 @@ function TeamCard() {
           notifySuccess(`${e} set to ${role}.`);
           setEmail("");
           setNewPages([]);
+          setRole("viewer");
+          roleTouchedRef.current = false;
         },
         onError: (err) => notifyError(err),
       },
@@ -376,7 +393,11 @@ function TeamCard() {
                 size="xs"
                 w={200}
                 value={role}
-                onChange={(v) => v && setRole(v as Role)}
+                onChange={(v) => {
+                  if (!v) return;
+                  roleTouchedRef.current = true;
+                  setRole(v as Role);
+                }}
                 data={ROLE_DATA}
                 allowDeselect={false}
               />
@@ -384,6 +405,12 @@ function TeamCard() {
                 Save
               </Button>
             </Group>
+            {newEmailOffDomain && !roleTouchedRef.current && (
+              <Text size="xs" c="dimmed">
+                {newEmailDomain} isn't a sign-in-approved domain — defaulted to External viewer. Pick
+                pages below, or choose a different role.
+              </Text>
+            )}
             {role === "external_viewer" && (
               <ExternalPagesChips value={newPages} onChange={setNewPages} disabled={setMember.isPending} />
             )}

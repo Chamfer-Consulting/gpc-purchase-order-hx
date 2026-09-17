@@ -19,11 +19,19 @@ export interface TeamMember {
   last_sign_in_at: string | null;
 }
 
+export interface TeamResponse {
+  members: TeamMember[];
+  /** The sign-in domain allow-list (ALLOWED_EMAIL_DOMAINS) — lets the "add
+   *  someone" form default an off-domain email's role suggestion to
+   *  external_viewer instead of viewer. */
+  allowed_domains: string[];
+}
+
 /** The app_users allow / role list. Admin-only endpoint. */
 export function useTeam(enabled = true) {
   return useQuery({
     queryKey: ["team"],
-    queryFn: () => apiGet<TeamMember[]>("/api/settings/team"),
+    queryFn: () => apiGet<TeamResponse>("/api/settings/team"),
     enabled,
     staleTime: 60_000,
   });
