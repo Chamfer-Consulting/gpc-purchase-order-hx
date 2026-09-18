@@ -41,10 +41,26 @@ export function GridPickerField({
   required?: boolean;
   searchPlaceholder?: string;
 }) {
+  // useTouchUi() starts `false` on the very first render (matchMedia hasn't
+  // resolved yet) and can flip to `true` a moment later on any touch device
+  // — so every hook below MUST run unconditionally on every render, same
+  // order, regardless of isTouch. An early `return` before a hook call
+  // (the previous shape of this component) is a Rules-of-Hooks violation
+  // that only ever manifests on a touch device: React sees a different
+  // number of hooks between the isTouch=false render and the very next
+  // isTouch=true render and hard-crashes — with no error boundary in the
+  // app, that blanks the whole page. Desktop never hits this since isTouch
+  // starts and stays false there, which is exactly why tsc/build (and every
+  // desktop-only manual check) never caught it.
   const isTouch = useTouchUi();
   const [opened, { open, close }] = useDisclosure(false);
   const [search, setSearch] = useState("");
   const fullScreen = useMediaQuery("(max-width: 48em)");
+  const selectedLabel = options.find((o) => o.value === value)?.label ?? "";
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
+  }, [options, search]);
 
   if (!isTouch) {
     return (
@@ -62,12 +78,6 @@ export function GridPickerField({
       />
     );
   }
-
-  const selectedLabel = options.find((o) => o.value === value)?.label ?? "";
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
-  }, [options, search]);
 
   const handleOpen = () => {
     if (disabled) return;
