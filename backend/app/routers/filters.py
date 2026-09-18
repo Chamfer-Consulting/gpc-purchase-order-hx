@@ -3,7 +3,7 @@ customer / product / size MultiSelects."""
 
 from fastapi import APIRouter, Depends
 
-from ..auth import EXTERNAL_VIEWABLE_PAGES, AuthedUser, require_page
+from ..auth import PO_ANALYTICS_PAGES, AuthedUser, require_page
 from ..cache import cached
 from ..reused_db import reused_conn
 
@@ -15,10 +15,14 @@ router = APIRouter(prefix="/api/filters", tags=["filters"])
 # key_fn must accept **kwargs — a fixed `lambda user:` raised TypeError on every
 # call and turned this endpoint into a 500 (empty MultiSelects on every page).
 @cached(lambda *_a, **_k: "options")
-# Shared, low-sensitivity metadata (customer/product/size names) reused by
-# every analytics page's FilterBar, not tied to one specific nav page — an
-# external_viewer with ANY page granted needs it, not just one exact match.
-def options(_: AuthedUser = Depends(require_page(*EXTERNAL_VIEWABLE_PAGES))) -> dict:
+# Shared PO/QBO metadata (customer/product/size names) reused by every
+# PO-analytics page's FilterBar, not tied to one specific nav page — an
+# external_viewer with any *one* of those pages granted needs it. Pricing
+# and Yields are deliberately excluded (PO_ANALYTICS_PAGES, not the full
+# EXTERNAL_VIEWABLE_PAGES) — neither ever calls this endpoint, and a
+# Yields- or Pricing-only grant has no legitimate reason to pull the full
+# cross-customer PO/QBO name lists this returns.
+def options(_: AuthedUser = Depends(require_page(*PO_ANALYTICS_PAGES))) -> dict:
     with reused_conn() as conn, conn.cursor() as cur:
         # exclude the Settings → Visibility hidden sets — a filter can't usefully
         # scope to an account / product whose data is dropped from every page.

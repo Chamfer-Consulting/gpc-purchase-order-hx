@@ -152,6 +152,15 @@ EXTERNAL_VIEWABLE_PAGES = (
     "/yields", "/yields/entries",
 )
 
+# The subset of EXTERNAL_VIEWABLE_PAGES that actually share the PO/QBO
+# customer/product/size metadata filters.router's /options serves — Pricing
+# and both Yields pages have their own separate data model and never call
+# useFilterOptions() on the frontend. An external_viewer granted only a
+# Yields or Pricing page has no legitimate reason to pull the full
+# cross-customer PO/QBO name lists, so /options checks against this
+# narrower set rather than EXTERNAL_VIEWABLE_PAGES as a whole.
+PO_ANALYTICS_PAGES = ("/", "/customers", "/products", "/explore", "/lifecycle")
+
 # Per-email: (app_users role string, or "" for "no row"; external_pages list).
 # Cached ~60s so the allow-list check, role check and page-grant check all
 # share one small query per user per minute.
@@ -161,23 +170,26 @@ _role_cache: TTLCache = TTLCache(maxsize=512, ttl=60)
 
 def _app_user_row(email: str | None) -> tuple[str, list[str]]:
     """(role, external_pages) from app_users, or ("", []) if there's no row."""
-    key = (email or "").lower()
+    key = (email or "").strip().lower()
     if not key:
         return _NO_ROW
     hit = _role_cache.get(key)
     if hit is not None:
         return hit
-    result = _NO_ROW
     try:
         from .reused_db import reused_conn
 
         with reused_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT role, external_pages FROM app_users WHERE lower(email) = %s", (key,))
             row = cur.fetchone()
-            if row and row[0] in _ROLE_RANK:
-                result = (row[0], list(row[1] or []))
-    except Exception:  # app_users missing / DB blip
-        pass
+            result = (row[0], list(row[1] or [])) if row and row[0] in _ROLE_RANK else _NO_ROW
+    except Exception:
+        # A transient DB blip must never be cached as "no row" — that would
+        # wrongly deny an off-domain user's very next request (email_allowed
+        # depends on this) for the full 60s TTL even once the DB recovers.
+        # Return unrecognized-for-now without writing to the cache, so the
+        # next request retries against the DB instead of being stuck.
+        return _NO_ROW
     _role_cache[key] = result
     return result
 
@@ -194,9 +206,14 @@ def external_pages(email: str | None) -> list[str]:
 
 
 def clear_role_cache(email: str | None = None) -> None:
-    """Drop cached role(s) after a Team change so it takes effect at once."""
+    """Drop cached role(s) after a Team change so it takes effect at once.
+    Normalized the same way _app_user_row's cache key is (strip + lower) —
+    an admin-typed email with incidental leading/trailing whitespace (e.g.
+    pasted from a mail client) would otherwise evict a key that was never
+    actually cached, leaving the real entry to expire on its own after the
+    full 60s TTL instead of clearing immediately."""
     if email:
-        _role_cache.pop(email.lower(), None)
+        _role_cache.pop(email.strip().lower(), None)
     else:
         _role_cache.clear()
 
