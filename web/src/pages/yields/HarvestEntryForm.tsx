@@ -258,6 +258,13 @@ export function HarvestEntryForm() {
             value={lotCode}
             onChange={(e) => handleLotCodeChange(e.currentTarget.value)}
             size={fieldSize}
+            // Almost always auto-filled (prefix + date); a hand-edit is
+            // usually just tweaking the date digits or appending a batch
+            // number, so the numeric keypad covers the common case. Typing
+            // the letter prefix itself needs a manual keyboard-switch on
+            // iOS — an accepted, rare-case trade-off (the same one Weight's
+            // inputMode="decimal" already makes for this form).
+            inputMode="numeric"
           />
           <GridPickerField
             label="Harvested by"
