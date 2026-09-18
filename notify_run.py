@@ -64,7 +64,15 @@ def _digest(kind: str, stats: dict) -> str:
                 )
         if s.get("failed"):
             parts.append(f"{int(s['failed'])} failed")
-        return " · ".join(parts) or "nothing to capture"
+        digest = " · ".join(parts) or "nothing to capture"
+        # storage_enabled is explicitly False (not just absent, e.g. an older
+        # run's summary) — every PDF this run captured went inline into
+        # Postgres instead of Supabase Storage. That's easy to miss for
+        # weeks (it doesn't fail the run), so flag it in the same place
+        # every other run outcome already surfaces.
+        if s.get("storage_enabled") is False:
+            digest += " · ⚠️ Storage not configured — saved inline"
+        return digest
     if kind == "qbo_sync":
         parts = [
             f"{int(s.get('invoices_synced', 0))} invoices",

@@ -25,7 +25,12 @@ import {
   useQboSyncNow,
   type ConnectionsStatus,
 } from "@/api/connections";
-import { useBackfillDocs, useDocStorageStatus, type BackfillBucket } from "@/api/poDocs";
+import {
+  useBackfillDocs,
+  useDocStorageStatus,
+  useMigrateDocsToStorage,
+  type BackfillBucket,
+} from "@/api/poDocs";
 import {
   useCustomerAliases,
   useDeleteCustomerAlias,
@@ -733,11 +738,47 @@ function StorageLine() {
 
 function DocumentsCard() {
   const { canEdit } = useMe();
+  const { data: storage } = useDocStorageStatus();
   const backfill = useBackfillDocs();
+  const migrate = useMigrateDocsToStorage();
   const [running, setRunning] = useState<string | null>(null);
   const [acc, setAcc] = useState<Partial<Record<DocSrc, BackfillBucket>> | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [migrating, setMigrating] = useState(false);
+  const [migrateNote, setMigrateNote] = useState<string | null>(null);
+
+  // Same "loop short server-budgeted calls until drained" shape as run()
+  // below, for the one-off inline -> Storage backlog sweep — a single call
+  // over a large backlog would otherwise outrun the request timeout the
+  // same way an unbounded backfill call would.
+  const runMigrate = async () => {
+    if (migrating) return;
+    setMigrating(true);
+    setMigrateNote(null);
+    let migrated = 0;
+    let failed = 0;
+    let lastErrors: string[] = [];
+    try {
+      for (let pass = 0; pass < 40; pass++) {
+        const res = await migrate.mutateAsync(100);
+        migrated += res.migrated;
+        failed += res.failed;
+        lastErrors = res.errors;
+        setMigrateNote(`Working… ${migrated} moved${failed ? `, ${failed} failed` : ""}.`);
+        if (!res.more) break;
+      }
+      setMigrateNote(
+        `Done — ${migrated} moved to Storage` +
+          (failed ? `, ${failed} failed: ${lastErrors.slice(0, 3).join(" · ")}` : "") +
+          ".",
+      );
+    } catch (e) {
+      setMigrateNote(e instanceof Error ? e.message : "Migration failed.");
+    } finally {
+      setMigrating(false);
+    }
+  };
 
   // One button press drives many short backfill calls: each server call has an
   // ~18s budget and returns `more` while work is queued, so we loop until it's
@@ -807,6 +848,24 @@ function DocumentsCard() {
         {btn(["qbo"], "QuickBooks only")}
       </Group>
       <StorageLine />
+      {storage?.mode === "supabase" && storage.counts.inline > 0 && (
+        <Group gap="sm" align="center">
+          <Button
+            size="xs"
+            variant="default"
+            disabled={!canEdit || migrating}
+            loading={migrating}
+            onClick={runMigrate}
+          >
+            Migrate {storage.counts.inline} inline PDF{storage.counts.inline === 1 ? "" : "s"} to Storage
+          </Button>
+          {migrateNote && (
+            <Text size="xs" c="dimmed">
+              {migrateNote}
+            </Text>
+          )}
+        </Group>
+      )}
       {running && (
         <Text size="xs" c="dimmed">
           Working… {sumOf(acc, "captured")} captured
