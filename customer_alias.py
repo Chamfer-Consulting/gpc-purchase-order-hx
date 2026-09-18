@@ -16,7 +16,25 @@ pandas analytics pipeline) and the FastAPI services — same pattern as
 math_check.py / price_check.py.
 """
 
+import re
+
 import psycopg2
+
+# Fallback matching key: casefold, then strip everything that isn't a letter
+# or digit — not just whitespace. Punctuation/separator noise ("Co" vs
+# "Co.", "(Sean McLaughlin)" vs "/ Sean McLaughlin", a missing internal
+# space) shouldn't need its own alias row for a spelling that's otherwise
+# the same company. Verified empirically against production data before
+# relying on this: no two alias rows fold to the same key while pointing at
+# *different* canonicals (checked both canonical-name collisions and
+# alias-name collisions across the whole table) — this is strictly a looser
+# superset of the old whitespace-only fold, so nothing that resolved before
+# stops resolving.
+_NON_ALNUM = re.compile(r"[^a-z0-9]")
+
+
+def _fold(name: str) -> str:
+    return _NON_ALNUM.sub("", name.casefold())
 
 
 def load_customer_aliases(conn) -> dict[str, str]:
@@ -33,21 +51,22 @@ def load_customer_aliases(conn) -> dict[str, str]:
 
 
 def _ci_index(alias_map: dict[str, str]) -> dict[str, str]:
-    """casefold(alias) -> canonical, for a whitespace/case-insensitive fallback.
-    First spelling wins on a collision (rare)."""
+    """fold(alias) -> canonical, for a punctuation/whitespace/case-insensitive
+    fallback. First spelling wins on a collision (rare — see _fold's note)."""
     out: dict[str, str] = {}
     for a, c in alias_map.items():
-        out.setdefault(" ".join(a.split()).casefold(), c)
+        out.setdefault(_fold(a), c)
     return out
 
 
 def canonical(name, alias_map: dict[str, str], ci_index: dict[str, str] | None = None) -> str | None:
     """Canonical company name for a raw PO/invoice customer string: exact match,
-    then a whitespace/case-insensitive match, else the trimmed input unchanged
-    (an unknown customer is still shown, just not folded). None/blank -> None.
+    then a punctuation/whitespace/case-insensitive match, else the trimmed
+    input unchanged (an unknown customer is still shown, just not folded).
+    None/blank -> None.
 
     Pass `ci_index` (from `_ci_index`) when calling in a loop / DataFrame.map so
-    the case-insensitive pass isn't rebuilt per row."""
+    the fallback index isn't rebuilt per row."""
     if name is None:
         return None
     s = " ".join(str(name).split())
@@ -56,12 +75,12 @@ def canonical(name, alias_map: dict[str, str], ci_index: dict[str, str] | None =
     if s in alias_map:
         return alias_map[s]
     idx = ci_index if ci_index is not None else _ci_index(alias_map)
-    return idx.get(s.casefold(), s)
+    return idx.get(_fold(s), s)
 
 
 def resolver(conn):
     """Convenience: load the map once and return a `f(name) -> canonical` closure
-    with the case-insensitive index pre-built. For per-request backend use."""
+    with the fallback index pre-built. For per-request backend use."""
     amap = load_customer_aliases(conn)
     idx = _ci_index(amap)
     return lambda name: canonical(name, amap, idx)
