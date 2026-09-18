@@ -307,16 +307,6 @@ function TeamCard() {
                             )}
                           </Text>
                           <Group gap={6}>
-                            {!m.allowed && (
-                              <Badge size="xs" color="red" variant="light">
-                                no access
-                              </Badge>
-                            )}
-                            {m.allowed && !m.has_role && (
-                              <Badge size="xs" color="gray" variant="light">
-                                default
-                              </Badge>
-                            )}
                             <Text size="xs" c="dimmed">
                               {whenText(m)}
                             </Text>
