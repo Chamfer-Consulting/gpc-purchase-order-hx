@@ -17,6 +17,7 @@ import { notifyError, notifySuccess } from "@/lib/notify";
 import { useUpdateYieldEntry, useYieldEmployees, type YieldEntry, type YieldUnit } from "@/api/yields";
 import { useTouchUi } from "@/hooks/useTouchUi";
 import { GridPickerField, type GridPickerOption } from "./GridPickerField";
+import { LotCodeField } from "./LotCodeField";
 
 function EditEntryForm({ entry, employees, onClose }: {
   entry: YieldEntry;
@@ -120,16 +121,11 @@ function EditEntryForm({ entry, employees, onClose }: {
           size={fieldSize}
         />
       </Group>
-      <TextInput
-        label="Lot code"
+      <LotCodeField
+        prefix={entry.product_lot_code_prefix ?? ""}
         value={lotCode}
-        onChange={(e) => setLotCode(e.currentTarget.value)}
+        onChange={setLotCode}
         size={fieldSize}
-        // This field starts pre-filled with the entry's existing lot code
-        // (letters already there) — a correction is almost always just
-        // adjusting digits, so the numeric keypad is the right default,
-        // same as HarvestEntryForm's matching field.
-        inputMode="numeric"
       />
       <GridPickerField
         label="Harvested by"

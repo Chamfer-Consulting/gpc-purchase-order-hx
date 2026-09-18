@@ -25,6 +25,7 @@ import { notifySuccess } from "@/lib/notify";
 import { errorMessage } from "@/lib/errors";
 import { useTouchUi } from "@/hooks/useTouchUi";
 import { GridPickerField, type GridPickerOption } from "./GridPickerField";
+import { LotCodeField } from "./LotCodeField";
 
 /** Moves the option matching `value` (if any, and if not already first) to
  *  the front of the list — used to bubble "whatever was used last" to the
@@ -263,25 +264,20 @@ export function HarvestEntryForm() {
               size={fieldSize}
             />
           </Group>
-          <TextInput
-            label="Lot code"
+          <LotCodeField
+            prefix={selectedProductPrefix}
+            value={lotCode}
+            onChange={handleLotCodeChange}
+            size={fieldSize}
             description={
               !productId
                 ? undefined
                 : reusableLotCode
                   ? "Reused from an existing entry for this crop today — change it if this is a different batch"
                   : selectedProductPrefix
-                    ? "Prefix filled in — add the rest by hand"
+                    ? undefined
                     : "No lot prefix set for this crop — type the full code"
             }
-            value={lotCode}
-            onChange={(e) => handleLotCodeChange(e.currentTarget.value)}
-            size={fieldSize}
-            // The letter prefix is always filled in for you (either the
-            // whole reused code, or the product's own prefix) — the only
-            // thing actually typed by hand is digits, so the numeric
-            // keypad is the right default here, same as Weight.
-            inputMode="numeric"
           />
           <GridPickerField
             label="Harvested by"
