@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -105,21 +105,33 @@ export function HarvestEntryForm() {
     return moveToFront(base, lastHarvestedBy);
   }, [employees.data, lastHarvestedBy]);
 
-  // Auto-fill the lot code as the selected product's prefix + the harvest
-  // date's MMDD (e.g. "TK0911"), but only until the employee types something
-  // of their own into the field — an explicit "has this been hand-edited"
-  // flag, not a value comparison, so a manual edit that happens to coincide
-  // with a later auto-computed value can't make auto-fill silently resume
-  // and clobber it.
+  // The lot code is meant to trace back to when the crop was *seeded*, not
+  // harvested — this app doesn't track a seed date at all yet (a separate,
+  // larger project), so the date portion can't be auto-generated from
+  // anything today; the harvester types it in by hand. The letter part
+  // isn't a hand-typing problem, though — it's already known the moment a
+  // product is picked (the product's own lot_code_prefix), so it's filled
+  // in for them either way:
+  //   - if another entry already exists for this same product on this
+  //     same harvest date (logging several trays of the same batch),
+  //     reuse that entry's whole lot code — nothing left to type at all.
+  //   - otherwise, pre-fill just the product's prefix (e.g. "TK") so the
+  //     only thing left to type by hand is digits.
+  const sameProductDateEntry = useYieldEntries(
+    { yield_product_id: productId ? Number(productId) : undefined, date_from: date, date_to: date, limit: 1 },
+    { enabled: productId != null },
+  );
+  const reusableLotCode = sameProductDateEntry.data?.[0]?.lot_code ?? null;
+  const selectedProductPrefix = products.data?.find((p) => String(p.id) === productId)?.lot_code_prefix ?? "";
+  // Only until the harvester types something of their own into the field —
+  // an explicit "has this been hand-edited" flag, not a value comparison,
+  // so a manual edit that happens to coincide with the suggested value
+  // can't make the suggestion silently resume and clobber a deliberate
+  // retype later.
   const lotEditedRef = useRef(false);
-  const autoLot = (id: string | null, harvestDate: string) => {
-    const prefix = (products.data ?? []).find((p) => String(p.id) === id)?.lot_code_prefix ?? "";
-    if (!prefix || harvestDate.length < 10) return prefix;
-    return prefix + harvestDate.slice(5, 7) + harvestDate.slice(8, 10);
-  };
-  const applyAutoLot = (next: string) => {
-    if (!lotEditedRef.current) setLotCode(next);
-  };
+  useEffect(() => {
+    if (!lotEditedRef.current) setLotCode(reusableLotCode ?? selectedProductPrefix);
+  }, [reusableLotCode, selectedProductPrefix]);
   const handleLotCodeChange = (value: string) => {
     lotEditedRef.current = true;
     setLotCode(value);
@@ -127,15 +139,13 @@ export function HarvestEntryForm() {
   const handleProductChange = (id: string | null) => {
     setProductId(id);
     // A hand-edit only ever made sense in the context of the *previous*
-    // product's prefix — switching crops always gets a fresh auto-fill for
-    // the new one, rather than silently carrying over a stale, wrong-prefix
-    // lot code the employee never actually typed for this product.
+    // product/date's reuse suggestion — switching either always gets a
+    // fresh look at what's reusable for the new combination.
     lotEditedRef.current = false;
-    setLotCode(autoLot(id, date));
   };
   const handleDateChange = (value: string) => {
     setDate(value);
-    applyAutoLot(autoLot(productId, value));
+    lotEditedRef.current = false;
   };
 
   const canSubmit = productId != null && weight !== "" && Number(weight) > 0 && harvestedBy.trim() !== "";
@@ -255,15 +265,22 @@ export function HarvestEntryForm() {
           </Group>
           <TextInput
             label="Lot code"
+            description={
+              !productId
+                ? undefined
+                : reusableLotCode
+                  ? "Reused from an existing entry for this crop today — change it if this is a different batch"
+                  : selectedProductPrefix
+                    ? "Prefix filled in — add the rest by hand"
+                    : "No lot prefix set for this crop — type the full code"
+            }
             value={lotCode}
             onChange={(e) => handleLotCodeChange(e.currentTarget.value)}
             size={fieldSize}
-            // Almost always auto-filled (prefix + date); a hand-edit is
-            // usually just tweaking the date digits or appending a batch
-            // number, so the numeric keypad covers the common case. Typing
-            // the letter prefix itself needs a manual keyboard-switch on
-            // iOS — an accepted, rare-case trade-off (the same one Weight's
-            // inputMode="decimal" already makes for this form).
+            // The letter prefix is always filled in for you (either the
+            // whole reused code, or the product's own prefix) — the only
+            // thing actually typed by hand is digits, so the numeric
+            // keypad is the right default here, same as Weight.
             inputMode="numeric"
           />
           <GridPickerField

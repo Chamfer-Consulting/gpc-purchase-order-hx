@@ -125,10 +125,10 @@ function EditEntryForm({ entry, employees, onClose }: {
         value={lotCode}
         onChange={(e) => setLotCode(e.currentTarget.value)}
         size={fieldSize}
-        // See HarvestEntryForm's matching field for the reasoning — numeric
-        // keypad covers the common hand-edit case (date digits/batch #),
-        // at the cost of needing a manual keyboard-switch on iOS to type
-        // the letter prefix itself.
+        // This field starts pre-filled with the entry's existing lot code
+        // (letters already there) — a correction is almost always just
+        // adjusting digits, so the numeric keypad is the right default,
+        // same as HarvestEntryForm's matching field.
         inputMode="numeric"
       />
       <GridPickerField
