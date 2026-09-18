@@ -446,10 +446,11 @@ def list_entries(conn, *, yield_product_id: int | None = None, date_from: _date 
 
 def _assert_can_touch(conn, entry_id: int, *, actor: str | None, actor_role: str) -> dict:
     """A 'field'-rank caller may only touch its own same-day entries; every
-    other role (viewer and up) is unrestricted — Yields isn't the sensitive
-    domain the 'field' floor exists to protect, PO/financial data is. Voided
-    is a terminal state for every role: a voided entry is a corrected/
-    retracted record, not something to keep editing or re-void."""
+    other role reaching this function (editor and up — the router's
+    require_page(write=True) already turns away viewer/external_viewer
+    before this is ever called) is unrestricted. Voided is a terminal
+    state for every role: a voided entry is a corrected/retracted record,
+    not something to keep editing or re-void."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("SELECT * FROM yield_entries WHERE id = %s", (entry_id,))
         row = cur.fetchone()

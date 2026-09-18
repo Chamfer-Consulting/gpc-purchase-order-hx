@@ -173,12 +173,12 @@ function mixTag(name: string, color: string) {
 
 function EntriesTab() {
   const { role } = useMe();
-  // external_viewer is a strictly read-only role (never true "viewer" —
-  // that role keeps its existing edit/void ability on this page, unchanged;
-  // only external_viewer loses it) — hides the actions the backend's
-  // require_page(write=True) on create/update/void_entry would 403 anyway,
-  // so nobody sees a control that would just fail.
-  const canWriteEntries = role !== "external_viewer";
+  // Only editor/admin can create/edit/void a harvest entry — viewer and
+  // external_viewer are both read-only here (require_page(write=True) on
+  // create_entry/update_entry/void_entry raises the floor to editor for
+  // everyone, not just external_viewer). Hides the actions the backend
+  // would 403 anyway, so nobody sees a control that would just fail.
+  const canWriteEntries = role === "editor" || role === "admin";
   const products = useYieldProducts();
   const mixes = useYieldMixes();
   const palette = paletteFor(useComputedColorScheme("light"));

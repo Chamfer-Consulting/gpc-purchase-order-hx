@@ -257,9 +257,11 @@ export interface YieldEntryPatch {
   notes?: string | null;
 }
 
-/** Corrections to an already-logged entry. Backend enforces: a 'field'-rank
- *  caller may only touch its own same-day entries; every other role
- *  (viewer+) is unrestricted — see services/yields.py's _assert_can_touch. */
+/** Corrections to an already-logged entry. Backend enforces: only
+ *  editor/admin (or 'field', for its own same-day entries) may call this at
+ *  all — viewer and external_viewer are read-only here, see
+ *  routers/yields.py's require_page(write=True) and services/yields.py's
+ *  _assert_can_touch. */
 export function useUpdateYieldEntry() {
   const qc = useQueryClient();
   return useMutation({

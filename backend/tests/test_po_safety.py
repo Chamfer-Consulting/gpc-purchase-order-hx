@@ -203,6 +203,56 @@ def test_external_viewer_cannot_void_yields_entry_even_when_page_granted():
     assert r.status_code == 403 and r.json()["detail"]["code"] == "forbidden"
 
 
+# Plain 'viewer' is read-only on yields entries too, not just
+# external_viewer — require_page(write=True) raises the floor to editor for
+# everyone (field's own writes stay separately allowed via bare=True, which
+# is exercised nowhere near this rank so isn't retested here).
+def test_viewer_cannot_create_yields_entry():
+    r = _client.post(
+        "/api/yields/entries",
+        json={
+            "yield_product_id": 1, "harvest_date": "2026-01-01", "weight": 1.0,
+            "unit": "oz", "harvested_by": "Someone",
+        },
+        headers={"Authorization": f"Bearer {_tok_for('stranger@example.com')}"},  # no app_users row -> viewer
+    )
+    assert r.status_code == 403 and r.json()["detail"]["need"] == "editor"
+
+
+def test_viewer_cannot_update_yields_entry():
+    r = _client.post(
+        "/api/yields/entries/1",
+        json={"notes": "hi"},
+        headers={"Authorization": f"Bearer {_tok_for('stranger@example.com')}"},
+    )
+    assert r.status_code == 403 and r.json()["detail"]["need"] == "editor"
+
+
+def test_viewer_cannot_void_yields_entry():
+    r = _client.post(
+        "/api/yields/entries/1/void",
+        json={"reason": None},
+        headers={"Authorization": f"Bearer {_tok_for('stranger@example.com')}"},
+    )
+    assert r.status_code == 403 and r.json()["detail"]["need"] == "editor"
+
+
+def test_editor_still_passes_the_yields_entry_write_gate():
+    # No DB in these tests, so this can't assert a 200 -- just that the auth
+    # dependency itself (require_page's write=True branch) lets an editor
+    # through rather than 403ing, unlike the viewer/external_viewer cases
+    # above. Whatever happens next (a DB error) is not what this asserts.
+    r = _client_noraise.post(
+        "/api/yields/entries",
+        json={
+            "yield_product_id": 1, "harvest_date": "2026-01-01", "weight": 1.0,
+            "unit": "oz", "harvested_by": "Someone",
+        },
+        headers={"Authorization": f"Bearer {_tok()}"},  # nobody@example.com -> editor
+    )
+    assert r.status_code != 403
+
+
 def test_hidden_invoice_toggle_is_editor_not_admin():
     # excluding a phantom invoice is a visibility control, like hiding a product
     assert _client.post("/api/settings/hidden-invoices",

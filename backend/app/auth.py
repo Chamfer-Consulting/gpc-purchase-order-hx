@@ -264,32 +264,38 @@ require_admin = require_role("admin")
 
 
 def require_page(*page_keys: str, bare: bool = False, write: bool = False):
-    """FastAPI dependency gating a specific nav page's data for external_viewer.
+    """FastAPI dependency gating a specific nav page's data.
 
-    Real staff (rank >= viewer — editor/admin too) always pass, completely
-    unaffected either way. An external_viewer is a strictly **read-only**
-    role: pass `write=True` on any create/update/void endpoint and it is
-    never let through, no matter what pages are granted (`page_keys` is
-    irrelevant/unused in that case — pass none). On an ordinary read
-    (`write=False`, the default) it passes only if the admin granted at
-    least one of `page_keys` (app_users.external_pages). Every other role
-    (today, just 'field') passes when `bare=True` — for a route that
-    already had a bare current_user floor the kiosk needs to keep reaching
-    (see routers/yields.py) — and is denied when `bare=False`, the normal
-    case for a route that used to sit behind require_viewer.
+    On an ordinary read (`write=False`, the default): real staff (rank >=
+    viewer — viewer/editor/admin all included) pass unaffected. An
+    external_viewer passes only if the admin granted at least one of
+    `page_keys` (app_users.external_pages) — `page_keys` is otherwise
+    unused. `field` passes when `bare=True` (a route that already had a
+    bare current_user floor the kiosk needs to keep reaching, see
+    routers/yields.py) and is denied when `bare=False`, the normal case
+    for a route that used to sit behind require_viewer.
+
+    On a write (`write=True`, a create/update/void endpoint): the floor
+    rises to editor — **viewer is read-only here too**, not just
+    external_viewer. `page_keys` is irrelevant/unused for both of them
+    (pass none). `field` still passes when `bare=True`, unchanged — it's
+    the kiosk's own same-day/own-entry writes, a separate restriction
+    enforced at the service layer (see services/yields.py's
+    _assert_can_touch), not something this dependency is meant to police.
     """
     keys = set(page_keys)
+    write_floor = _ROLE_RANK["editor"] if write else _ROLE_RANK["viewer"]
 
     def _dep(user: AuthedUser = Depends(current_user)) -> AuthedUser:
         role = app_role(user.email)
-        if _ROLE_RANK.get(role, -1) >= _ROLE_RANK["viewer"]:
+        if _ROLE_RANK.get(role, -1) >= write_floor:
             return user
         if role == "external_viewer":
             if not write and keys & set(external_pages(user.email)):
                 return user
             raise Forbidden(need="viewer", have=role)
-        if bare:
+        if bare and role == "field":
             return user
-        raise Forbidden(need="viewer", have=role)
+        raise Forbidden(need="editor" if write else "viewer", have=role)
 
     return _dep
