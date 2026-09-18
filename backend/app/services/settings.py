@@ -105,7 +105,7 @@ def list_customer_aliases(conn) -> dict:
         )
         rows = [dict(r) for r in cur.fetchall()]
         cur.execute(
-            """
+            r"""
             WITH seen AS (
                 SELECT DISTINCT customer_name AS name FROM purchase_orders
                 WHERE status = 'active'
@@ -114,9 +114,17 @@ def list_customer_aliases(conn) -> dict:
                 SELECT DISTINCT customer_name FROM qbo_invoices
                 WHERE customer_name IS NOT NULL AND btrim(customer_name) <> ''
             )
+            -- Case/whitespace-insensitive, matching customer_alias.py's own
+            -- _ci_index fallback — an exact-string join here flagged spellings
+            -- as "needs mapping" that the resolver already silently folds
+            -- (e.g. a different-cased repeat of an existing alias), which is
+            -- just noise for whoever works this list in Settings.
             SELECT s.name FROM seen s
-            LEFT JOIN customer_aliases a ON a.alias_name = s.name
-            WHERE a.alias_name IS NULL
+            WHERE NOT EXISTS (
+                SELECT 1 FROM customer_aliases a
+                WHERE lower(regexp_replace(btrim(a.alias_name), '\s+', ' ', 'g'))
+                    = lower(regexp_replace(btrim(s.name), '\s+', ' ', 'g'))
+            )
             ORDER BY s.name
             """
         )
@@ -145,8 +153,27 @@ def list_customer_aliases(conn) -> dict:
 
 def set_customer_alias(conn, alias_name: str, canonical_name: str, *, actor: str | None = None) -> None:
     """Map one spelling -> a company (source='manual'). Ensures the company has a
-    self-row so the resolver always terminates."""
+    self-row so the resolver always terminates.
+
+    If an existing row is already case/whitespace-equivalent to `alias_name`
+    (customer_alias.py's `_ci_index` fallback would already treat them as the
+    same spelling), re-point *that* row instead of inserting a new one —
+    otherwise a human re-mapping a differently-cased repeat (e.g. typing
+    "testa produce" when "Testa Produce" is already mapped) accumulates a
+    visually-identical badge in Settings -> Customers that adds no real
+    matching coverage the case-insensitive fallback didn't already have."""
     with conn.cursor() as cur:
+        cur.execute(
+            r"SELECT alias_name FROM customer_aliases "
+            r"WHERE lower(regexp_replace(btrim(alias_name), '\s+', ' ', 'g')) "
+            r"    = lower(regexp_replace(btrim(%s), '\s+', ' ', 'g')) "
+            r"  AND alias_name <> %s "
+            r"LIMIT 1",
+            (alias_name, alias_name),
+        )
+        existing = cur.fetchone()
+        key = existing[0] if existing else alias_name
+
         cur.execute(
             "INSERT INTO customer_aliases (alias_name, canonical_name, source) "
             "VALUES (%s, %s, 'manual') ON CONFLICT (alias_name) DO NOTHING",
@@ -157,10 +184,10 @@ def set_customer_alias(conn, alias_name: str, canonical_name: str, *, actor: str
             "VALUES (%s, %s, 'manual', now()) "
             "ON CONFLICT (alias_name) DO UPDATE SET "
             "  canonical_name = EXCLUDED.canonical_name, source = 'manual', updated_at = now()",
-            (alias_name, canonical_name),
+            (key, canonical_name),
         )
     audit.log(conn, actor=actor, action="customer_alias", entity="customer",
-              entity_id=alias_name, after={"canonical": canonical_name})
+              entity_id=key, after={"canonical": canonical_name})
     conn.commit()
 
 
