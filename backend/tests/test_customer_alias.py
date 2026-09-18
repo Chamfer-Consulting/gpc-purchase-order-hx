@@ -47,6 +47,20 @@ def test_customers_match_aliased_folds_buyer_to_company():
     assert customers_match_aliased("Bill & Chris", "Skoufis Food Service", resolve)
 
 
+def test_canonical_folds_punctuation_and_separator_noise():
+    # "Co" vs "Co.", "(...)" vs "/" -- none of these differ by more than
+    # punctuation/separators from an existing mapped spelling, so the
+    # fallback should fold them to the same company without needing their
+    # own alias_name row.
+    assert customer_alias.canonical("Anthony Marano Co (Sean McLaughlin)", AMAP) == "Anthony Marano Company"
+    assert customer_alias.canonical("Anthony Marano Co, Sean McLaughlin", AMAP) == "Anthony Marano Company"
+    assert customer_alias.canonical("SEAN-MCLAUGHLIN/ANTHONY MARANO CO.", AMAP) == "Anthony Marano Company"
+    # a missing internal space is punctuation-fold territory too
+    assert customer_alias.canonical("BillChris", AMAP) == "Skoufis Food Service"
+    # still doesn't over-fold: genuinely different text stays unresolved
+    assert customer_alias.canonical("Totally Different Co", AMAP) == "Totally Different Co"
+
+
 def test_customers_match_aliased_never_removes_a_substring_match():
     resolve = lambda n: customer_alias.canonical(n, {})  # empty map  # noqa: E731
     assert customers_match_aliased("Get Fresh", "Get Fresh Produce, Inc.", resolve)
