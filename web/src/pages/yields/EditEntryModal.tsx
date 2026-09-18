@@ -183,6 +183,10 @@ export function EditEntryModal({ entry, onClose }: { entry: YieldEntry | null; o
       title="Edit harvest entry"
       size="lg"
       fullScreen={fullScreen}
+      // No small X in the corner — the form's own "Cancel" button below is
+      // the one, unambiguous way to back out, same as the other yields
+      // modals (GridPickerField, the "Log harvest" modal).
+      withCloseButton={false}
     >
       {entry && <EditEntryForm key={entry.id} entry={entry} employees={employeeOptions} onClose={onClose} />}
     </Modal>

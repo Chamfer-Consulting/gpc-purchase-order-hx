@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Button, Modal, Select, SimpleGrid, Stack, Text, TextInput } from "@mantine/core";
 import { useDisclosure, useMediaQuery } from "@mantine/hooks";
-import { IconChevronDown, IconSearch } from "@tabler/icons-react";
+import { IconChevronDown, IconSearch, IconX } from "@tabler/icons-react";
 import { useTouchUi } from "@/hooks/useTouchUi";
 
 export interface GridPickerOption {
@@ -106,8 +106,23 @@ export function GridPickerField({
         style={{ cursor: disabled ? undefined : "pointer" }}
         styles={{ input: { cursor: disabled ? undefined : "pointer" } }}
       />
-      <Modal opened={opened} onClose={close} title={label} size="lg" fullScreen={fullScreen}>
+      <Modal
+        opened={opened}
+        onClose={close}
+        title={label}
+        size="lg"
+        fullScreen={fullScreen}
+        withCloseButton={false}
+      >
         <Stack gap="md">
+          {/* A real, labeled button instead of the small X Mantine would
+           *  otherwise put in the corner — easier to notice and understand
+           *  for anyone unfamiliar with that convention. Placed above the
+           *  search box (not below the grid) so it's never scrolled out of
+           *  view on a long roster. */}
+          <Button variant="light" color="gray" fullWidth leftSection={<IconX size={18} />} onClick={close}>
+            Cancel
+          </Button>
           <TextInput
             placeholder={searchPlaceholder}
             value={search}

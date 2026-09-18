@@ -26,6 +26,7 @@ import {
   IconNotes,
   IconPencil,
   IconTrash,
+  IconX,
 } from "@tabler/icons-react";
 import { useMe } from "@/api/me";
 import {
@@ -739,8 +740,25 @@ export function YieldsEntriesPage() {
         )}
       </Tabs>
 
-      <Modal opened={logOpen} onClose={closeLog} title="Log harvest" size="lg" fullScreen={isMobile}>
-        <HarvestEntryForm />
+      <Modal
+        opened={logOpen}
+        onClose={closeLog}
+        title="Log harvest"
+        size="lg"
+        fullScreen={isMobile}
+        withCloseButton={false}
+      >
+        <Stack gap="lg">
+          {/* A real, labeled button instead of relying on the small X in
+           *  the corner — clearer for anyone unfamiliar with that
+           *  convention, and this modal has no "unsaved changes" risk to
+           *  warn about (any harvest already logged stays logged either
+           *  way), so a plain "Close" is accurate. */}
+          <Button variant="light" color="gray" fullWidth leftSection={<IconX size={18} />} onClick={closeLog}>
+            Close
+          </Button>
+          <HarvestEntryForm />
+        </Stack>
       </Modal>
     </PageLayout>
   );
