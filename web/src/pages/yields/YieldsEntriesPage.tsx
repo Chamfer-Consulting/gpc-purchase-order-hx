@@ -172,6 +172,13 @@ function mixTag(name: string, color: string) {
 }
 
 function EntriesTab() {
+  const { role } = useMe();
+  // external_viewer is a strictly read-only role (never true "viewer" —
+  // that role keeps its existing edit/void ability on this page, unchanged;
+  // only external_viewer loses it) — hides the actions the backend's
+  // require_page(write=True) on create/update/void_entry would 403 anyway,
+  // so nobody sees a control that would just fail.
+  const canWriteEntries = role !== "external_viewer";
   const products = useYieldProducts();
   const mixes = useYieldMixes();
   const palette = paletteFor(useComputedColorScheme("light"));
@@ -317,7 +324,7 @@ function EntriesTab() {
           </Group>
         </Table.Td>
         <Table.Td>
-          {!e.voided && (
+          {!e.voided && canWriteEntries && (
             <Group gap={4} wrap="nowrap">
               <ActionIcon size="sm" variant="subtle" onClick={() => setEditing(e)} aria-label="Edit entry">
                 <IconPencil size={14} />

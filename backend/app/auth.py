@@ -263,16 +263,20 @@ require_editor = require_role("editor")
 require_admin = require_role("admin")
 
 
-def require_page(*page_keys: str, bare: bool = False):
+def require_page(*page_keys: str, bare: bool = False, write: bool = False):
     """FastAPI dependency gating a specific nav page's data for external_viewer.
 
     Real staff (rank >= viewer — editor/admin too) always pass, completely
-    unaffected either way. An external_viewer passes only if the admin
-    granted at least one of `page_keys` (app_users.external_pages). Every
-    other role (today, just 'field') passes when `bare=True` — for a route
-    that already had a bare current_user floor the kiosk needs to keep
-    reaching (see routers/yields.py) — and is denied when `bare=False`, the
-    normal case for a route that used to sit behind require_viewer.
+    unaffected either way. An external_viewer is a strictly **read-only**
+    role: pass `write=True` on any create/update/void endpoint and it is
+    never let through, no matter what pages are granted (`page_keys` is
+    irrelevant/unused in that case — pass none). On an ordinary read
+    (`write=False`, the default) it passes only if the admin granted at
+    least one of `page_keys` (app_users.external_pages). Every other role
+    (today, just 'field') passes when `bare=True` — for a route that
+    already had a bare current_user floor the kiosk needs to keep reaching
+    (see routers/yields.py) — and is denied when `bare=False`, the normal
+    case for a route that used to sit behind require_viewer.
     """
     keys = set(page_keys)
 
@@ -281,7 +285,7 @@ def require_page(*page_keys: str, bare: bool = False):
         if _ROLE_RANK.get(role, -1) >= _ROLE_RANK["viewer"]:
             return user
         if role == "external_viewer":
-            if keys & set(external_pages(user.email)):
+            if not write and keys & set(external_pages(user.email)):
                 return user
             raise Forbidden(need="viewer", have=role)
         if bare:

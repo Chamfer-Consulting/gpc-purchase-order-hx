@@ -164,6 +164,45 @@ def test_reference_price_write_forbidden_for_editor():
     assert r.status_code == 403 and r.json()["detail"]["need"] == "admin"
 
 
+# external_viewer is a strictly read-only role: require_page(write=True) must
+# deny it on every yields write endpoint even when the page is granted —
+# faking a real grant here (not just an empty one) is the point, since an
+# empty grant would be denied anyway for an unrelated reason (no page
+# match) and wouldn't actually exercise the write=True branch.
+_FAKE_ROLES["external@example.com"] = "external_viewer"
+_auth.external_pages = lambda e: ["/yields/entries"] if (e or "").lower() == "external@example.com" else []  # type: ignore[assignment]
+
+
+def test_external_viewer_cannot_create_yields_entry_even_when_page_granted():
+    r = _client.post(
+        "/api/yields/entries",
+        json={
+            "yield_product_id": 1, "harvest_date": "2026-01-01", "weight": 1.0,
+            "unit": "oz", "harvested_by": "Someone",
+        },
+        headers={"Authorization": f"Bearer {_tok_for('external@example.com')}"},
+    )
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "forbidden"
+
+
+def test_external_viewer_cannot_update_yields_entry_even_when_page_granted():
+    r = _client.post(
+        "/api/yields/entries/1",
+        json={"notes": "hi"},
+        headers={"Authorization": f"Bearer {_tok_for('external@example.com')}"},
+    )
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "forbidden"
+
+
+def test_external_viewer_cannot_void_yields_entry_even_when_page_granted():
+    r = _client.post(
+        "/api/yields/entries/1/void",
+        json={"reason": None},
+        headers={"Authorization": f"Bearer {_tok_for('external@example.com')}"},
+    )
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "forbidden"
+
+
 def test_hidden_invoice_toggle_is_editor_not_admin():
     # excluding a phantom invoice is a visibility control, like hiding a product
     assert _client.post("/api/settings/hidden-invoices",

@@ -30,6 +30,12 @@ router = APIRouter(prefix="/api/yields", tags=["yields"], dependencies=[Depends(
 # employees) are needed by both, so they accept a grant for either one.
 _YIELDS_PAGES = ("/yields", "/yields/entries")
 
+# create_entry/update_entry/void_entry pass require_page(bare=True,
+# write=True) instead — an external_viewer is strictly read-only (never
+# passes a write, regardless of any page grant), while every other role
+# (field/viewer/editor/admin) keeps its exact existing bare-auth access,
+# unaffected by `write` at all.
+
 
 def _actor(user: AuthedUser) -> str | None:
     return user.email or user.id
@@ -152,7 +158,7 @@ class VoidIn(BaseModel):
 
 
 @router.post("/entries")
-def create_entry(body: EntryIn, user: AuthedUser = Depends(require_page("/yields/entries", bare=True))) -> dict:
+def create_entry(body: EntryIn, user: AuthedUser = Depends(require_page(bare=True, write=True))) -> dict:
     with reused_conn() as conn:
         return yields_svc.create_entry(
             conn,
@@ -225,7 +231,7 @@ def list_entries(
 
 
 @router.post("/entries/{entry_id}")
-def update_entry(entry_id: int, body: EntryPatch, user: AuthedUser = Depends(require_page("/yields/entries", bare=True))) -> dict:
+def update_entry(entry_id: int, body: EntryPatch, user: AuthedUser = Depends(require_page(bare=True, write=True))) -> dict:
     with reused_conn() as conn:
         return yields_svc.update_entry(
             conn, entry_id, body.model_dump(exclude_unset=True),
@@ -234,7 +240,7 @@ def update_entry(entry_id: int, body: EntryPatch, user: AuthedUser = Depends(req
 
 
 @router.post("/entries/{entry_id}/void")
-def void_entry(entry_id: int, body: VoidIn, user: AuthedUser = Depends(require_page("/yields/entries", bare=True))) -> dict:
+def void_entry(entry_id: int, body: VoidIn, user: AuthedUser = Depends(require_page(bare=True, write=True))) -> dict:
     with reused_conn() as conn:
         return yields_svc.void_entry(
             conn, entry_id, body.reason, actor=_actor(user), actor_role=app_role(user.email),
