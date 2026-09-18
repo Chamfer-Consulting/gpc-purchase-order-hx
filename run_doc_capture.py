@@ -148,6 +148,7 @@ def main() -> None:
         pipeline_summary.write(
             "doc_capture", "ok" if failed == 0 else "partial",
             failed=failed,
+            storage_enabled=storage_on,
             **{
                 src: {k: r[k] for k in ("scanned", "captured", "failed", "remaining")}
                 for src, r in out.items()

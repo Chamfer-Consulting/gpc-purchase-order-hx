@@ -324,16 +324,25 @@ _INLINE_ROWS = (
 )
 
 
-def migrate_inline_to_storage(conn, *, limit: int = 1000) -> dict:
+def migrate_inline_to_storage(conn, *, limit: int = 1000, max_seconds: float | None = None) -> dict:
     """Move documents currently stored inline (po_documents.content) into Supabase
     Storage: upload the bytes, set storage_path, NULL out content. Idempotent and
     resumable — commits after each row, only touches rows still inline. No-op
     (and reported as such) unless doc_storage.is_enabled(). Reads keep working
     throughout: get_document_blob prefers inline `content` and falls back to
-    Storage, so a half-finished run serves both kinds."""
+    Storage, so a half-finished run serves both kinds.
+
+    With `max_seconds` (same idea as backfill()'s budget), the sweep stops
+    early once that wall-clock budget is spent, reporting `more=True` so a
+    caller with a request-timeout to respect (the Settings page's "Migrate
+    to Storage" button) can loop in short passes instead of risking a
+    single call outliving the HTTP request on a big backlog."""
     if not doc_storage.is_enabled():
         return {"enabled": False, "migrated": 0, "failed": 0,
-                "remaining": _count(conn, _INLINE_ROWS)}
+                "remaining": _count(conn, _INLINE_ROWS), "errors": [], "more": False}
+
+    started = time.monotonic()
+    over_budget = lambda: max_seconds is not None and time.monotonic() - started >= max_seconds
 
     with conn.cursor() as cur:
         cur.execute(f"{_INLINE_ROWS} ORDER BY id LIMIT %s", (limit,))
@@ -341,7 +350,11 @@ def migrate_inline_to_storage(conn, *, limit: int = 1000) -> dict:
 
     migrated = failed = 0
     errors: list[str] = []
+    scanned = 0
     for doc_id in ids:
+        if over_budget():
+            break
+        scanned += 1
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -364,10 +377,13 @@ def migrate_inline_to_storage(conn, *, limit: int = 1000) -> dict:
             failed += 1
             errors.append(f"doc {doc_id}: {exc}")
 
+    remaining = _count(conn, _INLINE_ROWS)
     return {
         "enabled": True,
         "migrated": migrated,
         "failed": failed,
-        "remaining": _count(conn, _INLINE_ROWS),
+        "remaining": remaining,
         "errors": errors,
+        # more work left than this call got through
+        "more": remaining > 0 and (over_budget() or scanned >= limit),
     }

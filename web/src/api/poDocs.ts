@@ -109,6 +109,29 @@ export function useBackfillDocs() {
   });
 }
 
+export interface MigrateStorageResponse {
+  ok: boolean;
+  enabled: boolean;
+  migrated: number;
+  failed: number;
+  remaining: number;
+  errors: string[];
+  /** the sweep hit its time/row budget with work still queued — call again */
+  more: boolean;
+}
+
+/** One-off, resumable move of documents still stored inline
+ *  (po_documents.content) into Supabase Storage — the same sweep the CLI's
+ *  `run_doc_capture.py --migrate-storage` runs, from Settings instead. */
+export function useMigrateDocsToStorage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (limit: number = 100) =>
+      apiSend<MigrateStorageResponse>("POST", "/api/po/documents/migrate-storage", { limit }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["doc-storage-status"] }),
+  });
+}
+
 export function useDeleteDoc(poId: number) {
   const qc = useQueryClient();
   return useMutation({

@@ -5,6 +5,7 @@ import base64
 import binascii
 
 import doc_storage  # repo root, via app.reuse
+import po_doc_capture  # repo root, via app.reuse
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
@@ -39,6 +40,10 @@ class BackfillIn(BaseModel):
     # the card drains the queue over several calls; True = a follow-up slice, so
     # only add an audit row if it actually captured / failed something.
     continued: bool = False
+
+
+class MigrateStorageIn(BaseModel):
+    limit: int = 100
 
 
 class UploadIn(BaseModel):
@@ -79,6 +84,19 @@ def backfill(body: BackfillIn, user: AuthedUser = Depends(require_editor)) -> di
             gmail_client_id=s.gmail_client_id, gmail_client_secret=s.gmail_client_secret,
             announce=not body.continued,
         )
+    return {"ok": True, **out}
+
+
+@router.post("/documents/migrate-storage")
+def migrate_storage(body: MigrateStorageIn, _: AuthedUser = Depends(require_editor)) -> dict:
+    """One-off, resumable sweep moving documents still stored inline
+    (po_documents.content) into Supabase Storage — the same operation the
+    CLI's `run_doc_capture.py --migrate-storage` runs, exposed here so an
+    admin can drain the backlog from Settings without shell access. No-op
+    (enabled: false) if Storage isn't configured at all."""
+    limit = max(1, min(body.limit, 1000))
+    with reused_conn() as conn:
+        out = po_doc_capture.migrate_inline_to_storage(conn, limit=limit, max_seconds=18.0)
     return {"ok": True, **out}
 
 
